@@ -2790,8 +2790,8 @@ export default function Headliners() {
     const pd = playerData[player.id] || {};
     if ((pd.heldDice || 0) === 0) {
       const t = setTimeout(() => {
-        setStarRollResult({ pid: player.id, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
-        setTimeout(() => applyStarRoll(), 100);
+        const empty = { pid: player.id, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] };
+        applyStarRoll(empty);
       }, 600);
       return () => clearTimeout(t);
     } else {
@@ -2848,8 +2848,11 @@ export default function Headliners() {
   };
 
   // Apply final results: VP, lost amenities, return dice to pool
-  const applyStarRoll = () => {
-    const r = starRollResult;
+  // Accepts optional resultOverride to bypass closure-captured starRollResult — needed for paths
+  // where setStarRollResult and applyStarRoll are scheduled together (the result update is queued
+  // and won't reflect in the closure-captured value when applyStarRoll fires).
+  const applyStarRoll = (resultOverride) => {
+    const r = resultOverride || starRollResult;
     if (!r) return;
     const { pid, stars, decisions, faces } = r;
     const vpFromStars = starVP(stars);
@@ -4483,8 +4486,8 @@ export default function Headliners() {
             </div>
             {!isAI && <button onClick={() => performStarRoll(rollPid)} disabled={(rollPd?.heldDice || 0) === 0} style={{ ...bp, fontSize: 16, padding: "12px 32px", opacity: (rollPd?.heldDice || 0) === 0 ? 0.5 : 1 }}>{(rollPd?.heldDice || 0) === 0 ? "Skip (no dice)" : "Roll the dice! 🎲"}</button>}
             {!isAI && (rollPd?.heldDice || 0) === 0 && <button onClick={() => {
-              setStarRollResult({ pid: rollPid, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
-              setTimeout(() => applyStarRoll(), 200);
+              const empty = { pid: rollPid, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] };
+              applyStarRoll(empty);
             }} style={{ ...bs, marginLeft: 8 }}>Continue →</button>}
           </div>
         </div>{anim}</div>
