@@ -2759,23 +2759,20 @@ export default function Headliners() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerData, phase]);
 
-  // AI resolve auto-trigger: latched so it fires once per resolving entry
-  const aiResolveFiredRef = useRef({});
+  // AI resolve auto-trigger: useEffect deps ensure it only fires when phase/result actually change
   useEffect(() => {
-    if (phase !== "starDice" || starRollPhase !== "resolving") {
-      if (starRollPhase !== "resolving") aiResolveFiredRef.current = {};
-      return;
-    }
+    if (phase !== "starDice" || starRollPhase !== "resolving") return;
     const r = starRollResult;
     if (!r) return;
     const player = players.find(p => p.id === r.pid);
     if (!player?.isAI) return;
-    const key = `${r.pid}`;
-    if (aiResolveFiredRef.current[key]) return;
-    aiResolveFiredRef.current[key] = true;
 
     if (r.decisions.length === 0) {
       const t = setTimeout(() => applyStarRoll(), 800);
+      return () => clearTimeout(t);
+    } else if (r.decisions.every(d => d.decision !== null)) {
+      // Decisions all made (post-aiResolveStarRoll) — apply
+      const t = setTimeout(() => applyStarRoll(), 600);
       return () => clearTimeout(t);
     } else {
       const t = setTimeout(() => aiResolveStarRoll(), 800);
@@ -2784,24 +2781,14 @@ export default function Headliners() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, starRollPhase, starRollResult]);
 
-  // AI intro auto-trigger: latched so it fires exactly once per (player, intro) entry,
-  // independent of how many times the intro screen re-renders during the wait.
-  const aiIntroFiredRef = useRef({});
+  // AI intro auto-trigger: useEffect deps gate this to only run on (player, intro) entry
   useEffect(() => {
-    if (phase !== "starDice" || starRollPhase !== "intro") {
-      // Reset latches when leaving the intro phase
-      if (starRollPhase !== "intro") aiIntroFiredRef.current = {};
-      return;
-    }
+    if (phase !== "starDice" || starRollPhase !== "intro") return;
     const player = players[starRollPlayer];
     if (!player || !player.isAI) return;
-    const key = `${starRollPlayer}`;
-    if (aiIntroFiredRef.current[key]) return;
-    aiIntroFiredRef.current[key] = true;
 
     const pd = playerData[player.id] || {};
     if ((pd.heldDice || 0) === 0) {
-      // Skip flow: just advance with empty roll
       const t = setTimeout(() => {
         setStarRollResult({ pid: player.id, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
         setTimeout(() => applyStarRoll(), 100);
@@ -2908,6 +2895,7 @@ export default function Headliners() {
   };
 
   // AI auto-resolves star roll: absorb non-security amenity faces with security shields, lose what can't be absorbed
+  // After updating decisions, the useEffect notices all decisions are set and schedules applyStarRoll.
   const aiResolveStarRoll = () => {
     const r = starRollResult;
     if (!r) return;
@@ -2915,9 +2903,7 @@ export default function Headliners() {
     const pd = playerData[pid];
     let secShields = (pd.amenities?.security) || 0;
     const decisions = r.decisions.map(d => {
-      // Security face: must lose (security can't shield itself)
       if (d.amenity === "security") return { ...d, decision: "lose" };
-      // Other amenities: absorb if shield available
       if (secShields > 0) {
         secShields--;
         return { ...d, decision: "absorb" };
@@ -2925,7 +2911,6 @@ export default function Headliners() {
       return { ...d, decision: "lose" };
     });
     setStarRollResult({ ...r, decisions });
-    setTimeout(() => applyStarRoll(), 600);
   };
 
 
