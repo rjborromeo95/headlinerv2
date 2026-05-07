@@ -2755,6 +2755,61 @@ export default function Headliners() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerData, phase]);
 
+  // AI resolve auto-trigger: latched so it fires once per resolving entry
+  const aiResolveFiredRef = useRef({});
+  useEffect(() => {
+    if (phase !== "starDice" || starRollPhase !== "resolving") {
+      if (starRollPhase !== "resolving") aiResolveFiredRef.current = {};
+      return;
+    }
+    const r = starRollResult;
+    if (!r) return;
+    const player = players.find(p => p.id === r.pid);
+    if (!player?.isAI) return;
+    const key = `${r.pid}`;
+    if (aiResolveFiredRef.current[key]) return;
+    aiResolveFiredRef.current[key] = true;
+
+    if (r.decisions.length === 0) {
+      const t = setTimeout(() => applyStarRoll(), 800);
+      return () => clearTimeout(t);
+    } else {
+      const t = setTimeout(() => aiResolveStarRoll(), 800);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, starRollPhase, starRollResult]);
+
+  // AI intro auto-trigger: latched so it fires exactly once per (player, intro) entry,
+  // independent of how many times the intro screen re-renders during the wait.
+  const aiIntroFiredRef = useRef({});
+  useEffect(() => {
+    if (phase !== "starDice" || starRollPhase !== "intro") {
+      // Reset latches when leaving the intro phase
+      if (starRollPhase !== "intro") aiIntroFiredRef.current = {};
+      return;
+    }
+    const player = players[starRollPlayer];
+    if (!player || !player.isAI) return;
+    const key = `${starRollPlayer}`;
+    if (aiIntroFiredRef.current[key]) return;
+    aiIntroFiredRef.current[key] = true;
+
+    const pd = playerData[player.id] || {};
+    if ((pd.heldDice || 0) === 0) {
+      // Skip flow: just advance with empty roll
+      const t = setTimeout(() => {
+        setStarRollResult({ pid: player.id, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
+        setTimeout(() => applyStarRoll(), 100);
+      }, 600);
+      return () => clearTimeout(t);
+    } else {
+      const t = setTimeout(() => performStarRoll(player.id), 800);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, starRollPhase, starRollPlayer]);
+
   const beginStarDicePhase = () => {
     // Evaluate councils before rolling so ticket counts are final
     players.forEach(p => evaluateCouncils(p.id));
@@ -2944,8 +2999,28 @@ export default function Headliners() {
       logs.push({ type: "entry", who: "🎟️ Tickets", text: `${ticketLeaders[0].festivalName} sold the most tickets (${maxTickets}) → +1 VP!` });
     }
 
-    // Now do ALL setState calls at once — none nested inside each other
-    setPlayerData(snap);
+    // Merge year-end calc fields into current playerData via callback form.
+    // Important: do NOT overwrite the whole playerData with `snap`, because applyStarRoll's
+    // updates (heldDice=0, VP from stars, lost amenities) may not yet be reflected in the
+    // closure-captured `playerData` we used to build snap. Only update the recomputed fields,
+    // and ADD the year-end VP bonus to whatever cur.vp now is (which already includes star VP).
+    setPlayerData(prev => {
+      const next = { ...prev };
+      for (const p of players) {
+        const cur = prev[p.id];
+        const sn = snap[p.id];
+        if (!cur || !sn) continue;
+        const bonus = nat[p.id]?.[year]?.totalYearVP || 0;
+        next[p.id] = {
+          ...cur,
+          tickets: sn.tickets,
+          rawTickets: sn.rawTickets,
+          fame: sn.fame,
+          vp: (cur.vp || 0) + bonus,
+        };
+      }
+      return next;
+    });
     setAllTickets(nat);
     logs.forEach(l => addLog(l.who, l.text));
     addLogH(`Year ${year} — Year End`, "round");
@@ -3070,10 +3145,13 @@ export default function Headliners() {
         newDiscard = [...newDiscard, ...allBooked];
         const emptyStages = (pd.stages || []).map(() => []);
         // Reset baseFame but preserve any fame gained during pre-round (stage opening)
-        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0 };
+        // Reset high-water marks so dice can be re-claimed for current fame/stages this year
+        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0 };
       }
       return next;
     });
+    // Clear the dice trigger latch so the useEffect re-fires for the new year
+    diceTriggerLatchRef.current = {};
     setDiscardPile(newDiscard);
     addLog("🔄 New Year", "All stages cleared — artists moved to discard pile");
 
@@ -4419,17 +4497,6 @@ export default function Headliners() {
               setStarRollResult({ pid: rollPid, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
               setTimeout(() => applyStarRoll(), 200);
             }} style={{ ...bs, marginLeft: 8 }}>Continue →</button>}
-            {isAI && (() => {
-              if ((rollPd?.heldDice || 0) === 0) {
-                setTimeout(() => {
-                  setStarRollResult({ pid: rollPid, faces: [], stars: 0, amenityFaces: [], resolvable: [], ignored: 0, decisions: [] });
-                  setTimeout(() => applyStarRoll(), 100);
-                }, 600);
-              } else {
-                setTimeout(() => performStarRoll(rollPid), 800);
-              }
-              return null;
-            })()}
           </div>
         </div>{anim}</div>
       );
@@ -4458,12 +4525,7 @@ export default function Headliners() {
       const allDecided = r.decisions.every(d => d.decision !== null);
       const vpFromStars = starVP(r.stars);
 
-      // AI auto-resolves
-      if (isAI && r.decisions.length > 0 && !allDecided) {
-        setTimeout(() => aiResolveStarRoll(), 800);
-      } else if (isAI && r.decisions.length === 0) {
-        setTimeout(() => applyStarRoll(), 800);
-      }
+      // (AI auto-resolve handled by useEffect to avoid render-side-effect double-firing)
 
       // Render face icon
       const faceIcon = (f) => {
