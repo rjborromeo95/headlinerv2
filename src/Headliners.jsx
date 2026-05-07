@@ -2691,40 +2691,44 @@ export default function Headliners() {
   };
 
   // ─── STAR DICE PHASE (replaces old event phase) ───
-  // Atomic check + grant for dice triggers. Reads current playerData state.
-  // Called from well-known mutation points (post-fame change, post-headliner placement, post-recalc).
-  // Uses a single setPlayerData/setDicePool transaction to avoid loops.
+  // Atomic check + grant for dice triggers.
+  // Reads fame/filled-stages snapshot synchronously, then uses setDicePool to compute `granted`
+  // (based on actual pool size), and schedules a setPlayerData with the correct granted count.
+  // The granted count is captured in the setDicePool callback's closure, so the queued
+  // setPlayerData updater reads the right value when it runs.
   function checkAndClaimDice(pid) {
-    setPlayerData(prev => {
-      const cur = prev[pid];
-      if (!cur) return prev;
-      const fame = cur.fame || 0;
-      const fameHW = cur.fameHighWater || 0;
-      const filled = (cur.stageArtists || []).filter(sa => sa.length === 3).length;
-      const filledHW = cur.filledStagesHighWater || 0;
-      let owed = Math.max(0, fame - fameHW) + Math.max(0, filled - filledHW);
-      if (owed === 0) return prev;
-      // Try to claim from pool
-      let granted = 0;
-      setDicePool(poolPrev => {
-        granted = Math.min(owed, poolPrev);
-        if (granted > 0) {
-          const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
-          const reason = (fame > fameHW && filled > filledHW) ? "Fame + Stage" : (fame > fameHW ? `Fame ${fame}` : "Stage filled");
-          addLog("🎲", `${pName} gained ${granted} Star Die${granted === 1 ? "" : "s"} (${reason}) — ${poolPrev - granted} left in pool`);
-        }
-        return poolPrev - granted;
+    const cur = playerData[pid];
+    if (!cur) return;
+    const fame = cur.fame || 0;
+    const fameHW = cur.fameHighWater || 0;
+    const filled = (cur.stageArtists || []).filter(sa => sa.length === 3).length;
+    const filledHW = cur.filledStagesHighWater || 0;
+    const owed = Math.max(0, fame - fameHW) + Math.max(0, filled - filledHW);
+    if (owed === 0) return;
+
+    setDicePool(prevPool => {
+      const granted = Math.min(owed, prevPool);
+      if (granted > 0) {
+        const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
+        const reason = (fame > fameHW && filled > filledHW) ? "Fame + Stage" : (fame > fameHW ? `Fame ${fame}` : "Stage filled");
+        addLog("🎲", `${pName} gained ${granted} Star Die${granted === 1 ? "" : "s"} (${reason}) — ${prevPool - granted} left in pool`);
+      }
+      // Schedule the player-data update — this updater runs later, but captures `granted`
+      // from this callback's closure, which is already set to the correct value.
+      setPlayerData(prevPD => {
+        const c = prevPD[pid];
+        if (!c) return prevPD;
+        return {
+          ...prevPD,
+          [pid]: {
+            ...c,
+            heldDice: (c.heldDice || 0) + granted,
+            fameHighWater: fame,
+            filledStagesHighWater: filled,
+          }
+        };
       });
-      // Always update high-water (even if pool was empty — player won't retroactively get dice they missed)
-      return {
-        ...prev,
-        [pid]: {
-          ...cur,
-          heldDice: (cur.heldDice || 0) + granted,
-          fameHighWater: fame,
-          filledStagesHighWater: filled,
-        }
-      };
+      return prevPool - granted;
     });
   }
 
