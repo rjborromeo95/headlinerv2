@@ -309,7 +309,7 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode }) {
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -363,10 +363,19 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           const sa = stageArtists[si] || [];
           const stageColor = sColors[si] || "#7c3aed";
           const isHL = highlightStageIdx === si;
-          return <div key={si} onClick={() => onStageClick && onStageClick(si)} style={{ ...stageBox, borderColor: isHL ? stageColor : "#2a2a4a", boxShadow: isHL ? `0 0 12px ${stageColor}80` : "none" }}>
+          const isBookable = pickStageMode && sa.length < 3;
+          return <div key={si} onClick={() => onStageClick && onStageClick(si)} style={{
+            ...stageBox,
+            borderColor: isBookable ? stageColor : (isHL ? stageColor : "#2a2a4a"),
+            borderWidth: isBookable ? 2 : 1,
+            background: isBookable ? `${stageColor}15` : stageBox.background,
+            boxShadow: isBookable ? `0 0 12px ${stageColor}80` : (isHL ? `0 0 12px ${stageColor}80` : "none"),
+            animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
+          }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: stageColor }} />
               <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 0.5 }}>🎤 {stageNames[si] || `Stage ${si + 1}`}</div>
+              {sa.length === 3 && <span style={{ fontSize: 9, color: "#34d399", marginLeft: "auto" }}>✅</span>}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {[0, 1, 2].map(slot => {
@@ -379,25 +388,26 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 </div>;
               })}
             </div>
+            {isBookable && <div style={{ fontSize: 9, color: "#fbbf24", fontStyle: "italic", marginTop: 4, textAlign: "center" }}>↑ Click to book here</div>}
           </div>;
         })}
       </div>}
-      {/* Three Fields side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 8 }}>
+      {/* Three Fields side by side — sized to match stage card proportions */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, minmax(0, 1fr))`, gap: 8, maxWidth: 600, margin: "0 auto" }}>
         {fields.map((field, fIdx) => {
           const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
-          return <div key={fIdx} style={{ padding: compact ? 8 : 10, borderRadius: 12, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          return <div key={fIdx} style={{ padding: compact ? 6 : 8, borderRadius: 10, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, textAlign: "center" }}>Field {fIdx + 1}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {AMENITY_TYPES.map(t => {
                 const c = field?.[t] || 0;
-                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 6px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}15` : "rgba(0,0,0,0.2)", opacity: c > 0 ? 1 : 0.45, minHeight: compact ? 22 : 28 }}>
+                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 5px", borderRadius: 5, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 18 : 22 }}>
                   <span style={{ fontSize: 10, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
                   {c > 0 && renderFieldTokens(field, t)}
                 </div>;
               })}
             </div>
-            {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
+            {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 4, fontStyle: "italic" }}>empty</div>}
           </div>;
         })}
       </div>
@@ -2921,6 +2931,7 @@ export default function Headliners() {
       return { ...p, [pid]: {
         ...updated,
         vp: (updated.vp || 0) + vpFromStars,
+        starDiceVPThisYear: (updated.starDiceVPThisYear || 0) + vpFromStars,
         heldDice: 0,
       } };
     });
@@ -3026,8 +3037,13 @@ export default function Headliners() {
       const finalFame = computeFame(pd, rawT);
       const finalFameVP = FAME_VP[Math.min(5, finalFame)] || 0;
       vpBonus += (finalFameVP - fameVP);
-      const preYearVP = pd.vp || 0;
-      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: finalFameVP, ticketVP, artistVP, councilVP: 0, effectVP, preYearVP, totalYearVP: vpBonus };
+      // Star dice VP was applied to pd.vp during the roll phase, before this scoring runs.
+      // For the year-end breakdown, we want to show "preYearVP" as the score going INTO this year,
+      // then add starDiceVP + other bonuses on top — so we subtract starDiceVP from the visible preYearVP
+      // and include it in totalYearVP. This keeps the equation preVP + totalYearVP = currentVP truthful.
+      const starDiceVP = pd.starDiceVPThisYear || 0;
+      const preYearVP = (pd.vp || 0) - starDiceVP;
+      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: finalFameVP, ticketVP, artistVP, councilVP: 0, effectVP, starDiceVP, preYearVP, totalYearVP: vpBonus + starDiceVP };
       logs.push({ type: "entry", who: p.festivalName, text: `🎟️ ${rawT} tickets${ticketVP ? " 👑+1VP" : ""} | 🔥${finalFame}→${finalFameVP}VP | Artists+${artistVP}VP` });
       // Store computed values back into snap for use by subsequent players
       snap[p.id] = { ...pd, tickets: rawT, rawTickets: rawT, fame: finalFame, vp: (pd.vp || 0) + vpBonus };
@@ -3184,7 +3200,7 @@ export default function Headliners() {
         const emptyStages = (pd.stages || []).map(() => []);
         // Reset baseFame but preserve any fame gained during pre-round (stage opening)
         // Reset high-water marks so dice can be re-claimed for current fame/stages this year
-        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0 };
+        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0 };
       }
       return next;
     });
@@ -4104,27 +4120,20 @@ export default function Headliners() {
           </div>
 
           {/* Board + stage artists */}
-          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 16, justifyContent: "center", alignItems: isMobile ? "center" : "flex-start", flexWrap: "wrap" }}>
-            <PlayerBoard pd={currentPD} stageColors={currentPD.stageColors || []} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: currentPlayerId })} />
-            <div style={{ display: "flex", flexDirection: isMobile ? "row" : "column", gap: 8, flexWrap: "wrap", justifyContent: "center", minWidth: isMobile ? undefined : 180 }}>
-              {(currentPD.stages || []).map((_, si) => {
-                const sa = stageArtists[si] || [];
-                const sName = (currentPD.stageNames || [])[si] || `Stage ${si + 1}`;
-                const sColor = (currentPD.stageColors || [])[si] || "#7c3aed";
-                return <div key={si} style={{ padding: 10, borderRadius: 12, background: `${sColor}15`, border: artistAction === "pickStage" && sa.length < 3 ? `2px solid ${sColor}` : `1px solid ${sColor}50`, cursor: artistAction === "pickStage" ? "pointer" : "default", transition: "all 0.2s" }} onClick={() => artistAction === "pickStage" && sa.length < 3 && handleStageSelect(si)}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: sColor, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: sColor, display: "inline-block" }} />
-                    {sName} {sa.length === 3 ? <span style={{ fontSize: 9, color: "#34d399" }}>✅ FULL</span> : <span style={{ fontSize: 9, color: "#94a3b8" }}>({sa.length}/3)</span>}
-                  </div>
-                  {sa.map((a, ai) => <div key={ai} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, marginBottom: 2, background: genreGradient(a.genre), color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>{ai === 2 ? "⭐ " : ""}{a.name}</span>
-                    <span style={{ fontSize: 8, opacity: 0.8 }}>{a.vp}VP</span>
-                  </div>)}
-                  {sa.length === 0 && <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic" }}>Empty</div>}
-                  {sa.length < 3 && artistAction === "pickStage" && <div style={{ fontSize: 10, color: "#fbbf24", fontStyle: "italic", marginTop: 4 }}>↑ Click to book here</div>}
-                </div>;
-              })}
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 12 : 16, justifyContent: "center", alignItems: "center" }}>
+            <PlayerBoard
+              pd={currentPD}
+              stageColors={currentPD.stageColors || []}
+              pickStageMode={artistAction === "pickStage"}
+              onStageClick={(si) => {
+                const sa = (currentPD.stageArtists || [])[si] || [];
+                if (artistAction === "pickStage" && sa.length < 3) {
+                  handleStageSelect(si);
+                } else {
+                  setShowStageDetail({ stageIdx: si, playerId: currentPlayerId });
+                }
+              }}
+            />
           </div>
 
           {/* Available Artist Pool */}
@@ -4665,6 +4674,7 @@ export default function Headliners() {
                     {td.artistVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(236,72,153,0.15)", border: "1px solid #ec489940", color: "#f472b6", fontSize: 12, fontWeight: 600 }}>🎤 +{td.artistVP}</span>}
                     {td.fameVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(251,191,36,0.15)", border: "1px solid #fbbf2440", color: "#fbbf24", fontSize: 12, fontWeight: 600 }}>🔥 +{td.fameVP}</span>}
                     {td.councilVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e40", color: "#4ade80", fontSize: 12, fontWeight: 600 }}>📋 +{td.councilVP}</span>}
+                    {td.starDiceVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(168,85,247,0.15)", border: "1px solid #a855f740", color: "#c084fc", fontSize: 12, fontWeight: 600 }}>🎲 +{td.starDiceVP}</span>}
                     {td.effectVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", border: "1px solid #7c3aed40", color: "#c4b5fd", fontSize: 12, fontWeight: 600 }}>✨ +{td.effectVP}</span>}
                     {td.ticketVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa40", color: "#60a5fa", fontSize: 12, fontWeight: 600 }}>👑 +{td.ticketVP}</span>}
                   </div>
