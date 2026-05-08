@@ -928,6 +928,11 @@ export default function Headliners() {
   const [artistDeck, setArtistDeck] = useState([]);
   const [artistPool, setArtistPool] = useState([]);
   const [discardPile, setDiscardPile] = useState([]);
+  // Keep refs in sync with state so functions called inside chained event handlers
+  // can see the latest values without waiting for React to flush.
+  useEffect(() => { artistDeckRef.current = artistDeck; }, [artistDeck]);
+  useEffect(() => { artistPoolRef.current = artistPool; }, [artistPool]);
+  useEffect(() => { discardPileRef.current = discardPile; }, [discardPile]);
   const [showDiscard, setShowDiscard] = useState(false);
   const [firstFullLineup, setFirstFullLineup] = useState(false);
 
@@ -945,6 +950,8 @@ export default function Headliners() {
   // Draw 2 flow: player picks 2 artists from any combo of pool/deck
   const [draw2Picks, setDraw2Picks] = useState([]); // artists picked so far (0, 1, or 2)
   const [draw2DeckCard, setDraw2DeckCard] = useState(null); // deck card drawn but not yet decided
+  useEffect(() => { deckDrawnCardRef.current = deckDrawnCard; }, [deckDrawnCard]);
+  useEffect(() => { draw2PicksRef.current = draw2Picks; }, [draw2Picks]);
 
   // Setup artist draft
   const [setupDraftOptions, setSetupDraftOptions] = useState([]); // 4 cards offered to current setup player
@@ -989,6 +996,16 @@ export default function Headliners() {
   const [dicePool, setDicePool] = useState(0); // initialized at game start
   const dicePoolRef = useRef(dicePool);
   useEffect(() => { dicePoolRef.current = dicePool; }, [dicePool]);
+  // ─── Refs for synchronous-fresh reads of zone state inside chained event handlers ───
+  // React batches setState. When applyDrawArtistsBonus or other handlers fire synchronously
+  // right after a draw/pickup, the closure-captured zone state is stale. These refs are
+  // updated alongside their setX() in drawFromDeck/refillPool/etc and read inside getInUseNames
+  // and drawFromDeck so chained calls within one event see the latest deck/pool/discard.
+  const artistPoolRef = useRef([]);
+  const artistDeckRef = useRef([]);
+  const discardPileRef = useRef([]);
+  const deckDrawnCardRef = useRef(null);
+  const draw2PicksRef = useRef([]);
   // Idempotency latch — only grant positional dice once per year, even if entry point fires multiple times
   const positionalGrantedYearRef = useRef(0);
   // Per-player held dice count is on pd.heldDice
@@ -1210,36 +1227,60 @@ export default function Headliners() {
 
   /** Get names of all artists currently in use (on stages, in hands, in pool) */
   function getInUseNames() {
+    // Read from refs (synchronous freshness) so chained event handlers — like
+    // applyDrawArtistsBonus running right after a pool pickup or deck draw — see the
+    // very latest zone state and don't accidentally re-include or re-draw a card
+    // that's about to land in pool / hand / stages.
     const names = new Set();
-    artistPool.forEach(a => names.add(a.name));
-    for (const pid of Object.keys(playerData)) {
-      const pd = playerData[pid];
-      (pd.hand || []).forEach(a => names.add(a.name));
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => names.add(a.name)));
+    const pool = artistPoolRef.current || artistPool;
+    const pd = playerDataRef.current || playerData;
+    pool.forEach(a => names.add(a.name));
+    for (const pid of Object.keys(pd)) {
+      const p = pd[pid];
+      (p.hand || []).forEach(a => names.add(a.name));
+      (p.stageArtists || []).forEach(sa => sa.forEach(a => names.add(a.name)));
     }
+    // Cards mid-draw (waiting on user pick) — not in pool/hand/deck/discard, but should
+    // not be re-drawn or re-shuffled while the player is choosing.
+    const drawn = deckDrawnCardRef.current;
+    if (drawn) {
+      if (Array.isArray(drawn)) drawn.forEach(a => a && names.add(a.name));
+      else if (drawn.name) names.add(drawn.name);
+    }
+    (draw2PicksRef.current || []).forEach(a => a && names.add(a.name));
     return names;
   }
 
   function drawFromDeck(count = 1) {
     const inUse = getInUseNames();
-    let deck = [...artistDeck];
-    let disc = [...discardPile];
+    // Read deck/discard from refs to handle synchronous chained calls within one event
+    let deck = [...(artistDeckRef.current || artistDeck)];
+    let disc = [...(discardPileRef.current || discardPile)];
     const drawn = [];
     for (let i = 0; i < count; i++) {
-      // Filter deck to exclude in-use artists
+      // If deck is empty but discard has eligible (not-in-use) cards, reshuffle them in.
       if (deck.length === 0 && disc.length > 0) {
-        deck = shuffle(disc.filter(a => !inUse.has(a.name))); disc = disc.filter(a => inUse.has(a.name));
+        const reusable = disc.filter(a => !inUse.has(a.name));
+        const stuck = disc.filter(a => inUse.has(a.name));
+        deck = shuffle(reusable);
+        disc = stuck;
       }
-      // Skip any in-use artists at top of deck
+      // Skip any in-use artists at top of deck — push them aside to discard rather than drawing them
       while (deck.length > 0 && inUse.has(deck[deck.length - 1]?.name)) {
         disc.push(deck.pop());
       }
       if (deck.length > 0) {
         const card = deck.pop();
         drawn.push(card);
-        inUse.add(card.name); // prevent drawing same card twice in one batch
+        // Prevent the same card from being drawn twice in a single batch (chained drawFromDeck calls)
+        inUse.add(card.name);
+      } else {
+        break; // truly nothing left to draw
       }
     }
+    // Update refs synchronously so any further calls in the same handler see the current deck/discard.
+    artistDeckRef.current = deck;
+    discardPileRef.current = disc;
     setArtistDeck(deck); setDiscardPile(disc);
     return drawn;
   }
@@ -1267,6 +1308,13 @@ export default function Headliners() {
     const names = new Set();
     Object.values(agentPlacements).forEach(p => { if (p && p.type === "pool" && p.artistName) names.add(p.artistName); });
     return names;
+  }
+
+  // True iff artist `name` has at least one agent on it placed by a player OTHER than `byPid`.
+  // Used to gate human pool-pickup paths so you can't snatch an artist another player's agent has reserved.
+  // Note: doesn't block your OWN agent — you may still book your own claim through the normal agent flow.
+  function isAgentClaimedByOther(name, byPid) {
+    return Object.entries(agentPlacements).some(([pid, p]) => p && p.type === "pool" && p.artistName === name && parseInt(pid) !== byPid);
   }
 
   function refreshPool(cycles = 1) {
@@ -2338,13 +2386,21 @@ export default function Headliners() {
       }
       if (pe.type === "signArtist") {
         const remaining = pe.signCount || 1;
-        if (artistPool.length > 0) {
-          const best = [...artistPool].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0];
+        const eligible = artistPool.filter(a => !isAgentClaimedByOther(a.name, pid));
+        if (eligible.length > 0) {
+          const best = [...eligible].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0];
           const idx = artistPool.indexOf(best);
           const np = [...artistPool]; np.splice(idx, 1);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, best] } }));
           addLog("🤖 AI", `Signed ${best.name} from pool`);
           refillPool(np);
+        } else if (artistDeck.length > 0) {
+          // No eligible pool artist — fall back to deck
+          const drawn = drawFromDeck(1);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, drawn[0]] } }));
+            addLog("🤖 AI", `Signed ${drawn[0].name} from deck (pool was agent-blocked)`);
+          }
         }
         if (remaining > 1) {
           setPendingEffect({ ...pe, signCount: remaining - 1 });
@@ -2890,6 +2946,11 @@ export default function Headliners() {
   };
   const draw2PickFromPool = (idx) => {
     const artist = artistPool[idx];
+    if (!artist) return;
+    if (isAgentClaimedByOther(artist.name, currentPlayerId)) {
+      addLog(currentPlayer.festivalName, `🕵️ ${artist.name} is claimed by another agent — can't pick`);
+      return;
+    }
     const newPool = [...artistPool]; newPool.splice(idx, 1);
     setArtistPool(newPool);
     const newPicks = [...draw2Picks, artist];
@@ -4602,18 +4663,25 @@ export default function Headliners() {
               }} style={{ ...bs, fontSize: 11, marginBottom: 10 }}>🔄 Refresh Pool First</button>}
               {poolRefreshedByEffect && <p style={{ color: "#4ade80", fontSize: 10, marginBottom: 8 }}>✓ Pool refreshed</p>}
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                {artistPool.map((a, i) => <ArtistCard key={i} artist={a} showCost small onClick={() => {
-                  const newPool = [...artistPool]; newPool.splice(i, 1);
-                  setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, a] } }));
-                  addLog("Effect", `Signed ${a.name} from pool`);
-                  refillPool(newPool);
-                  if (remaining > 1) {
-                    setPendingEffect({ ...pe, signCount: remaining - 1 });
-                  } else {
-                    setPendingEffect(null); setPendingEffectPid(null);
-                    setDeferPoolRefresh(false);
-                  }
-                }} />)}
+                {artistPool.map((a, i) => {
+                  const claimedByOther = isAgentClaimedByOther(a.name, pid);
+                  return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
+                    <ArtistCard artist={a} showCost small onClick={() => {
+                      if (claimedByOther) return;
+                      const newPool = [...artistPool]; newPool.splice(i, 1);
+                      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, a] } }));
+                      addLog("Effect", `Signed ${a.name} from pool`);
+                      refillPool(newPool);
+                      if (remaining > 1) {
+                        setPendingEffect({ ...pe, signCount: remaining - 1 });
+                      } else {
+                        setPendingEffect(null); setPendingEffectPid(null);
+                        setDeferPoolRefresh(false);
+                      }
+                    }} />
+                    {claimedByOther && <div style={{ position: "absolute", top: -4, right: -4, background: "#1d4ed8", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #60a5fa" }}>🕵️</div>}
+                  </div>;
+                })}
               </div>
               <button onClick={() => {
                 const drawn = drawFromDeck(1);
@@ -5315,8 +5383,9 @@ export default function Headliners() {
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const agentsOnIt = Object.entries(agentPlacements).filter(([pid, p]) => p && p.type === "pool" && p.artistName === a.name);
-                    return <div key={i} style={{ position: "relative" }}>
-                      <ArtistCard artist={a} showCost small onClick={() => { if (draw2Picks.length < 2) draw2PickFromPool(i); }} />
+                    const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
+                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
+                      <ArtistCard artist={a} showCost small onClick={() => { if (!claimedByOther && draw2Picks.length < 2) draw2PickFromPool(i); }} />
                       {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                         {agentsOnIt.map(([pid], ai) => {
                           const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -5778,18 +5847,25 @@ export default function Headliners() {
           {artistPool.length > 0 && <div style={{ marginBottom: 12 }}>
             <p style={{ color: "#c4b5fd", fontSize: 11, marginBottom: 8 }}>Pick from Pool:</p>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              {artistPool.map((a, i) => <ArtistCard key={i} artist={a} showCost small onClick={() => {
-                setFreeAmenityPlaced(prev => {
-                  if (prev >= freeAmenityCount) return prev; // already done
-                  const newPool = [...artistPool]; newPool.splice(i, 1); setArtistPool(newPool);
-                  setPlayerData(p => ({ ...p, [prp.id]: { ...p[prp.id], hand: [...(p[prp.id].hand || []), a] } }));
-                  addLog(prp.festivalName, `drew ${a.name} from pool (free draw)`);
-                  const newPlaced = prev + 1;
-                  if (newPlaced < freeAmenityCount) setTimeout(() => setPreRoundStep("preRoundDrawChoose"), 50);
-                  else setTimeout(() => nextPreRound(), 50);
-                  return newPlaced;
-                });
-              }} />)}
+              {artistPool.map((a, i) => {
+                const claimedByOther = isAgentClaimedByOther(a.name, prp.id);
+                return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
+                  <ArtistCard artist={a} showCost small onClick={() => {
+                    if (claimedByOther) return;
+                    setFreeAmenityPlaced(prev => {
+                      if (prev >= freeAmenityCount) return prev; // already done
+                      const newPool = [...artistPool]; newPool.splice(i, 1); setArtistPool(newPool);
+                      setPlayerData(p => ({ ...p, [prp.id]: { ...p[prp.id], hand: [...(p[prp.id].hand || []), a] } }));
+                      addLog(prp.festivalName, `drew ${a.name} from pool (free draw)`);
+                      const newPlaced = prev + 1;
+                      if (newPlaced < freeAmenityCount) setTimeout(() => setPreRoundStep("preRoundDrawChoose"), 50);
+                      else setTimeout(() => nextPreRound(), 50);
+                      return newPlaced;
+                    });
+                  }} />
+                  {claimedByOther && <div style={{ position: "absolute", top: -4, right: -4, background: "#1d4ed8", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #60a5fa" }}>🕵️</div>}
+                </div>;
+              })}
             </div>
           </div>}
           <button onClick={() => {
