@@ -318,8 +318,8 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
   const fields = pd?.fields || emptyFields();
 
   const stageBox = {
-    minWidth: compact ? 120 : 140,
-    padding: compact ? "8px 10px" : "10px 12px",
+    minWidth: compact ? 150 : 180,
+    padding: compact ? "10px 12px" : "12px 14px",
     borderRadius: 12,
     background: "rgba(15,14,26,0.9)",
     border: "1px solid #2a2a4a",
@@ -343,7 +343,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
     const cap = compact ? 4 : 6;
     const visible = Math.min(count, cap);
     const tokens = [];
-    const tSize = compact ? 18 : 22;
+    const tSize = compact ? 20 : 24;
     for (let i = 0; i < visible; i++) {
       tokens.push(<div key={i} style={{ ...tokenStyle(AMENITY_COLORS[type], tSize), marginLeft: i === 0 ? 0 : -tSize * 0.35 }}>{AMENITY_ICONS[type]}</div>);
     }
@@ -393,21 +393,21 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
         })}
       </div>}
       {/* Three Fields side by side — sized to match stage card proportions */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, minmax(0, 1fr))`, gap: 8, maxWidth: 600, margin: "0 auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, minmax(0, 1fr))`, gap: 10, maxWidth: 620, margin: "0 auto" }}>
         {fields.map((field, fIdx) => {
           const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
-          return <div key={fIdx} style={{ padding: compact ? 6 : 8, borderRadius: 10, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, textAlign: "center" }}>Field {fIdx + 1}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          return <div key={fIdx} style={{ padding: compact ? 10 : 12, borderRadius: 12, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {AMENITY_TYPES.map(t => {
                 const c = field?.[t] || 0;
-                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 5px", borderRadius: 5, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 18 : 22 }}>
-                  <span style={{ fontSize: 10, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 7px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 22 : 26 }}>
+                  <span style={{ fontSize: 11, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
                   {c > 0 && renderFieldTokens(field, t)}
                 </div>;
               })}
             </div>
-            {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 4, fontStyle: "italic" }}>empty</div>}
+            {fieldTotal === 0 && <div style={{ fontSize: 10, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
           </div>;
         })}
       </div>
