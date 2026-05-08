@@ -821,18 +821,33 @@ export default function Headliners() {
   }, []);
 
   // Pure function: compute tickets/fame for a single player data object
+  // Council fame + ticket rewards are folded in here so they apply continuously while qualifying.
   function computeTicketsForPlayer(pd) {
     if (!pd) return pd;
-    // Backfill missing fields[] (in case loaded from older state) and re-sync amenities
     const fields = pd.fields || emptyFields();
     const am = sumFields(fields);
     let t = (am.campsite || 0) * 2;
     (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += a.tickets; }));
     t += pd.bonusTickets || 0;
+    // Council ticket bonuses (year-scaled, applies if field qualifies in current year)
+    const councils = pd.councils || [];
+    const yIdx = Math.max(0, Math.min(3, (year || 1) - 1));
+    let councilTickets = 0;
+    let councilFame = 0;
+    for (let i = 0; i < councils.length; i++) {
+      const c = councils[i];
+      if (!c) continue;
+      const qualifies = councilQualifies(c, fields[i], year || 1);
+      if (!qualifies) continue;
+      if (c.reward?.type === "tickets") councilTickets += c.reward.perYear[yIdx] || 0;
+      if (c.reward?.type === "fame") councilFame += c.reward.perYear[yIdx] || 0;
+    }
+    t += councilTickets;
     let fame = pd.baseFame || 0;
     fame += Math.floor(t / 10);
+    fame += councilFame;
     fame = Math.min(FAME_MAX, fame);
-    return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame };
+    return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame, councilTicketsThisYear: councilTickets, councilFameThisYear: councilFame };
   }
 
   // Recalculate ALL players' tickets using latest state
@@ -1714,7 +1729,7 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null] };
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -2950,31 +2965,23 @@ export default function Headliners() {
     }
   };
 
-  // ─── STAR DICE PHASE (replaces old event phase) ───
-  // Atomic check + grant for dice triggers.
-  // Reads fame/filled-stages snapshot synchronously, then uses setDicePool to compute `granted`
-  // (based on actual pool size), and schedules a setPlayerData with the correct granted count.
-  // The granted count is captured in the setDicePool callback's closure, so the queued
-  // setPlayerData updater reads the right value when it runs.
+  // ─── STAR DICE PHASE ───
+  // Atomic check + grant for stage-fill triggers (the only "immediate" dice trigger).
+  // Fame triggers are removed — fame now only earns dice via the year-end positional reward.
   function checkAndClaimDice(pid) {
     const cur = playerData[pid];
     if (!cur) return;
-    const fame = cur.fame || 0;
-    const fameHW = cur.fameHighWater || 0;
     const filled = (cur.stageArtists || []).filter(sa => sa.length === 3).length;
     const filledHW = cur.filledStagesHighWater || 0;
-    const owed = Math.max(0, fame - fameHW) + Math.max(0, filled - filledHW);
+    const owed = Math.max(0, filled - filledHW);
     if (owed === 0) return;
 
     setDicePool(prevPool => {
       const granted = Math.min(owed, prevPool);
       if (granted > 0) {
         const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
-        const reason = (fame > fameHW && filled > filledHW) ? "Fame + Stage" : (fame > fameHW ? `Fame ${fame}` : "Stage filled");
-        addLog("🎲", `${pName} gained ${granted} Star Die${granted === 1 ? "" : "s"} (${reason}) — ${prevPool - granted} left in pool`);
+        addLog("🎲", `${pName} gained ${granted} Star Die${granted === 1 ? "" : "s"} (Stage filled) — ${prevPool - granted} left in pool`);
       }
-      // Schedule the player-data update — this updater runs later, but captures `granted`
-      // from this callback's closure, which is already set to the correct value.
       setPlayerData(prevPD => {
         const c = prevPD[pid];
         if (!c) return prevPD;
@@ -2983,7 +2990,6 @@ export default function Headliners() {
           [pid]: {
             ...c,
             heldDice: (c.heldDice || 0) + granted,
-            fameHighWater: fame,
             filledStagesHighWater: filled,
           }
         };
@@ -2992,32 +2998,74 @@ export default function Headliners() {
     });
   }
 
-  // Convenience: check all players (used after batch updates like recalcTickets)
-  function checkAllDiceTriggers() {
-    for (const p of players) checkAndClaimDice(p.id);
+  // Council star dice grants: at year-start AND on amenity placement, check each council.
+  // Per-(field, year) latch: pd.councilDiceGrantedThisYear[fIdx] = true once granted, reset each year.
+  function checkAndClaimCouncilDice(pid) {
+    const cur = playerData[pid];
+    if (!cur) return;
+    const councils = cur.councils || [];
+    const fields = cur.fields || emptyFields();
+    const granted = cur.councilDiceGrantedThisYear || [false, false, false];
+    const yIdx = Math.max(0, Math.min(3, (year || 1) - 1));
+    for (let fIdx = 0; fIdx < councils.length; fIdx++) {
+      const c = councils[fIdx];
+      if (!c) continue;
+      if (c.reward?.type !== "starDice") continue;
+      if (granted[fIdx]) continue;
+      if (!councilQualifies(c, fields[fIdx], year || 1)) continue;
+      const amount = c.reward.perYear[yIdx] || 0;
+      if (amount <= 0) continue;
+      // Capture for closure
+      const fIdxClosure = fIdx;
+      const owed = amount;
+      setDicePool(prevPool => {
+        const got = Math.min(owed, prevPool);
+        if (got > 0) {
+          const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
+          addLog("🎲", `${pName} gained ${got} Star Die${got === 1 ? "" : "s"} (Council: ${c.name}, F${fIdxClosure + 1}) — ${prevPool - got} left in pool`);
+        }
+        setPlayerData(prevPD => {
+          const cc = prevPD[pid];
+          if (!cc) return prevPD;
+          const flags = [...(cc.councilDiceGrantedThisYear || [false, false, false])];
+          flags[fIdxClosure] = true;
+          return {
+            ...prevPD,
+            [pid]: {
+              ...cc,
+              heldDice: (cc.heldDice || 0) + got,
+              councilDiceGrantedThisYear: flags,
+            }
+          };
+        });
+        return prevPool - got;
+      });
+    }
   }
 
-  // Auto-trigger dice claim whenever playerData fame or filled-stages might have changed.
-  // Effect is gated to game/preRound phases and uses a ref to skip re-runs caused by its own updates.
+  // Auto-trigger: stage-fill dice + council dice on relevant state changes.
   const diceTriggerLatchRef = useRef({});
   useEffect(() => {
     if (phase !== "game" && phase !== "preRound" && phase !== "objectiveChoice") return;
     for (const p of players) {
       const pd = playerData[p.id];
       if (!pd) continue;
-      const fame = pd.fame || 0;
       const filled = (pd.stageArtists || []).filter(sa => sa.length === 3).length;
-      const key = `${fame}:${filled}`;
+      const fields = pd.fields || emptyFields();
+      // Latch key includes per-field amenity counts (for council triggers)
+      const fieldKey = fields.map(f => `${f.campsite}-${f.security}-${f.catering}-${f.portaloo}`).join("|");
+      const key = `${filled}::${fieldKey}::${year}`;
       if (diceTriggerLatchRef.current[p.id] !== key) {
         diceTriggerLatchRef.current[p.id] = key;
-        // Only call if there's actual new growth
-        if (fame > (pd.fameHighWater || 0) || filled > (pd.filledStagesHighWater || 0)) {
+        if (filled > (pd.filledStagesHighWater || 0)) {
           checkAndClaimDice(p.id);
         }
+        // Council star dice — checked on every state change since amenity counts may have crossed thresholds
+        checkAndClaimCouncilDice(p.id);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerData, phase]);
+  }, [playerData, phase, year]);
 
   // AI resolve auto-trigger: useEffect deps ensure it only fires when phase/result actually change
   useEffect(() => {
@@ -3061,10 +3109,61 @@ export default function Headliners() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, starRollPhase, starRollPlayer]);
 
+  // Grant positional star dice based on year-end stats. Called at year end before rolling.
+  // - Most fame: +2 (sole) or +1 each (tied)
+  // - Most tickets: +1 each (sole or tied)
+  // - Least tickets (3+ players only): +1 each (sole or tied)
+  // All grants pull from the shared pool and stop if it runs dry.
+  function grantPositionalDice() {
+    // Snapshot current player data
+    const pids = players.map(p => p.id);
+    const fame = {}, tickets = {};
+    pids.forEach(pid => {
+      const pd = playerData[pid];
+      fame[pid] = pd?.fame || 0;
+      tickets[pid] = pd?.tickets || 0;
+    });
+    // Most fame
+    const maxFame = Math.max(...pids.map(pid => fame[pid]));
+    const fameLeaders = pids.filter(pid => fame[pid] === maxFame);
+    const fameAward = fameLeaders.length === 1 ? 2 : 1;
+    fameLeaders.forEach(pid => grantOnePositionalDice(pid, fameAward, `Most Fame (${maxFame})`));
+    // Most tickets
+    const maxTickets = Math.max(...pids.map(pid => tickets[pid]));
+    const ticketLeaders = pids.filter(pid => tickets[pid] === maxTickets);
+    if (maxTickets > 0) ticketLeaders.forEach(pid => grantOnePositionalDice(pid, 1, `Most Tickets (${maxTickets})`));
+    // Least tickets — only in 3+ player games
+    if (pids.length >= 3) {
+      const minTickets = Math.min(...pids.map(pid => tickets[pid]));
+      // Only grant if there's actually a "least" (i.e., not everyone tied at the top — but with min === max all tied)
+      if (minTickets < maxTickets) {
+        const ticketLosers = pids.filter(pid => tickets[pid] === minTickets);
+        ticketLosers.forEach(pid => grantOnePositionalDice(pid, 1, `Least Tickets (${minTickets})`));
+      }
+    }
+  }
+  function grantOnePositionalDice(pid, count, reason) {
+    if (count <= 0) return;
+    setDicePool(prevPool => {
+      const got = Math.min(count, prevPool);
+      if (got > 0) {
+        const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
+        addLog("🎲", `${pName} gained ${got} Star Die${got === 1 ? "" : "s"} (${reason}) — ${prevPool - got} left in pool`);
+        setPlayerData(prevPD => ({
+          ...prevPD,
+          [pid]: { ...prevPD[pid], heldDice: (prevPD[pid].heldDice || 0) + got },
+        }));
+      }
+      return prevPool - got;
+    });
+  }
+
   const beginStarDicePhase = () => {
     // Evaluate councils before rolling so ticket counts are final
     players.forEach(p => evaluateCouncils(p.id));
     addLogH(`Year ${year} — Star Dice Roll`, "round");
+    // Grant positional rewards (most fame, most/least tickets) BEFORE rolling so they're rolled this year
+    grantPositionalDice();
     setStarRollPlayer(0);
     setStarRollResult(null);
     setStarRollPhase("intro");
@@ -3420,7 +3519,7 @@ export default function Headliners() {
         const emptyStages = (pd.stages || []).map(() => []);
         // Reset baseFame but preserve any fame gained during pre-round (stage opening)
         // Reset high-water marks so dice can be re-claimed for current fame/stages this year
-        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0 };
+        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false] };
       }
       return next;
     });
