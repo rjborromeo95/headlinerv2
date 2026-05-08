@@ -937,6 +937,7 @@ export default function Headliners() {
   const [selectedStageIdx, setSelectedStageIdx] = useState(null);
   const [showHeadliner, setShowHeadliner] = useState(null); // { artist, festival }
   const [showBookedArtist, setShowBookedArtist] = useState(null); // { artist, stageName, isHeadliner, festival }
+  const [showCouncilDrawBonus, setShowCouncilDrawBonus] = useState(null); // { drawn: [Artist], festival, pid }
   const [floatingBonuses, setFloatingBonuses] = useState([]); // [{ id, text, color, x }]
   const [showHand, setShowHand] = useState(false);
   const [deckDrawnCard, setDeckDrawnCard] = useState(null); // card drawn from deck awaiting confirm
@@ -2548,6 +2549,7 @@ export default function Headliners() {
       }
       if (showHeadliner) { setShowHeadliner(null); scheduleNext(300); return; }
       if (showBookedArtist) { setShowBookedArtist(null); scheduleNext(300); return; }
+      if (showCouncilDrawBonus) { setShowCouncilDrawBonus(null); scheduleNext(300); return; }
       // (council-fame popup removed)
       
       // AI: handle pending agent artist booking
@@ -2649,6 +2651,8 @@ export default function Headliners() {
           setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...drawn] } }));
           drawn.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
           addLog("🤖 AI", `Drew ${drawn.map(a => a.name).join(" + ")} (${drawn.length} artists)`);
+          // Council reward: drawArtists councils give +N additional artists from deck
+          applyDrawArtistsBonus(currentPlayerId);
         }
         setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
         setActionTaken(true); setTimeout(() => recalcTickets(), 50);
@@ -2703,7 +2707,7 @@ export default function Headliners() {
     if (aiProcessing.current) return;
     aiTimer.current = setTimeout(() => aiStep(), 700);
     return () => { if (aiTimer.current) clearTimeout(aiTimer.current); clearTimeout(safetyTimer); };
-  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showYearAnnouncement]);
+  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement]);
 
   // AI objective choices are handled in startGame — no useEffect needed
 
@@ -2838,6 +2842,33 @@ export default function Headliners() {
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "discard", discardIdx: discardPile.length - 1 }); setArtistAction("pickStage");
   };
+  // ── Council drawArtists bonus ──────────────────────────────────────────────
+  // Fires every time a player completes a "draw" action (pool pickup, deck draw, or sign-two).
+  // Pulls +N additional artists from the deck and adds them to the player's hand,
+  // where N is the year-scaled total across all qualifying drawArtists councils.
+  const applyDrawArtistsBonus = (pid) => {
+    const cur = playerDataRef.current?.[pid] || playerData[pid];
+    if (!cur) return [];
+    const bonus = totalCouncilRewardOfType(cur, year, "drawArtists");
+    if (bonus <= 0) return [];
+    const drawn = drawFromDeck(bonus);
+    if (drawn.length === 0) return [];
+    const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    const names = drawn.map(a => a.name).join(", ");
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
+    drawn.forEach(() => trackGoalProgress(pid, "artistsSigned"));
+    addLog(festival, `📋 Council bonus: +${drawn.length} artist${drawn.length === 1 ? "" : "s"} from deck (${names})`);
+    showFloatingBonus(`📋 +${drawn.length} 🎤 Council bonus!`, "#86efac");
+    // For human player: show a celebratory popup with the actual drawn cards.
+    // AI players skip the modal — the addLog entry is enough since AI auto-advances.
+    const isHuman = !players.find(p => p.id === pid)?.isAI;
+    if (isHuman) {
+      setShowCouncilDrawBonus({ drawn, festival, pid });
+      sfx.gainTickets();
+    }
+    return drawn;
+  };
+
   const handleReserveFromPool = (idx) => {
     const artist = artistPool[idx];
     const newPool = [...artistPool]; newPool.splice(idx, 1);
@@ -2845,6 +2876,8 @@ export default function Headliners() {
     setArtistPool(newPool);
     addLog(currentPlayer.festivalName, `picked up ${artist.name} from pool`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
+    // Council reward: drawArtists councils give +N additional artists from the deck
+    applyDrawArtistsBonus(currentPlayerId);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     setTimeout(() => recalcTickets(), 50);
   };
@@ -2875,20 +2908,10 @@ export default function Headliners() {
     if (newPicks.length >= 2) finishDraw2(newPicks);
   };
   const finishDraw2 = (picks) => {
-    // Council reward: drawArtists councils give +N additional artists from deck after the action
-    const cur = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId];
-    const bonus = totalCouncilRewardOfType(cur, year, "drawArtists");
-    let bonusDrawn = [];
-    if (bonus > 0) {
-      bonusDrawn = drawFromDeck(bonus);
-      if (bonusDrawn.length > 0) {
-        const names = bonusDrawn.map(a => a.name).join(", ");
-        addLog(currentPlayer.festivalName, `📋 Council bonus: drew ${bonusDrawn.length} extra from deck (${names})`);
-      }
-    }
-    setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks, ...bonusDrawn] } }));
+    setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
     picks.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
-    bonusDrawn.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
+    // Council reward: drawArtists councils give +N additional artists from deck
+    applyDrawArtistsBonus(currentPlayerId);
     setDraw2Picks([]); setDraw2DeckCard(null);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     setTimeout(() => recalcTickets(), 50);
@@ -2911,17 +2934,19 @@ export default function Headliners() {
     addLog(currentPlayer.festivalName, `drew ${kept.name} from deck`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
     if (other && artistPool.length >= 1) {
-      // Player must swap the unchosen card into a pool slot
+      // Player must swap the unchosen card into a pool slot — bonus fires after swap concludes
       setDeckDrawnCard(other); // store the unchosen card
       setArtistAction("deckSwapPool"); // new step: pick which pool artist to replace
     } else if (other) {
-      // Pool is empty — just add the other card to pool
+      // Pool is empty — just add the other card to pool, then conclude
       setArtistPool(prev => [...prev, other]);
       setDeckDrawnCard(null); setDeckCardRevealed(false);
+      applyDrawArtistsBonus(currentPlayerId);
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     } else {
-      // Only drew 1 card (deck was low)
+      // Only drew 1 card (deck was low) — conclude
       setDeckDrawnCard(null); setDeckCardRevealed(false);
+      applyDrawArtistsBonus(currentPlayerId);
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     }
     setTimeout(() => recalcTickets(), 50);
@@ -2936,6 +2961,7 @@ export default function Headliners() {
     setDiscardPile(prev => [...prev, replaced]);
     addLog(currentPlayer.festivalName, `swapped ${unchosen.name} into pool, discarded ${replaced.name}`);
     setDeckDrawnCard(null); setDeckCardRevealed(false);
+    applyDrawArtistsBonus(currentPlayerId);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
   };
   const handleConfirmDeckReserve = () => {
@@ -2946,6 +2972,7 @@ export default function Headliners() {
     addLog(currentPlayer.festivalName, `reserved ${card.name} from deck`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
     setDeckDrawnCard(null); setDeckCardRevealed(false);
+    applyDrawArtistsBonus(currentPlayerId);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
   };
   const handleStageSelect = (stageIdx) => {
@@ -4389,6 +4416,18 @@ export default function Headliners() {
             <p style={{ color: "#4ade80", fontSize: 13, padding: "6px 14px", borderRadius: 8, background: "rgba(34,197,94,0.1)", display: "inline-block" }}>✨ {showBookedArtist.artist.effect}</p>
           </div>}
           <p style={{ color: "#6b7280", fontSize: 11, marginTop: 12 }}>Click anywhere to continue</p>
+        </div>
+      </div>}
+      {/* Council drawArtists bonus popup — shown to humans when bonus draws fire */}
+      {showCouncilDrawBonus && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 955, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowCouncilDrawBonus(null)}>
+        <div onClick={e => e.stopPropagation()} style={{ textAlign: "center", animation: "bookReveal 0.45s", maxWidth: 640, width: "100%" }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>📋✨</div>
+          <h2 style={{ color: "#86efac", fontSize: 26, fontWeight: 900, margin: "0 0 6px" }}>Council Bonus!</h2>
+          <p style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 16 }}>{showCouncilDrawBonus.festival} drew +{showCouncilDrawBonus.drawn.length} extra artist{showCouncilDrawBonus.drawn.length === 1 ? "" : "s"} from the deck</p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", marginBottom: 16 }}>
+            {showCouncilDrawBonus.drawn.map((a, i) => <div key={i} style={{ animation: `bookReveal 0.5s ${i * 0.12}s both` }}><ArtistCard artist={a} showCost /></div>)}
+          </div>
+          <button onClick={() => setShowCouncilDrawBonus(null)} style={{ padding: "10px 24px", borderRadius: 10, border: "1px solid #86efac", background: "rgba(34,197,94,0.2)", color: "#86efac", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>Continue ✓</button>
         </div>
       </div>}
       {/* Floating bonuses */}
