@@ -694,8 +694,73 @@ function aiPickSetupAmenityWithCouncils(pd) {
   return best;
 }
 
+// Score how much a candidate artist contributes toward unclaimed lineup objectives. Considers
+// the artist's genres and the partial lineup state on each open stage. Returns a score boost
+// that the AI's main picker adds on top of base VP/ticket value.
+function aiScoreArtistForLineupObjectives(artist, pd, lineupObjectives) {
+  if (!artist || !lineupObjectives || lineupObjectives.length === 0) return 0;
+  const sa = pd?.stageArtists || [];
+  const artistGenres = artist.genre.split(",").map(g => g.trim());
+  let bestBonus = 0;
+  // For each open stage, check if booking this artist there helps progress an unclaimed objective
+  for (let si = 0; si < sa.length; si++) {
+    const stage = sa[si] || [];
+    if (stage.length >= 3) continue;
+    // Hypothetical lineup if we book this artist on this stage
+    const hypothetical = [...stage, artist];
+    for (const lo of lineupObjectives) {
+      if (!lo || lo.claimed2nd !== null) continue;
+      const required = [...lo.genres];
+      for (const a of hypothetical) {
+        const ag = a.genre.split(",").map(g => g.trim());
+        const matchIdx = required.findIndex(g => ag.includes(g));
+        if (matchIdx >= 0) required.splice(matchIdx, 1);
+      }
+      // Bonus scales with how much closer this artist gets us to the 3-genre target
+      const initialNeeded = lo.genres.length;
+      const stillNeeded = required.length;
+      const progress = initialNeeded - stillNeeded;
+      if (progress > 0) {
+        // First-claim worth more than second-claim
+        const claimValue = (lo.claimed1st === null) ? 6 : 3;
+        // Weight by relative completion (booking the 3rd matching artist is way more valuable than the 1st)
+        const proximity = (3 - stage.length); // 3 if empty, 1 if 2/3 full
+        const bonus = (claimValue / proximity) * (progress / initialNeeded);
+        if (bonus > bestBonus) bestBonus = bonus;
+      }
+    }
+  }
+  return bestBonus;
+}
+
+// Score how much a candidate artist contributes toward council qualification through its
+// amenity costs. Booking artists costs amenities, but each amenity placed counts toward councils.
+function aiScoreArtistForCouncilProgress(artist, pd, year) {
+  // Booking removes amenities — that's a NEGATIVE for fixed-count councils that are currently qualifying
+  // For threshold councils, amenities going UP toward target is good but we're going DOWN here.
+  // Net effect: artist booking generally consumes amenities, which hurts threshold-type councils.
+  // We just slightly bias against booking when it would break an active council.
+  if (!pd) return 0;
+  const councils = pd.councils || [];
+  const fields = pd.fields || [];
+  let penalty = 0;
+  for (let i = 0; i < councils.length; i++) {
+    const c = councils[i];
+    if (!c) continue;
+    const cond = c.condition;
+    // Only thresholdFixed (exact) and emptyField are sensitive to consumption
+    if (cond.type !== "thresholdFixed" && cond.type !== "emptyField") continue;
+    const wasQualifying = councilQualifies(c, fields[i], year || 1);
+    if (!wasQualifying) continue;
+    // Booking will pull amenities from somewhere — we don't know which field will be hit,
+    // so apply a small penalty as a heuristic. The placement function handles per-field details.
+    penalty -= 2;
+  }
+  return penalty;
+}
+
 /** AI decides what to do on its turn: returns { action, ... } */
-function aiDecideTurn(pd, artistPool, dice, year) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
@@ -707,18 +772,46 @@ function aiDecideTurn(pd, artistPool, dice, year) {
   const bookableHand = (pd.hand || []).filter(a => !bookedNames.has(a.name) && fame >= a.fame && counts.campsite >= a.campCost && counts.security >= a.securityCost && counts.catering >= a.cateringCost && counts.portaloo >= a.portalooCost);
   const hasOpenStage = openStages.length > 0;
 
-  // PRIORITY 1: Book from hand if possible
+  // PRIORITY 1: Book from hand if possible — score now includes lineup objective fit + council impact
   if (bookableHand.length > 0 && hasOpenStage) {
     bookableHand.sort((x, y) => {
-      const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0);
-      const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0);
+      const xLineup = aiScoreArtistForLineupObjectives(x, pd, lineupObjectives) * 4;
+      const xCouncil = aiScoreArtistForCouncilProgress(x, pd, year);
+      const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0) + xLineup + xCouncil;
+      const yLineup = aiScoreArtistForLineupObjectives(y, pd, lineupObjectives) * 4;
+      const yCouncil = aiScoreArtistForCouncilProgress(y, pd, year);
+      const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0) + yLineup + yCouncil;
       return yScore - xScore;
     });
     const pick = bookableHand[0];
     const idx = (pd.hand || []).indexOf(pick);
-    let bestStage = sa.findIndex(s => s.length === 2);
-    if (bestStage < 0) bestStage = sa.findIndex(s => s.length === 1);
-    if (bestStage < 0) bestStage = sa.findIndex(s => s.length === 0);
+    // Smart stage pick: choose the stage where this artist would BEST progress a lineup objective
+    // (prefer 2/3-full stages that complete an objective, then 1/3-full, then empty)
+    let bestStage = -1, bestStageScore = -Infinity;
+    for (let si = 0; si < sa.length; si++) {
+      const stage = sa[si] || [];
+      if (stage.length >= 3) continue;
+      const hypothetical = [...stage, pick];
+      // Score: completing a lineup at stage[2] is best, then proximity to lineup objective match
+      let score = stage.length * 10; // prefer fuller stages (more proximate to completion)
+      // If hypothetical lineup is exactly 3 and matches an unclaimed objective, big bonus
+      if (hypothetical.length === 3 && lineupObjectives) {
+        for (const lo of lineupObjectives) {
+          if (!lo || lo.claimed2nd !== null) continue;
+          const required = [...lo.genres];
+          for (const a of hypothetical) {
+            const ag = a.genre.split(",").map(g => g.trim());
+            const matchIdx = required.findIndex(g => ag.includes(g));
+            if (matchIdx >= 0) required.splice(matchIdx, 1);
+          }
+          if (required.length === 0) {
+            score += (lo.claimed1st === null) ? 80 : 40;
+            break;
+          }
+        }
+      }
+      if (score > bestStageScore) { bestStageScore = score; bestStage = si; }
+    }
     if (bestStage < 0) bestStage = 0;
     return { action: "book", source: "hand", artistIdx: idx, stageIdx: bestStage };
   }
@@ -1268,18 +1361,18 @@ export default function Headliners() {
           next[oi] = { ...next[oi], claimed1st: pid };
           return next;
         });
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 10 } }));
-        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +10 VP!`);
-        showFloatingBonus("🎯 +10 VP!", "#fbbf24"); sfx.headliner();
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 6 } }));
+        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +6 VP!`);
+        showFloatingBonus("🎯 +6 VP!", "#fbbf24"); sfx.headliner();
       } else if (lo.claimed2nd === null && lo.claimed1st !== pid) {
         setLineupObjectives(prev => {
           const next = [...prev];
           next[oi] = { ...next[oi], claimed2nd: pid };
           return next;
         });
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 6 } }));
-        addLog("🎯 LINEUP OBJECTIVE", `${pName} SECOND to match ${lo.genres.join("+")} → +6 VP!`);
-        showFloatingBonus("🎯 +6 VP!", "#c4b5fd"); sfx.headliner();
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 3 } }));
+        addLog("🎯 LINEUP OBJECTIVE", `${pName} SECOND to match ${lo.genres.join("+")} → +3 VP!`);
+        showFloatingBonus("🎯 +3 VP!", "#c4b5fd"); sfx.headliner();
       }
       return; // only match one objective per lineup
     }
@@ -1394,12 +1487,17 @@ export default function Headliners() {
           (results) => { if (results.some(d => d === "fame")) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
-      // "-2 VP. Draw an artist objective" (Missy Elliott) — just give VP loss, objective draw is bonus
+      // "-2 VP. Draw an artist objective" (Missy Elliott) — append to player's objectives list
       if (el.includes("draw an artist objective")) {
         // Draw from objective deck if available
         if (objectiveDeck && objectiveDeck.length > 0) {
           const newObj = objectiveDeck[Math.floor(Math.random() * objectiveDeck.length)];
-          setPlayerObjectives(prev => ({ ...prev, [pid]: newObj }));
+          // playerObjectives[pid] is an ARRAY of { obj, completed, vpAwarded } — append, don't overwrite.
+          // Previous bug: this assigned the raw newObj object directly, breaking subsequent .map() calls.
+          setPlayerObjectives(prev => {
+            const existing = Array.isArray(prev[pid]) ? prev[pid] : [];
+            return { ...prev, [pid]: [...existing, { obj: newObj, completed: false, vpAwarded: false }] };
+          });
           addLog("Effect", `${artist.name}: Drew new artist objective: ${newObj.name}`);
           showFloatingBonus(`📋 ${newObj.name}`, "#c4b5fd");
         } else {
@@ -1683,7 +1781,10 @@ export default function Headliners() {
         setPlayerData(latestPd => {
           const pd2 = latestPd[pid];
           if (!pd2) return latestPd;
-          const objs = playerObjectives[pid] || [];
+          // Defensive guard: if a previous bug corrupted playerObjectives[pid] to a non-array
+          // (e.g. from the Missy Elliott "draw objective" bug), normalize it before .map.
+          const rawObjs = playerObjectives[pid];
+          const objs = Array.isArray(rawObjs) ? rawObjs : (rawObjs ? [{ obj: rawObjs, completed: false, vpAwarded: false }] : []);
           let vpGain = 0;
           const updatedObjs = objs.map(entry => {
             if (entry.completed) return entry;
@@ -2468,7 +2569,7 @@ export default function Headliners() {
 
       // Decide and execute ONE action
       const pd = playerData[currentPlayerId] || {};
-      const decision = aiDecideTurn(pd, artistPool, dice, year);
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       if (decision.action === "book") {
@@ -3486,7 +3587,9 @@ export default function Headliners() {
   }
 
   // Star count → VP table (caps at 5+)
-  const STAR_REWARD = [0, 2, 4, 6, 10, 20];
+  // Star Dice VP scaling — softened from [0,2,4,6,10,20] to dampen runaway scores.
+  // 5+ stars still feels like a "jackpot" but no longer lap the field by itself.
+  const STAR_REWARD = [0, 1, 3, 5, 8, 12];
   function starVP(count) { return STAR_REWARD[Math.min(5, count)]; }
 
   const performStarRoll = (pid) => {
@@ -3884,10 +3987,53 @@ export default function Headliners() {
   const bd = { ...bp, background: "linear-gradient(135deg, #dc2626, #b91c1c)" };
   const [showUpdateNotes, setShowUpdateNotes] = useState(false);
   const [showPopupObjectives, setShowPopupObjectives] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const logBtn = <button onClick={() => setShowLog(!showLog)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.2)", color: "#c4b5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📜</button>;
   const discardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowDiscard(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #6b7280", background: "rgba(107,114,128,0.2)", color: "#94a3b8", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🗑️</button> : null;
   const updateNotesBtn = <button onClick={() => setShowUpdateNotes(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #22c55e", background: "rgba(34,197,94,0.2)", color: "#4ade80", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📋</button>;
-  const utilButtons = <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{updateNotesBtn}{discardBtn}{logBtn}</div>;
+  const leaderboardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowLeaderboard(true)} title="Leaderboard" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251,191,36,0.2)", color: "#fbbf24", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🏆</button> : null;
+  const leaderboardModal = showLeaderboard ? (() => {
+    // Live leaderboard — sorted by VP, then tickets, then fame as tiebreakers
+    const ranked = [...players].map(p => {
+      const pd = playerData[p.id] || {};
+      const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
+      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils };
+    }).sort((a, b) => (b.vp - a.vp) || (b.tickets - a.tickets) || (b.fame - a.fame));
+    return <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>🏆 Leaderboard</h2>
+          <button onClick={() => setShowLeaderboard(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
+        </div>
+        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of 4 — sorted by VP, ties broken by tickets then fame</p>
+        {ranked.map((r, idx) => {
+          const fame = r.fame; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
+          const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
+          return <div key={r.p.id} style={{
+            padding: 12, borderRadius: 10, marginBottom: 8,
+            background: onFire ? "linear-gradient(135deg, rgba(249,115,22,0.25) 0%, rgba(239,68,68,0.25) 100%)" : yellowed ? "rgba(251,191,36,0.12)" : "rgba(15,14,26,0.6)",
+            border: onFire ? "2px solid #f97316" : yellowed ? "1px solid #fbbf24" : "1px solid #2a2a4a",
+            animation: onFire ? "fameOnFire 1.4s ease-in-out infinite" : "none",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18, fontWeight: 800 }}>{medal}</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: onFire ? "#fde68a" : (yellowed ? "#fbbf24" : "#e9d5ff") }}>{onFire ? "🔥 " : ""}{r.p.festivalName}{r.p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
+              </div>
+              <span style={{ fontSize: 22, fontWeight: 900, color: "#fbbf24" }}>⭐ {r.vp}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, fontSize: 11, color: "#94a3b8" }}>
+              <div><span style={{ color: "#60a5fa" }}>🎟️</span> {r.tickets}</div>
+              <div style={{ color: onFire ? "#fb923c" : "#94a3b8", animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥 {r.fame}</div>
+              <div><span style={{ color: "#a78bfa" }}>🎲</span> {r.dice}</div>
+              <div><span style={{ color: "#86efac" }}>📋</span> {r.activeCouncils}/3</div>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>;
+  })() : null;
+  const utilButtons = <><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{updateNotesBtn}{leaderboardBtn}{discardBtn}{logBtn}</div>{leaderboardModal}</>;
   const popupObjectivesPanel = showPopupObjectives ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "rgba(124,58,237,0.1)", border: "1px solid #7c3aed40", textAlign: "left" }}>
     {(playerObjectives[currentPlayerId] || []).length > 0 && <div style={{ marginBottom: 8 }}>
       {(playerObjectives[currentPlayerId] || []).map((entry, oi) => <div key={oi} style={{ marginBottom: 4 }}>
