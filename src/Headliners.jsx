@@ -100,7 +100,7 @@ function formatCouncilCondition(c) {
   if (cond.type === "thresholdSingle") return `${cond.perYear.join("/")} ${AMENITY_LABELS[cond.amenity]}${cond.perYear[0] > 1 ? "s" : ""}`;
   if (cond.type === "thresholdPaired") return `${cond.perYear.join("/")} ${AMENITY_LABELS[cond.a]} + ${AMENITY_LABELS[cond.b]}`;
   if (cond.type === "comparative") return `${AMENITY_LABELS[cond.greater]} > ${AMENITY_LABELS[cond.lesser]}`;
-  if (cond.type === "thresholdFixed") return `${cond.count} ${AMENITY_LABELS[cond.amenity]}${cond.count > 1 ? "s" : ""}`;
+  if (cond.type === "thresholdFixed") return `Exactly ${cond.count} ${AMENITY_LABELS[cond.amenity]}${cond.count > 1 ? "s" : ""}`;
   if (cond.type === "emptyField") return "Keep field empty";
   return "?";
 }
@@ -125,7 +125,7 @@ function councilQualifies(council, field, year) {
   if (cond.type === "thresholdSingle") return c(cond.amenity) >= cond.perYear[yIdx];
   if (cond.type === "thresholdPaired") return c(cond.a) >= cond.perYear[yIdx] && c(cond.b) >= cond.perYear[yIdx];
   if (cond.type === "comparative") return c(cond.greater) > c(cond.lesser);
-  if (cond.type === "thresholdFixed") return c(cond.amenity) >= cond.count;
+  if (cond.type === "thresholdFixed") return c(cond.amenity) === cond.count;
   if (cond.type === "emptyField") return c("campsite") + c("portaloo") + c("security") + c("catering") === 0;
   return false;
 }
@@ -600,6 +600,100 @@ function aiPickSetupAmenity() {
   return "catering";
 }
 
+// ─── Smart AI Council/Field Helpers ───
+// Score how attractive a council is for an AI player to KEEP (top 3 of 5 dealt).
+// Combines reward value + condition difficulty.
+function scoreCouncilForKeep(council) {
+  const cond = council.condition;
+  const reward = council.reward;
+  const rewardScore = ({
+    fame: 14,
+    tickets: 18,
+    starDice: 22,
+    refreshPool: 10,
+    drawArtists: 9,
+    drawSpecialGuests: 13,
+  })[reward.type] || 0;
+  let difficultyPenalty = 0;
+  if (cond.type === "thresholdFixed") difficultyPenalty = cond.count === 1 ? 0 : 2;
+  else if (cond.type === "thresholdSingle") difficultyPenalty = 6;
+  else if (cond.type === "thresholdPaired") difficultyPenalty = 7;
+  else if (cond.type === "comparative") difficultyPenalty = 4;
+  else if (cond.type === "emptyField") difficultyPenalty = 3;
+  return rewardScore - difficultyPenalty;
+}
+
+// AI picks the top 3 councils from its 5 dealt (by score)
+function aiPickCouncilsToKeep(dealt) {
+  const scored = dealt.map(c => ({ council: c, score: scoreCouncilForKeep(c) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 3).map(s => s.council.id);
+}
+
+// AI assigns 3 kept councils to 3 fields. Spatial assignment matters less than tracking which
+// field "belongs to" each council; current strategy is by-pickup-order (highest score on F0).
+function aiAssignCouncilsToFields(keptIds) {
+  const assignments = {};
+  keptIds.forEach((cid, i) => { assignments[cid] = i; });
+  return assignments;
+}
+
+// Score the strategic value of placing `amenityType` into field `field` with assigned `council`.
+// Heavy negatives prevent breaking active councils or filling empty-field councils.
+// Positive scores reward newly activating, maintaining, or progressing toward qualification.
+function aiScorePlacement(amenityType, field, council, year) {
+  if (!council) return 1; // no council on field → neutral baseline
+  const post = { ...field, [amenityType]: (field[amenityType] || 0) + 1 };
+  const wasQualifying = councilQualifies(council, field, year);
+  const willQualify = councilQualifies(council, post, year);
+  if (wasQualifying && !willQualify) return -1000; // breaks active council — never
+  if (!wasQualifying && willQualify) return 100; // newly activates
+  if (wasQualifying && willQualify) return 25; // maintains
+  // Both inactive — check progression toward goal
+  const cond = council.condition;
+  if (cond.type === "emptyField") return -800; // never break empty-field
+  let relevant = false;
+  if (cond.type === "thresholdSingle" || cond.type === "thresholdFixed") relevant = (cond.amenity === amenityType);
+  else if (cond.type === "thresholdPaired") relevant = (cond.a === amenityType || cond.b === amenityType);
+  else if (cond.type === "comparative") {
+    relevant = (cond.greater === amenityType || cond.lesser === amenityType);
+    if (cond.lesser === amenityType) return -10; // worsens the ratio
+  }
+  return relevant ? 10 : 2;
+}
+
+// AI picks the best field to place a given amenity. Iterates fields, picks max score.
+function aiPickFieldForAmenity(pd, amenityType, year) {
+  const fields = pd?.fields || [];
+  const councils = pd?.councils || [];
+  if (fields.length === 0) return 0;
+  let bestIdx = 0, bestScore = -Infinity;
+  for (let i = 0; i < fields.length; i++) {
+    const score = aiScorePlacement(amenityType, fields[i], councils[i], year);
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+// AI picks the best STARTING amenity considering its councils. Weight amenities that progress
+// the most councils' conditions.
+function aiPickSetupAmenityWithCouncils(pd) {
+  const councils = pd?.councils || [];
+  const scores = { campsite: 1, security: 2, catering: 1, portaloo: 1 };
+  for (const c of councils) {
+    if (!c) continue;
+    const cond = c.condition;
+    if (cond.type === "thresholdSingle" || cond.type === "thresholdFixed") scores[cond.amenity] = (scores[cond.amenity] || 0) + 5;
+    else if (cond.type === "thresholdPaired") { scores[cond.a] = (scores[cond.a] || 0) + 3; scores[cond.b] = (scores[cond.b] || 0) + 3; }
+    else if (cond.type === "comparative") scores[cond.greater] = (scores[cond.greater] || 0) + 4;
+  }
+  let best = "security", bestScore = -Infinity;
+  for (const [t, s] of Object.entries(scores)) {
+    if (s > bestScore) { bestScore = s; best = t; }
+  }
+  return best;
+}
+
 /** AI decides what to do on its turn: returns { action, ... } */
 function aiDecideTurn(pd, artistPool, dice, year) {
   const sa = pd.stageArtists || [];
@@ -870,8 +964,11 @@ export default function Headliners() {
 
   // Pure function: compute tickets/fame for a single player data object
   // Council fame + ticket rewards are folded in here so they apply continuously while qualifying.
-  function computeTicketsForPlayer(pd) {
+  // yearOverride lets callers force a different year (e.g. at year transition where the closure's
+  // `year` still reflects the previous year).
+  function computeTicketsForPlayer(pd, yearOverride) {
     if (!pd) return pd;
+    const y = (yearOverride != null) ? yearOverride : (year || 1);
     const fields = pd.fields || emptyFields();
     const am = sumFields(fields);
     let t = (am.campsite || 0) * 2;
@@ -879,13 +976,13 @@ export default function Headliners() {
     t += pd.bonusTickets || 0;
     // Council ticket bonuses (year-scaled, applies if field qualifies in current year)
     const councils = pd.councils || [];
-    const yIdx = Math.max(0, Math.min(3, (year || 1) - 1));
+    const yIdx = Math.max(0, Math.min(3, y - 1));
     let councilTickets = 0;
     let councilFame = 0;
     for (let i = 0; i < councils.length; i++) {
       const c = councils[i];
       if (!c) continue;
-      const qualifies = councilQualifies(c, fields[i], year || 1);
+      const qualifies = councilQualifies(c, fields[i], y);
       if (!qualifies) continue;
       if (c.reward?.type === "tickets") councilTickets += c.reward.perYear[yIdx] || 0;
       if (c.reward?.type === "fame") councilFame += c.reward.perYear[yIdx] || 0;
@@ -2102,15 +2199,16 @@ export default function Headliners() {
       const pe = pendingEffect;
       if (pe.type === "placeSpecific" || (pe.type === "placeAmenity" && pe.chosenType)) {
         const aType = pe.amenityType || pe.chosenType;
+        const fieldIdx = aiPickFieldForAmenity(pd, aType, year || 1);
         setPlayerData(p => {
           const cur = p[pid];
-          let updated = mutateAmenity(cur, 0, aType, +1); // Build 1: AI uses field 0
+          let updated = mutateAmenity(cur, fieldIdx, aType, +1);
           if (aType === "security" && cur.vpPerSecurity > 0) {
             updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
           }
           return { ...p, [pid]: updated };
         });
-        addLog("🤖 AI", `Placed bonus ${AMENITY_LABELS[aType]}`);
+        addLog("🤖 AI", `Placed bonus ${AMENITY_LABELS[aType]} in F${fieldIdx + 1}`);
         const remaining = (pe.placeCount || 1) - 1;
         if (remaining > 0) {
           if (pe.type === "placeAmenity") setPendingEffect({ ...pe, placeCount: remaining, chosenType: null });
@@ -2169,24 +2267,21 @@ export default function Headliners() {
         return;
       }
       if (setupStep === "councilDraft") {
-        // Build 3: AI picks 3 random councils from its 5 dealt. Build 7 will pick smartly.
+        // Smart AI: rank councils by score (reward value − condition difficulty), keep top 3
         const pid = currentSetupPlayer.id;
         const dealt = playerData[pid]?.councilsDealt || [];
         if (dealt.length < 3) { aiProcessing.current = false; return; }
-        const shuffled = shuffle([...dealt]);
-        const picks = shuffled.slice(0, 3).map(c => c.id);
+        const picks = aiPickCouncilsToKeep(dealt);
         setSetupCouncilSelected(picks);
         aiProcessing.current = false;
         setTimeout(() => { setSetupStep("councilAssign"); aiTimer.current = setTimeout(() => aiStep(), 500); }, 400);
         return;
       }
       if (setupStep === "councilAssign") {
-        // Build 3: AI assigns each kept council to a field randomly (one per field). Build 7 will be smart.
+        // Smart AI: assign councils to fields by pickup order (highest-scoring on F0)
         const ids = setupCouncilSelected;
         if (ids.length !== 3) { aiProcessing.current = false; return; }
-        const shuffled = shuffle([...ids]);
-        const assignments = {};
-        shuffled.forEach((cid, idx) => { assignments[cid] = idx; });
+        const assignments = aiAssignCouncilsToFields(ids);
         setSetupCouncilAssignments(assignments);
         aiProcessing.current = false;
         setTimeout(() => {
@@ -2206,8 +2301,11 @@ export default function Headliners() {
         return;
       }
       if (setupStep === "pickAmenity") {
-        const amenityChoice = aiPickSetupAmenity();
-        const fieldChoice = 0; // Build 2: AI defaults to Field 0. Build 7 will add smart selection.
+        // Smart AI: pick amenity that progresses the most councils, then best field for it
+        const pid = currentSetupPlayer.id;
+        const pd = playerData[pid];
+        const amenityChoice = aiPickSetupAmenityWithCouncils(pd);
+        const fieldChoice = aiPickFieldForAmenity(pd, amenityChoice, year || 1);
         setSetupSelectedAmenity(amenityChoice);
         setSetupSelectedField(fieldChoice);
         aiProcessing.current = false;
@@ -2394,7 +2492,8 @@ export default function Headliners() {
             if (pk.type === "fame") {
               setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
             } else {
-              setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], 0, pk.type, +1) }));
+              const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1);
+              setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, pk.type, +1) }));
             }
             setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
           }
@@ -2470,10 +2569,12 @@ export default function Headliners() {
       if (dieVal === "catering_or_portaloo") amenityType = pick.type || "catering";
       else if (dieVal === "security_or_campsite") amenityType = pick.type || "security";
 
-      // Remove die, increment amenity counter directly
+      // Remove die, increment amenity counter directly — pick smart field based on councils
       const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
-      setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], 0, amenityType, +1) }));
-      addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]}`);
+      const aiPd = playerData[currentPlayerId] || {};
+      const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1);
+      setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, amenityType, +1) }));
+      addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]} in F${fIdx + 1}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
       setActionTaken(true); setTimeout(() => recalcTickets(), 50);
@@ -2761,6 +2862,24 @@ export default function Headliners() {
 
     // Evaluate council objectives for current player before moving on
     evaluateCouncils(currentPlayerId);
+
+    // Microtrend overhaul: any claimed microtrend is replaced by a fresh one (avoiding currently
+    // active genres) at the end of the claimer's turn, so it appears for the next player.
+    setMicrotrends(prev => {
+      const activeGenres = new Set(prev.filter(mt => mt.claimedBy === null).map(mt => mt.genre));
+      let anyReplaced = false;
+      const next = prev.map(mt => {
+        if (mt.claimedBy === null) return mt;
+        const candidates = ALL_GENRES.filter(g => !activeGenres.has(g));
+        if (candidates.length === 0) return mt; // can't generate unique new — stay claimed
+        const newGenre = candidates[Math.floor(Math.random() * candidates.length)];
+        activeGenres.add(newGenre);
+        anyReplaced = true;
+        addLog("🎵 Microtrend", `New ${newGenre} microtrend appeared!`);
+        return { genre: newGenre, claimedBy: null };
+      });
+      return anyReplaced ? next : prev;
+    });
 
     const findNext = () => {
       const tl = turnsLeftRef.current;
@@ -3618,11 +3737,12 @@ export default function Headliners() {
     return (pd?.stages || []).length; // 1 draw per stage
   };
 
-  const startPreRoundDraws = () => {
+  const startPreRoundDraws = (drawCountOverride) => {
     // Ensure pool has 5 artists before draws
     refillPoolTo5();
     const pd = playerData[currentPreRoundPlayer.id];
-    const drawCount = getPreRoundDrawCount(pd);
+    // drawCountOverride lets callers (acceptNewStage) bypass the closure-stale stages.length
+    const drawCount = (drawCountOverride != null) ? drawCountOverride : getPreRoundDrawCount(pd);
     if (drawCount > 0) {
       setFreeAmenityCount(drawCount); setFreeAmenityPlaced(0); setFreeAmenityType(null);
       setPreRoundStep("preRoundDrawChoose");
@@ -3652,7 +3772,10 @@ export default function Headliners() {
     addLog(currentPreRoundPlayer.festivalName, `built new stage → +1 🔥 Fame!`);
     showFloatingBonus("+1 🔥 New Stage!", "#f97316");
     setTimeout(() => recalcTickets(), 50);
-    startPreRoundDraws();
+    // The setPlayerData above is queued. startPreRoundDraws would otherwise read stale
+    // stages.length and miss the new stage. Pass explicit count = old length + 1.
+    const newDrawCount = (pd.stages || []).length + 1;
+    startPreRoundDraws(newDrawCount);
   };
   const declineNewStage = () => {
     addLog(currentPreRoundPlayer?.festivalName || "", "declined new stage");
@@ -3702,7 +3825,10 @@ export default function Headliners() {
         const emptyStages = (pd.stages || []).map(() => []);
         // Reset baseFame but preserve any fame gained during pre-round (stage opening)
         // Reset high-water marks so dice can be re-claimed for current fame/stages this year
-        next[p.id] = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false] };
+        const reset = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false] };
+        // Recompute tickets/fame for the NEW year so council ticket/fame bonuses fire immediately
+        // (closure's `year` is still the old year here — pass `ny` explicitly)
+        next[p.id] = computeTicketsForPlayer(reset, ny);
       }
       return next;
     });
@@ -3723,10 +3849,8 @@ export default function Headliners() {
     const tl = {}; no.forEach(id => { tl[id] = TURNS_PER_YEAR[ny]; }); setTurnsLeft(tl);
     setDice(rollDice()); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     // (Star Dice phase replaces old per-year event drawing)
-    // New microtrends
-    const mt = generateMicrotrends();
-    setMicrotrends(mt);
-    addLog("🎵 Microtrends", `Book a ${mt[0].genre} artist • Book a ${mt[1].genre} artist`);
+    // Microtrends now persist across years — they get replaced as players claim them.
+    // Don't reinitialize at year transition.
     // Delay recalcTickets so React flushes all state updates first
     setTimeout(() => recalcTickets(), 50);
     addLogH(`Year ${ny} Begins`, "year");
@@ -3778,7 +3902,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>;
+  const anim = <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -4637,15 +4761,32 @@ export default function Headliners() {
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
           <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of 4</h3>
-          {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; return (
-            <div key={p.id} onClick={() => setViewingPlayerId(p.id === currentPlayerId ? null : (viewingPlayerId === p.id ? null : p.id))} style={{ padding: 12, borderRadius: 12, marginBottom: 8, background: ic ? "rgba(124,58,237,0.2)" : isViewing ? "rgba(251,191,36,0.1)" : "rgba(15,14,26,0.6)", border: ic ? "1px solid #7c3aed" : isViewing ? "1px solid #fbbf24" : "1px solid transparent", cursor: ic ? "default" : "pointer", transition: "all 0.15s" }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: ic ? "#fbbf24" : "#c4b5fd", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}</span>
+          {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
+            const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
+              : yellowed ? "rgba(251,191,36,0.16)"
+              : ic ? "rgba(124,58,237,0.2)"
+              : isViewing ? "rgba(251,191,36,0.1)"
+              : "rgba(15,14,26,0.6)";
+            const fameBorder = onFire ? "2px solid #f97316"
+              : yellowed ? "1px solid #fbbf24"
+              : ic ? "1px solid #7c3aed"
+              : isViewing ? "1px solid #fbbf24"
+              : "1px solid transparent";
+            const fameAnim = onFire ? "fameOnFire 1.4s ease-in-out infinite" : "none";
+            return (
+            <div key={p.id} onClick={() => setViewingPlayerId(p.id === currentPlayerId ? null : (viewingPlayerId === p.id ? null : p.id))} style={{
+              padding: 12, borderRadius: 12, marginBottom: 8,
+              background: fameBg, border: fameBorder,
+              animation: fameAnim,
+              cursor: ic ? "default" : "pointer", transition: "all 0.15s",
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
                 {!ic && <span style={{ fontSize: 9, color: isViewing ? "#fbbf24" : "#64748b" }}>{isViewing ? "👁️" : "👁️"}</span>}
               </div>
               <div style={{ fontSize: 11, color: "#94a3b8", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
                 <span>🎟️ {pd.tickets || 0}</span><span>⭐ {pd.vp || 0} VP</span>
-                <span>🔥 Fame {pd.fame || 0}</span><span>🔄 {turnsLeft[p.id] || 0} turns</span>
+                <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span><span>🔄 {turnsLeft[p.id] || 0} turns</span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
@@ -4701,11 +4842,25 @@ export default function Headliners() {
               <span style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}>📦{artistDeck.length}</span>
               <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8 }} title="Star Dice pool">🎲{dicePool}</span>
             </div>
-            {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; return (
-              <div key={p.id} onClick={() => setViewingPlayerId(p.id === currentPlayerId ? null : (viewingPlayerId === p.id ? null : p.id))} style={{ padding: "6px 12px", borderRadius: 10, background: ic ? "rgba(124,58,237,0.25)" : "rgba(15,14,26,0.6)", border: ic ? "2px solid #7c3aed" : "1px solid #2a2a4a", cursor: "pointer", whiteSpace: "nowrap", minWidth: 120 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: ic ? "#fbbf24" : "#c4b5fd" }}>{ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
+            {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
+              const cBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
+                : yellowed ? "rgba(251,191,36,0.16)"
+                : ic ? "rgba(124,58,237,0.25)"
+                : "rgba(15,14,26,0.6)";
+              const cBorder = onFire ? "2px solid #f97316"
+                : yellowed ? "1px solid #fbbf24"
+                : ic ? "2px solid #7c3aed"
+                : "1px solid #2a2a4a";
+              return (
+              <div key={p.id} onClick={() => setViewingPlayerId(p.id === currentPlayerId ? null : (viewingPlayerId === p.id ? null : p.id))} style={{
+                padding: "6px 12px", borderRadius: 10,
+                background: cBg, border: cBorder,
+                animation: onFire ? "fameOnFire 1.4s ease-in-out infinite" : "none",
+                cursor: "pointer", whiteSpace: "nowrap", minWidth: 120,
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8", display: "flex", gap: 8 }}>
-                  <span>🎟️{pd.tickets||0}</span><span>⭐{pd.vp||0}</span><span>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}
+                  <span>🎟️{pd.tickets||0}</span><span>⭐{pd.vp||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}
                 </div>
               </div>); })}
           </div>
