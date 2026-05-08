@@ -61,6 +61,75 @@ const FAME_MAX = 5;
 const GENRE_COLORS = { Pop: "#ec4899", Rock: "#ef4444", Electronic: "#94a3b8", "Hip Hop": "#f97316", Indie: "#22c55e", Funk: "#a855f7" };
 const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 
+// ─── Council Objectives ───
+// 24 unique council cards. Each player gets 5 dealt at game start, keeps 3, assigns 1 per field.
+// Conditions are evaluated per-field; rewards are year-scaled where indicated by perYear arrays.
+// Year is 1-indexed (year 1 = perYear[0]).
+const ALL_COUNCILS = [
+  { id: "glamping", name: "Glamping", condition: { type: "thresholdPaired", a: "campsite", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "foodCourts", name: "Food Courts", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
+  { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "shepherds", name: "Shepherds", condition: { type: "comparative", greater: "campsite", lesser: "security" }, reward: { type: "refreshPool" } },
+  { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdFixed", amenity: "catering", count: 1 }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "staffArea", name: "Staff Area", condition: { type: "thresholdFixed", amenity: "security", count: 1 }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdFixed", amenity: "security", count: 2 }, reward: { type: "refreshPool" } },
+  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdFixed", amenity: "catering", count: 2 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
+  { id: "wellStaffed", name: "Well Staffed", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "starDice", perYear: [1,2,2,3] } },
+  { id: "funkyFood", name: "Funky Food", condition: { type: "comparative", greater: "portaloo", lesser: "catering" }, reward: { type: "refreshPool" } },
+  { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "wellEquipped", name: "Well Equipped", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
+  { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdFixed", amenity: "campsite", count: 1 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "spoiltForChoice", name: "Spoilt for Choice", condition: { type: "comparative", greater: "catering", lesser: "campsite" }, reward: { type: "refreshPool" } },
+  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdFixed", amenity: "portaloo", count: 2 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+];
+
+function getCouncilById(id) { return ALL_COUNCILS.find(c => c.id === id); }
+
+// Format the condition for display
+function formatCouncilCondition(c) {
+  const cond = c.condition;
+  if (cond.type === "thresholdSingle") return `${cond.perYear.join("/")} ${AMENITY_LABELS[cond.amenity]}${cond.perYear[0] > 1 ? "s" : ""}`;
+  if (cond.type === "thresholdPaired") return `${cond.perYear.join("/")} ${AMENITY_LABELS[cond.a]} + ${AMENITY_LABELS[cond.b]}`;
+  if (cond.type === "comparative") return `${AMENITY_LABELS[cond.greater]} > ${AMENITY_LABELS[cond.lesser]}`;
+  if (cond.type === "thresholdFixed") return `${cond.count} ${AMENITY_LABELS[cond.amenity]}${cond.count > 1 ? "s" : ""}`;
+  if (cond.type === "emptyField") return "Keep field empty";
+  return "?";
+}
+
+function formatCouncilReward(c) {
+  const r = c.reward;
+  if (r.type === "fame") return `+${r.perYear.join("/")} 🔥 Fame`;
+  if (r.type === "tickets") return `+${r.perYear.join("/")} 🎟️ Tickets`;
+  if (r.type === "starDice") return `+${r.perYear.join("/")} 🎲 Star Dice`;
+  if (r.type === "refreshPool") return `🔄 Refresh artist pool / turn`;
+  if (r.type === "drawArtists") return `Draw +${r.perYear.join("/")} artist(s) when drawing`;
+  if (r.type === "drawSpecialGuests") return `Draw +${r.perYear.join("/")} special guest(s)`;
+  return "?";
+}
+
+// Evaluate whether a field qualifies for a council in the given year (1-indexed)
+function councilQualifies(council, field, year) {
+  if (!council || !field) return false;
+  const cond = council.condition;
+  const yIdx = Math.max(0, Math.min(3, (year || 1) - 1));
+  const c = (t) => field[t] || 0;
+  if (cond.type === "thresholdSingle") return c(cond.amenity) >= cond.perYear[yIdx];
+  if (cond.type === "thresholdPaired") return c(cond.a) >= cond.perYear[yIdx] && c(cond.b) >= cond.perYear[yIdx];
+  if (cond.type === "comparative") return c(cond.greater) > c(cond.lesser);
+  if (cond.type === "thresholdFixed") return c(cond.amenity) >= cond.count;
+  if (cond.type === "emptyField") return c("campsite") + c("portaloo") + c("security") + c("catering") === 0;
+  return false;
+}
+
 function generateMicrotrends() {
   const shuffled = shuffle([...ALL_GENRES]);
   return [{ genre: shuffled[0], claimedBy: null }, { genre: shuffled[1], claimedBy: null }];
@@ -398,6 +467,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
           const disabled = fieldsDisabled && fieldsDisabled(fIdx, field);
           const clickable = pickFieldMode && !disabled;
+          const council = (pd?.councils || [])[fIdx];
           return <div key={fIdx} onClick={() => clickable && onFieldClick && onFieldClick(fIdx)} style={{
             padding: compact ? 10 : 12,
             borderRadius: 12,
@@ -413,6 +483,11 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             transition: "all 0.2s",
           }}>
             <div style={{ fontSize: 10, color: clickable ? "#fbbf24" : "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}{clickable ? " ↓" : ""}</div>
+            {council && <div style={{ marginBottom: 8, padding: 6, borderRadius: 6, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#86efac", marginBottom: 2 }}>📋 {council.name}</div>
+              <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3 }}>{formatCouncilCondition(council)}</div>
+              <div style={{ fontSize: 9, color: "#4ade80", lineHeight: 1.3, marginTop: 2 }}>{formatCouncilReward(council)}</div>
+            </div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {AMENITY_TYPES.map(t => {
                 const c = field?.[t] || 0;
@@ -1633,7 +1708,14 @@ export default function Headliners() {
   const canStartSetup = players.every(p => p.festivalName.trim().length > 0);
 
   const startSetup = () => {
-    const data = {}; players.forEach(p => { const fields = emptyFields(); data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0 }; });
+    // Deal 5 unique council cards to each player from a shared shuffled deck.
+    // The 2 they decline (during setup) go out of the game permanently.
+    const councilDeck = shuffle([...ALL_COUNCILS]);
+    const data = {}; players.forEach((p, idx) => {
+      const fields = emptyFields();
+      const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null] };
+    });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
     const all = shuffle([...ALL_ARTISTS]);
@@ -1719,6 +1801,54 @@ export default function Headliners() {
     const newR5 = draftRemaining5;
     setDraftRemaining0(newR0); setDraftRemaining5(newR5);
     setSetupDraftOptions([]); setSetupDraftSelected([]);
+    setSetupStep("councilDraft");
+  };
+
+  // ─── Council Draft + Assign ───
+  // After draftArtist, the player is shown their 5 dealt councils and picks 3 to keep.
+  // Then assigns each kept council to one of 3 fields. Both steps must complete before pickAmenity.
+  const [setupCouncilSelected, setSetupCouncilSelected] = useState([]); // array of council IDs (max 3)
+  const [setupCouncilAssignments, setSetupCouncilAssignments] = useState({}); // { councilId: fieldIdx }
+
+  const toggleCouncilKeep = (cid) => {
+    setSetupCouncilSelected(prev => {
+      if (prev.includes(cid)) return prev.filter(x => x !== cid);
+      if (prev.length >= 3) return prev; // max 3
+      return [...prev, cid];
+    });
+  };
+
+  const confirmCouncilDraft = () => {
+    if (setupCouncilSelected.length !== 3) return;
+    setSetupStep("councilAssign");
+  };
+
+  const assignCouncilToField = (cid, fIdx) => {
+    setSetupCouncilAssignments(prev => {
+      const next = { ...prev };
+      // Remove any existing assignment to this field (only one council per field)
+      Object.keys(next).forEach(k => { if (next[k] === fIdx) delete next[k]; });
+      next[cid] = fIdx;
+      return next;
+    });
+  };
+
+  const confirmCouncilAssign = () => {
+    const assignments = setupCouncilAssignments;
+    const ids = setupCouncilSelected;
+    if (ids.length !== 3) return;
+    if (Object.keys(assignments).length !== 3) return;
+    // Build pd.councils[] indexed by field
+    const councilsByField = [null, null, null];
+    ids.forEach(cid => {
+      const fIdx = assignments[cid];
+      if (fIdx != null) councilsByField[fIdx] = getCouncilById(cid);
+    });
+    if (councilsByField.some(c => !c)) return;
+    const pid = currentSetupPlayer.id;
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], councils: councilsByField, councilsDealt: [] } }));
+    addLog(currentSetupPlayer.festivalName, `assigned councils: ${councilsByField.map((c, i) => `F${i + 1}=${c.name}`).join(", ")}`);
+    setSetupCouncilSelected([]); setSetupCouncilAssignments({});
     setSetupStep("pickAmenity");
   };
 
@@ -1729,6 +1859,7 @@ export default function Headliners() {
       const nextIdx = setupIndex + 1;
       setSetupIndex(nextIdx); setSetupSelectedAmenity(null); setSetupSelectedField(null);
       setSetupDraftOptions([]); setSetupDraftSelected([]);
+      setSetupCouncilSelected([]); setSetupCouncilAssignments({});
       setSetupStep("viewObjective");
     } else startGame();
   };
@@ -1970,6 +2101,43 @@ export default function Headliners() {
         setSetupDraftSelected(picks);
         aiProcessing.current = false;
         setTimeout(() => { confirmSetupDraft(); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
+        return;
+      }
+      if (setupStep === "councilDraft") {
+        // Build 3: AI picks 3 random councils from its 5 dealt. Build 7 will pick smartly.
+        const pid = currentSetupPlayer.id;
+        const dealt = playerData[pid]?.councilsDealt || [];
+        if (dealt.length < 3) { aiProcessing.current = false; return; }
+        const shuffled = shuffle([...dealt]);
+        const picks = shuffled.slice(0, 3).map(c => c.id);
+        setSetupCouncilSelected(picks);
+        aiProcessing.current = false;
+        setTimeout(() => { setSetupStep("councilAssign"); aiTimer.current = setTimeout(() => aiStep(), 500); }, 400);
+        return;
+      }
+      if (setupStep === "councilAssign") {
+        // Build 3: AI assigns each kept council to a field randomly (one per field). Build 7 will be smart.
+        const ids = setupCouncilSelected;
+        if (ids.length !== 3) { aiProcessing.current = false; return; }
+        const shuffled = shuffle([...ids]);
+        const assignments = {};
+        shuffled.forEach((cid, idx) => { assignments[cid] = idx; });
+        setSetupCouncilAssignments(assignments);
+        aiProcessing.current = false;
+        setTimeout(() => {
+          // Manually finalize since confirmCouncilAssign reads state which may not have flushed yet
+          const councilsByField = [null, null, null];
+          ids.forEach(cid => {
+            const fIdx = assignments[cid];
+            if (fIdx != null) councilsByField[fIdx] = getCouncilById(cid);
+          });
+          const pid = currentSetupPlayer.id;
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], councils: councilsByField, councilsDealt: [] } }));
+          addLog(currentSetupPlayer.festivalName, `🤖 assigned councils: ${councilsByField.map((c, i) => `F${i + 1}=${c.name}`).join(", ")}`);
+          setSetupCouncilSelected([]); setSetupCouncilAssignments({});
+          setSetupStep("pickAmenity");
+          aiTimer.current = setTimeout(() => aiStep(), 500);
+        }, 500);
         return;
       }
       if (setupStep === "pickAmenity") {
@@ -3441,6 +3609,71 @@ export default function Headliners() {
           <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{(setupDraftSelected || []).length}/2 selected</p>
           <button onClick={confirmSetupDraft} disabled={(setupDraftSelected || []).length !== 2} style={{ ...bp, width: "100%", opacity: (setupDraftSelected || []).length === 2 ? 1 : 0.4 }}>Draft 2 Artists →</button>
         </div>}
+
+        {setupStep === "councilDraft" && (() => {
+          const dealt = playerData[currentSetupPlayer.id]?.councilsDealt || [];
+          return <div style={{ ...card, maxWidth: 760, width: "100%", textAlign: "center" }}>
+            <h3 style={{ color: "#e9d5ff", marginBottom: 4 }}>Choose your Council Objectives</h3>
+            <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Keep <strong style={{ color: "#fbbf24" }}>3</strong> of these 5. The other 2 are out of the game.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 14 }}>
+              {dealt.map(c => {
+                const sel = setupCouncilSelected.includes(c.id);
+                return <div key={c.id} onClick={() => toggleCouncilKeep(c.id)} style={{
+                  padding: 12, borderRadius: 10,
+                  border: sel ? "2px solid #fbbf24" : "2px solid #2a2a4a",
+                  background: sel ? "rgba(251,191,36,0.12)" : "#1a1a2e",
+                  cursor: "pointer", textAlign: "left",
+                  boxShadow: sel ? "0 0 12px rgba(251,191,36,0.3)" : "none",
+                  transition: "all 0.15s",
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: sel ? "#fbbf24" : "#c4b5fd", marginBottom: 6 }}>{sel ? "✓ " : ""}{c.name}</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>📋 {formatCouncilCondition(c)}</div>
+                  <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 600 }}>🎁 {formatCouncilReward(c)}</div>
+                </div>;
+              })}
+            </div>
+            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 10 }}>{setupCouncilSelected.length}/3 kept</p>
+            <button onClick={confirmCouncilDraft} disabled={setupCouncilSelected.length !== 3} style={{ ...bp, width: "100%", opacity: setupCouncilSelected.length === 3 ? 1 : 0.4 }}>Continue →</button>
+          </div>;
+        })()}
+
+        {setupStep === "councilAssign" && (() => {
+          const kept = setupCouncilSelected.map(id => getCouncilById(id)).filter(Boolean);
+          const allAssigned = setupCouncilSelected.every(id => setupCouncilAssignments[id] != null);
+          return <div style={{ ...card, maxWidth: 760, width: "100%", textAlign: "center" }}>
+            <h3 style={{ color: "#e9d5ff", marginBottom: 4 }}>Assign each Council to a field</h3>
+            <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 14 }}>One council per field. The amenities you build in that field count toward this council.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
+              {kept.map(c => {
+                const assignedField = setupCouncilAssignments[c.id];
+                return <div key={c.id} style={{ padding: 12, borderRadius: 10, border: "1px solid #2a2a4a", background: "#1a1a2e", textAlign: "left" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#c4b5fd", marginBottom: 6 }}>{c.name}</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>📋 {formatCouncilCondition(c)}</div>
+                  <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 600, marginBottom: 8 }}>🎁 {formatCouncilReward(c)}</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[0, 1, 2].map(fIdx => {
+                      const isAssigned = assignedField === fIdx;
+                      // Field is taken by another council if any other id maps to it
+                      const takenByOther = Object.entries(setupCouncilAssignments).some(([id, f]) => id !== c.id && f === fIdx);
+                      return <button key={fIdx} onClick={() => assignCouncilToField(c.id, fIdx)} disabled={takenByOther && !isAssigned} style={{
+                        flex: 1,
+                        padding: "8px 4px",
+                        borderRadius: 8,
+                        border: isAssigned ? "2px solid #a78bfa" : (takenByOther ? "2px solid #2a2a4a" : "2px solid #4c1d95"),
+                        background: isAssigned ? "rgba(167,139,250,0.18)" : "#0f0e1a",
+                        color: isAssigned ? "#fbbf24" : (takenByOther ? "#475569" : "#c4b5fd"),
+                        cursor: (takenByOther && !isAssigned) ? "not-allowed" : "pointer",
+                        fontSize: 11, fontWeight: 700,
+                        opacity: (takenByOther && !isAssigned) ? 0.4 : 1,
+                      }}>F{fIdx + 1}{isAssigned ? " ✓" : (takenByOther ? " 🚫" : "")}</button>;
+                    })}
+                  </div>
+                </div>;
+              })}
+            </div>
+            <button onClick={confirmCouncilAssign} disabled={!allAssigned} style={{ ...bp, width: "100%", opacity: allAssigned ? 1 : 0.4 }}>Lock in Councils →</button>
+          </div>;
+        })()}
         {setupStep === "pickAmenity" && <div style={{ ...card, maxWidth: 580, width: "100%", textAlign: "center" }}>
           <h3 style={{ color: "#e9d5ff", marginBottom: 12 }}>Choose your starting amenity</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
