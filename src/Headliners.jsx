@@ -130,6 +130,31 @@ function councilQualifies(council, field, year) {
   return false;
 }
 
+// Sum the year-scaled rewards of a given type across all qualifying councils (e.g. total +N artists to draw)
+function totalCouncilRewardOfType(pd, year, rewardType) {
+  if (!pd) return 0;
+  const councils = pd.councils || [];
+  const fields = pd.fields || [];
+  const yIdx = Math.max(0, Math.min(3, (year || 1) - 1));
+  let total = 0;
+  for (let i = 0; i < councils.length; i++) {
+    const c = councils[i];
+    if (!c) continue;
+    if (c.reward?.type !== rewardType) continue;
+    if (!councilQualifies(c, fields[i], year || 1)) continue;
+    total += c.reward.perYear?.[yIdx] || 0;
+  }
+  return total;
+}
+
+// Whether the player has at least one qualifying council with a non-counted reward (e.g. refreshPool)
+function hasQualifyingCouncilOfType(pd, year, rewardType) {
+  if (!pd) return false;
+  const councils = pd.councils || [];
+  const fields = pd.fields || [];
+  return councils.some((c, i) => c?.reward?.type === rewardType && councilQualifies(c, fields[i], year || 1));
+}
+
 function generateMicrotrends() {
   const shuffled = shuffle([...ALL_GENRES]);
   return [{ genre: shuffled[0], claimedBy: null }, { genre: shuffled[1], claimedBy: null }];
@@ -378,7 +403,7 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year }) {
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -468,6 +493,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           const disabled = fieldsDisabled && fieldsDisabled(fIdx, field);
           const clickable = pickFieldMode && !disabled;
           const council = (pd?.councils || [])[fIdx];
+          const councilActive = council ? councilQualifies(council, field, year || 1) : false;
           return <div key={fIdx} onClick={() => clickable && onFieldClick && onFieldClick(fIdx)} style={{
             padding: compact ? 10 : 12,
             borderRadius: 12,
@@ -483,10 +509,18 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             transition: "all 0.2s",
           }}>
             <div style={{ fontSize: 10, color: clickable ? "#fbbf24" : "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}{clickable ? " ↓" : ""}</div>
-            {council && <div style={{ marginBottom: 8, padding: 6, borderRadius: 6, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#86efac", marginBottom: 2 }}>📋 {council.name}</div>
+            {council && <div style={{
+              marginBottom: 8,
+              padding: 6,
+              borderRadius: 6,
+              background: councilActive ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.06)",
+              border: councilActive ? "1px solid #22c55e80" : "1px solid #ef444440",
+              boxShadow: councilActive ? "0 0 8px rgba(34,197,94,0.25)" : "none",
+              transition: "all 0.3s",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: councilActive ? "#86efac" : "#fca5a5", marginBottom: 2 }}>{councilActive ? "✓" : "✗"} {council.name}</div>
               <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3 }}>{formatCouncilCondition(council)}</div>
-              <div style={{ fontSize: 9, color: "#4ade80", lineHeight: 1.3, marginTop: 2 }}>{formatCouncilReward(council)}</div>
+              <div style={{ fontSize: 9, color: councilActive ? "#4ade80" : "#94a3b8", lineHeight: 1.3, marginTop: 2, opacity: councilActive ? 1 : 0.7 }}>{formatCouncilReward(council)}</div>
             </div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {AMENITY_TYPES.map(t => {
@@ -749,11 +783,17 @@ export default function Headliners() {
   const [pendingEffectPid, setPendingEffectPid] = useState(null);
   const [deferPoolRefresh, setDeferPoolRefresh] = useState(false);
   const [poolRefreshedByEffect, setPoolRefreshedByEffect] = useState(false);
+  const [councilRefreshUsedThisTurn, setCouncilRefreshUsedThisTurn] = useState(false);
 
   // Special Guest phase
   const [specialGuestPlayer, setSpecialGuestPlayer] = useState(0); // index in players array
   const [specialGuestCard, setSpecialGuestCard] = useState(null); // the drawn artist
+  const [specialGuestDrawnPool, setSpecialGuestDrawnPool] = useState([]); // all options drawn (>1 when council bonus active); cleared after pick
   const [specialGuestEligible, setSpecialGuestEligible] = useState([]); // stage indices with 2/3 artists
+  // Idempotency latch: setupSpecialGuestForPlayer can be called from multiple paths
+  // (render fallback + placeSpecialGuest/declineSpecialGuest setTimeouts). The ref tracks
+  // the last pIdx that setup ran for so duplicate calls in the same window no-op.
+  const sgSetupPidRef = useRef(null);
 
   // ─── Star Dice system (replaces the old Event system) ───
   // Shared dice pool — sized by player count: 2P=12, 3P=16, 4P=23
@@ -2623,8 +2663,20 @@ export default function Headliners() {
     if (newPicks.length >= 2) finishDraw2(newPicks);
   };
   const finishDraw2 = (picks) => {
-    setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
+    // Council reward: drawArtists councils give +N additional artists from deck after the action
+    const cur = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId];
+    const bonus = totalCouncilRewardOfType(cur, year, "drawArtists");
+    let bonusDrawn = [];
+    if (bonus > 0) {
+      bonusDrawn = drawFromDeck(bonus);
+      if (bonusDrawn.length > 0) {
+        const names = bonusDrawn.map(a => a.name).join(", ");
+        addLog(currentPlayer.festivalName, `📋 Council bonus: drew ${bonusDrawn.length} extra from deck (${names})`);
+      }
+    }
+    setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks, ...bonusDrawn] } }));
     picks.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
+    bonusDrawn.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
     setDraw2Picks([]); setDraw2DeckCard(null);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     setTimeout(() => recalcTickets(), 50);
@@ -2704,7 +2756,7 @@ export default function Headliners() {
   const endTurn = () => {
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
-    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null);
+    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshUsedThisTurn(false);
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
 
     // Evaluate council objectives for current player before moving on
@@ -2738,14 +2790,20 @@ export default function Headliners() {
   /** Start the Special Guest phase — check each player for eligible stages */
   const beginSpecialGuestPhase = () => {
     addLogH(`Year ${year} — Special Guests`, "round");
+    sgSetupPidRef.current = null; // reset idempotency latch for new SG round
     setSpecialGuestPlayer(0);
     setSpecialGuestCard(null);
+    setSpecialGuestDrawnPool([]);
     setSpecialGuestEligible([]);
     setPhase("specialGuest");
   };
 
   /** Check if a player qualifies for a special guest and set up their turn */
   function setupSpecialGuestForPlayer(pIdx) {
+    // Idempotency: if we already ran setup for this pIdx, no-op. Prevents duplicate deck draws
+    // when both the render fallback and the placeSpecialGuest/declineSpecialGuest setTimeout fire.
+    if (sgSetupPidRef.current === pIdx) return;
+    sgSetupPidRef.current = pIdx;
     const p = players[pIdx];
     if (!p) { beginYearEndEffectsPhase(); return; }
     const pd = playerData[p.id] || {};
@@ -2764,17 +2822,41 @@ export default function Headliners() {
       }
       return;
     }
-    // Draw from deck
-    const drawn = drawFromDeck(1);
+    // Draw from deck — 1 + council bonus
+    const bonus = totalCouncilRewardOfType(pd, year, "drawSpecialGuests");
+    const drawCount = 1 + bonus;
+    const drawn = drawFromDeck(drawCount);
     if (drawn.length === 0) {
       addLog("🌟 Special Guest", `Deck empty — no special guest available.`);
       if (pIdx < players.length - 1) { setSpecialGuestPlayer(pIdx + 1); setTimeout(() => setupSpecialGuestForPlayer(pIdx + 1), 100); }
       else beginYearEndEffectsPhase();
       return;
     }
-    setSpecialGuestCard(drawn[0]);
+    if (drawn.length > 1) {
+      // Council bonus active — show picker first
+      addLog("🌟 Special Guest", `${p.festivalName} drew ${drawn.length} options (📋 Council bonus). Pick one.`);
+      setSpecialGuestDrawnPool(drawn);
+      setSpecialGuestCard(null);
+    } else {
+      setSpecialGuestDrawnPool([]);
+      setSpecialGuestCard(drawn[0]);
+    }
     setSpecialGuestEligible(eligible);
     setSpecialGuestPlayer(pIdx);
+  }
+
+  /** Player picks one of multiple drawn special guests; rest go to discard */
+  function pickSpecialGuestFromPool(idx) {
+    const drawn = specialGuestDrawnPool;
+    if (!drawn || drawn.length === 0) return;
+    const kept = drawn[idx];
+    const discarded = drawn.filter((_, i) => i !== idx);
+    if (discarded.length > 0) {
+      setDiscardPile(prev => [...prev, ...discarded]);
+      addLog("🌟 Special Guest", `Returned ${discarded.length} unused option${discarded.length === 1 ? "" : "s"} to discard`);
+    }
+    setSpecialGuestDrawnPool([]);
+    setSpecialGuestCard(kept);
   }
 
   /** Check if player can afford the special guest (ignoring fame requirement) */
@@ -2785,6 +2867,53 @@ export default function Headliners() {
       counts.catering >= (artist.cateringCost || 0) &&
       counts.portaloo >= (artist.portalooCost || 0);
   }
+
+  // AI auto-handler for Special Guest phase. Covers:
+  //  (a) the multi-draw council picker (pick best affordable, fallback most VP+tickets)
+  //  (b) the regular place-or-decline decision (place on first eligible stage if affordable, else decline)
+  useEffect(() => {
+    if (phase !== "specialGuest") return;
+    const p = players[specialGuestPlayer];
+    if (!p?.isAI) return;
+    const sgPd = playerData[p.id];
+    if (!sgPd) return;
+
+    // (a) Picker: choose from multi-draw pool
+    if (specialGuestDrawnPool.length > 0 && !specialGuestCard) {
+      let bestIdx = 0, bestScore = -Infinity;
+      specialGuestDrawnPool.forEach((a, i) => {
+        const aff = canAffordSpecialGuest(a, sgPd);
+        // Affordability is huge (need to actually play it); break ties by VP + tickets
+        const score = (aff ? 1000 : 0) + (a.vp || 0) * 5 + (a.tickets || 0);
+        if (score > bestScore) { bestScore = score; bestIdx = i; }
+      });
+      const t = setTimeout(() => {
+        addLog(p.festivalName, `🤖 picked ${specialGuestDrawnPool[bestIdx].name} from ${specialGuestDrawnPool.length} options`);
+        pickSpecialGuestFromPool(bestIdx);
+      }, 800);
+      return () => clearTimeout(t);
+    }
+
+    // (b) Place or decline once a card is set
+    if (specialGuestCard) {
+      const affordable = canAffordSpecialGuest(specialGuestCard, sgPd);
+      if (affordable && specialGuestEligible.length > 0) {
+        // Pick the stage with the most existing tickets/VP from current artists
+        let bestStage = specialGuestEligible[0], bestStageScore = -Infinity;
+        for (const si of specialGuestEligible) {
+          const sa = (sgPd.stageArtists || [])[si] || [];
+          const score = sa.reduce((s, a) => s + (a.tickets || 0) + (a.vp || 0), 0);
+          if (score > bestStageScore) { bestStageScore = score; bestStage = si; }
+        }
+        const t = setTimeout(() => placeSpecialGuest(bestStage), 800);
+        return () => clearTimeout(t);
+      } else {
+        const t = setTimeout(() => declineSpecialGuest(), 800);
+        return () => clearTimeout(t);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, specialGuestPlayer, specialGuestCard, specialGuestDrawnPool, specialGuestEligible]);
 
   /** Place special guest on a stage — no headliner effect, just tickets */
   function placeSpecialGuest(stageIdx) {
@@ -3838,6 +3967,10 @@ export default function Headliners() {
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 10, marginBottom: 12 }}>
                 {Array.from({ length: FIELD_COUNT }).map((_, fIdx) => {
                   const c = councils[fIdx];
+                  // We're checking what the field WOULD look like AFTER placement of the selected amenity
+                  const fieldNow = pd.fields?.[fIdx] || { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+                  const fieldHypothetical = setupSelectedAmenity ? { ...fieldNow, [setupSelectedAmenity]: (fieldNow[setupSelectedAmenity] || 0) + 1 } : fieldNow;
+                  const wouldQualify = c ? councilQualifies(c, fieldHypothetical, 1) : false;
                   const isSelected = setupSelectedField === fIdx;
                   return <button key={fIdx} onClick={() => setSetupSelectedField(fIdx)} style={{
                     padding: 12,
@@ -3852,10 +3985,16 @@ export default function Headliners() {
                     boxShadow: isSelected ? "0 0 12px rgba(167,139,250,0.3)" : "none",
                   }}>
                     <div style={{ textAlign: "center", color: isSelected ? "#fbbf24" : "#c4b5fd", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 11 }}>Field {fIdx + 1}</div>
-                    {c ? <div style={{ padding: 6, borderRadius: 6, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: "#86efac", marginBottom: 3 }}>📋 {c.name}</div>
+                    {c ? <div style={{
+                      padding: 6,
+                      borderRadius: 6,
+                      background: wouldQualify ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.06)",
+                      border: wouldQualify ? "1px solid #22c55e80" : "1px solid #ef444440",
+                      boxShadow: wouldQualify ? "0 0 8px rgba(34,197,94,0.25)" : "none",
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: wouldQualify ? "#86efac" : "#fca5a5", marginBottom: 3 }}>{wouldQualify ? "✓" : "✗"} {c.name}</div>
                       <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3, marginBottom: 2 }}>{formatCouncilCondition(c)}</div>
-                      <div style={{ fontSize: 9, color: "#4ade80", lineHeight: 1.3 }}>{formatCouncilReward(c)}</div>
+                      <div style={{ fontSize: 9, color: wouldQualify ? "#4ade80" : "#94a3b8", lineHeight: 1.3, opacity: wouldQualify ? 1 : 0.7 }}>{formatCouncilReward(c)}</div>
                     </div> : <div style={{ fontSize: 10, color: "#475569", textAlign: "center", fontStyle: "italic" }}>(no council)</div>}
                   </button>;
                 })}
@@ -3866,7 +4005,7 @@ export default function Headliners() {
         })()}
         {setupStep === "confirm" && <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
           <p style={{ color: "#34d399", margin: 0, fontSize: 14, fontWeight: 600, marginBottom: 12 }}>✓ Confirm your starting setup.</p>
-          <PlayerBoard pd={playerData[currentSetupPlayer.id] || {}} compact />
+          <PlayerBoard pd={playerData[currentSetupPlayer.id] || {}} compact year={1} />
           <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16 }}>
             <button onClick={undoSetupPlacement} style={bs}>↩ Undo</button>
             <button onClick={confirmSetupPlacement} style={bp}>{setupIndex < players.length - 1 ? "Confirm & Next →" : "Confirm & Start 🎶"}</button>
@@ -4065,6 +4204,8 @@ export default function Headliners() {
               {fields.map((f, fIdx) => {
                 const fTotal = (f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0);
                 const c = councils[fIdx];
+                const fieldHypothetical = { ...f, [aType]: (f?.[aType] || 0) + 1 };
+                const wouldQualify = c ? councilQualifies(c, fieldHypothetical, year || 1) : false;
                 return <button key={fIdx} onClick={() => placeBonusAmenity(aType, fIdx)} style={{
                   padding: 10,
                   borderRadius: 10,
@@ -4078,10 +4219,16 @@ export default function Headliners() {
                 }}>
                   <div style={{ textAlign: "center", marginBottom: 4 }}>Field {fIdx + 1}</div>
                   <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 500, textAlign: "center", marginBottom: 6 }}>{fTotal} amenit{fTotal === 1 ? "y" : "ies"}</div>
-                  {c ? <div style={{ padding: 5, borderRadius: 5, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#86efac", marginBottom: 1 }}>📋 {c.name}</div>
+                  {c ? <div style={{
+                    padding: 5,
+                    borderRadius: 5,
+                    background: wouldQualify ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.06)",
+                    border: wouldQualify ? "1px solid #22c55e80" : "1px solid #ef444440",
+                    boxShadow: wouldQualify ? "0 0 6px rgba(34,197,94,0.25)" : "none",
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: wouldQualify ? "#86efac" : "#fca5a5", marginBottom: 1 }}>{wouldQualify ? "✓" : "✗"} {c.name}</div>
                     <div style={{ fontSize: 8, color: "#94a3b8", lineHeight: 1.2 }}>{formatCouncilCondition(c)}</div>
-                    <div style={{ fontSize: 8, color: "#4ade80", lineHeight: 1.2, marginTop: 1 }}>{formatCouncilReward(c)}</div>
+                    <div style={{ fontSize: 8, color: wouldQualify ? "#4ade80" : "#94a3b8", lineHeight: 1.2, marginTop: 1, opacity: wouldQualify ? 1 : 0.7 }}>{formatCouncilReward(c)}</div>
                   </div> : <div style={{ fontSize: 9, color: "#475569", textAlign: "center", fontStyle: "italic" }}>(no council)</div>}
                 </button>;
               })}
@@ -4466,7 +4613,7 @@ export default function Headliners() {
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🃏 {(vpd.hand || []).length} in hand</span>
             </div>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", alignItems: "flex-start", flexWrap: "wrap" }}>
-              <PlayerBoard pd={vpd} stageColors={vpd.stageColors || []} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
+              <PlayerBoard pd={vpd} stageColors={vpd.stageColors || []} year={year} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
               <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 170 }}>
                 {(vpd.stages || []).map((_, si) => {
                   const sa = vsa[si] || [];
@@ -4644,6 +4791,7 @@ export default function Headliners() {
               pickStageMode={artistAction === "pickStage"}
               pickFieldMode={pickingFieldFor != null}
               onFieldClick={handleFieldClickForPlacement}
+              year={year}
               onStageClick={(si) => {
                 const sa = (currentPD.stageArtists || [])[si] || [];
                 if (artistAction === "pickStage" && sa.length < 3) {
@@ -4852,6 +5000,12 @@ export default function Headliners() {
                 trackGoalProgress(currentPlayerId, "portalooRefreshes");
                 setTimeout(() => recalcTickets(), 50);
               }} style={{ ...bs, fontSize: 12, marginTop: 6, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🚽 Refresh Pool ({(currentPD.amenities?.portaloo) || 0} left)</button>}
+              {hasQualifyingCouncilOfType(currentPD, year, "refreshPool") && !councilRefreshUsedThisTurn && draw2Picks.length < 2 && <button onClick={() => {
+                refreshPool(1);
+                setCouncilRefreshUsedThisTurn(true);
+                addLog(currentPlayer.festivalName, `🔄 Refreshed pool (Council reward — free)`);
+                sfx.placeAmenity();
+              }} style={{ ...bs, fontSize: 12, marginTop: 6, marginLeft: 6, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e", color: "#86efac" }}>📋 Refresh Pool (Council, free)</button>}
               {objectivesToggle}{popupObjectivesPanel}
               <div><button onClick={() => {
                 draw2Picks.forEach(a => setArtistPool(prev => [...prev, a]));
@@ -4932,8 +5086,8 @@ export default function Headliners() {
     const sgArtist = specialGuestCard;
     const affordable = sgArtist ? canAffordSpecialGuest(sgArtist, sgPd) : false;
 
-    // If no card drawn yet, trigger setup for current player
-    if (!sgArtist && sgPlayer) {
+    // If no card drawn yet AND no picker pool, trigger setup for current player
+    if (!sgArtist && sgPlayer && specialGuestDrawnPool.length === 0) {
       setTimeout(() => setupSpecialGuestForPlayer(specialGuestPlayer), 100);
     }
 
@@ -4943,7 +5097,18 @@ export default function Headliners() {
         <span style={{ fontSize: 28, fontWeight: 900, color: fb.color, textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{fb.text}</span>
       </div>)}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
-        {sgArtist ? <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
+        {/* Multi-draw picker (council bonus) — shown before regular SG flow */}
+        {specialGuestDrawnPool.length > 0 && !sgArtist ? <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%" }}>
+          <h2 style={{ color: "#fbbf24", fontSize: 22, marginBottom: 4 }}>🌟 Special Guest — Year {year}</h2>
+          <h3 style={{ color: "#c4b5fd", fontSize: 16, marginBottom: 8 }}>{sgPlayer?.festivalName}</h3>
+          <p style={{ color: "#86efac", fontSize: 12, marginBottom: 4, fontWeight: 700 }}>📋 Council bonus: drew {specialGuestDrawnPool.length} options</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 16 }}>Pick one to consider as your guest. The rest go to discard.</p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
+            {specialGuestDrawnPool.map((a, i) => <div key={i} onClick={() => pickSpecialGuestFromPool(i)} style={{ cursor: "pointer", transition: "transform 0.15s" }}>
+              <ArtistCard artist={a} showCost />
+            </div>)}
+          </div>
+        </div> : sgArtist ? <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 24, marginBottom: 4 }}>🌟 Special Guest — Year {year}</h2>
           <h3 style={{ color: "#c4b5fd", fontSize: 18, marginBottom: 16 }}>{sgPlayer?.festivalName}</h3>
           <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>A special guest wants to headline! Fame level is ignored — you just need the amenities.</p>
