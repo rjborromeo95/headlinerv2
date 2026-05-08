@@ -309,7 +309,7 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled }) {
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -396,8 +396,23 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, minmax(0, 1fr))`, gap: 10, maxWidth: 620, margin: "0 auto" }}>
         {fields.map((field, fIdx) => {
           const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
-          return <div key={fIdx} style={{ padding: compact ? 10 : 12, borderRadius: 12, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}</div>
+          const disabled = fieldsDisabled && fieldsDisabled(fIdx, field);
+          const clickable = pickFieldMode && !disabled;
+          return <div key={fIdx} onClick={() => clickable && onFieldClick && onFieldClick(fIdx)} style={{
+            padding: compact ? 10 : 12,
+            borderRadius: 12,
+            background: clickable ? "rgba(124,58,237,0.18)" : "rgba(15,14,26,0.6)",
+            border: clickable ? "2px solid #a78bfa" : "1px solid rgba(124,58,237,0.2)",
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+            cursor: clickable ? "pointer" : (disabled ? "not-allowed" : "default"),
+            opacity: disabled ? 0.45 : 1,
+            boxShadow: clickable ? "0 0 12px rgba(167,139,250,0.5)" : "none",
+            animation: clickable ? "affordPulse 1.5s ease-in-out infinite" : "none",
+            transition: "all 0.2s",
+          }}>
+            <div style={{ fontSize: 10, color: clickable ? "#fbbf24" : "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}{clickable ? " ↓" : ""}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {AMENITY_TYPES.map(t => {
                 const c = field?.[t] || 0;
@@ -547,6 +562,7 @@ export default function Headliners() {
   const [setupIndex, setSetupIndex] = useState(0);
   const [setupStep, setSetupStep] = useState("pickAmenity");
   const [setupSelectedAmenity, setSetupSelectedAmenity] = useState(null);
+  const [setupSelectedField, setSetupSelectedField] = useState(null);
 
   // Game state
   const [year, setYear] = useState(1);
@@ -578,6 +594,7 @@ export default function Headliners() {
   const lastObjChoiceRef = useRef(null); // dedup AI objective auto-choice
   const [selectedDie, setSelectedDie] = useState(null);
   const [choiceAmenity, setChoiceAmenity] = useState(null);
+  const [pickingFieldFor, setPickingFieldFor] = useState(null); // amenityType when waiting for field click
   // (placingAmenity / placingStage / movingFrom / movedThisTurn / hoverHex removed —
   //  amenities are now counters, no spatial picking required)
   const [pendingDiceRoll, setPendingDiceRoll] = useState(null); // { count, results, rolled, pid, artistName, callback }
@@ -1617,7 +1634,7 @@ export default function Headliners() {
 
   const startSetup = () => {
     const data = {}; players.forEach(p => { const fields = emptyFields(); data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0 }; });
-    setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null);
+    setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
     const all = shuffle([...ALL_ARTISTS]);
     const fame0 = shuffle(all.filter(a => a.fame === 0));
@@ -1652,8 +1669,9 @@ export default function Headliners() {
     setSetupStep("draftArtist");
   };
 
-  const confirmSetupAmenity = (overrideChoice) => {
+  const confirmSetupAmenity = (overrideChoice, overrideField) => {
     const choice = overrideChoice || setupSelectedAmenity;
+    const fieldIdx = (overrideField != null) ? overrideField : (setupSelectedField != null ? setupSelectedField : 0);
     if (!choice) return;
     const pid = currentSetupPlayer.id;
     const usedNames = playerData[pid]?.stageNames || [];
@@ -1662,7 +1680,6 @@ export default function Headliners() {
     const sColor = STAGE_COLORS[Math.floor(Math.random() * STAGE_COLORS.length)];
     setPlayerData(p => {
       const cur = p[pid];
-      const fieldIdx = 0; // Build 1: default field. Build 2 will let player choose.
       const updated = mutateAmenity(cur, fieldIdx, choice, +1);
       return {
         ...p,
@@ -1677,7 +1694,7 @@ export default function Headliners() {
         }
       };
     });
-    addLog(currentSetupPlayer.festivalName, `chose ${AMENITY_LABELS[choice]} and stage`);
+    addLog(currentSetupPlayer.festivalName, `placed ${AMENITY_LABELS[choice]} in Field ${fieldIdx + 1}`);
     setSetupStep("confirm");
   };
 
@@ -1710,7 +1727,7 @@ export default function Headliners() {
     sfx.placeStage();
     if (setupIndex < players.length - 1) {
       const nextIdx = setupIndex + 1;
-      setSetupIndex(nextIdx); setSetupSelectedAmenity(null);
+      setSetupIndex(nextIdx); setSetupSelectedAmenity(null); setSetupSelectedField(null);
       setSetupDraftOptions([]); setSetupDraftSelected([]);
       setSetupStep("viewObjective");
     } else startGame();
@@ -1736,7 +1753,7 @@ export default function Headliners() {
           }
         };
       });
-      setSetupSelectedAmenity(null);
+      setSetupSelectedAmenity(null); setSetupSelectedField(null);
       setSetupStep("pickAmenity");
     }
   };
@@ -1957,9 +1974,11 @@ export default function Headliners() {
       }
       if (setupStep === "pickAmenity") {
         const amenityChoice = aiPickSetupAmenity();
+        const fieldChoice = 0; // Build 2: AI defaults to Field 0. Build 7 will add smart selection.
         setSetupSelectedAmenity(amenityChoice);
+        setSetupSelectedField(fieldChoice);
         aiProcessing.current = false;
-        setTimeout(() => { confirmSetupAmenity(amenityChoice); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
+        setTimeout(() => { confirmSetupAmenity(amenityChoice, fieldChoice); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
         return;
       }
       if (setupStep === "confirm") { confirmSetupPlacement(); scheduleNext(600); return; }
@@ -2272,10 +2291,36 @@ export default function Headliners() {
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       return;
     }
-    if (dv === "catering_or_portaloo" || dv === "security_or_campsite") { setSelectedDie(idx); setChoiceAmenity(dv); }
-    else { const nd = [...dice]; nd.splice(idx, 1); setDice(nd); placeAmenityCounter(dv); setSelectedDie(null); setChoiceAmenity(null); }
+    if (dv === "catering_or_portaloo" || dv === "security_or_campsite") {
+      // Player must choose between two amenity types first
+      setSelectedDie(idx);
+      setChoiceAmenity(dv);
+    } else {
+      // Lock in amenity, defer to field-pick step
+      setSelectedDie(idx);
+      setPickingFieldFor(dv);
+    }
   };
-  const handleChoiceSelect = (type) => { const nd = [...dice]; nd.splice(selectedDie, 1); setDice(nd); placeAmenityCounter(type); setSelectedDie(null); setChoiceAmenity(null); };
+  const handleChoiceSelect = (type) => {
+    setChoiceAmenity(null);
+    setPickingFieldFor(type); // selectedDie already set
+  };
+  // Called when user clicks a field on PlayerBoard while pickingFieldFor is set
+  const handleFieldClickForPlacement = (fieldIdx) => {
+    if (pickingFieldFor == null || selectedDie == null) return;
+    const amenityType = pickingFieldFor;
+    const dieIdx = selectedDie;
+    // Remove the die, then place into chosen field
+    const nd = [...dice]; nd.splice(dieIdx, 1); setDice(nd);
+    placeAmenityCounter(amenityType, fieldIdx);
+    setSelectedDie(null);
+    setPickingFieldFor(null);
+  };
+  const cancelFieldPlacement = () => {
+    setSelectedDie(null);
+    setPickingFieldFor(null);
+    setChoiceAmenity(null);
+  };
   const handleRerollDice = () => {
     setDice(rollDice());
     addLog("Dice", "Rerolled all amenity dice");
@@ -2466,7 +2511,7 @@ export default function Headliners() {
   const endTurn = () => {
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
-    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null);
+    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null);
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
 
     // Evaluate council objectives for current player before moving on
@@ -2817,7 +2862,7 @@ export default function Headliners() {
     if (r.decisions.length === 0) {
       const t = setTimeout(() => applyStarRoll(), 800);
       return () => clearTimeout(t);
-    } else if (r.decisions.every(d => d.decision !== null)) {
+    } else if (r.decisions.every(d => d.decision === 'absorb' || (d.decision === 'lose' && d.lostFromField != null))) {
       // Decisions all made (post-aiResolveStarRoll) — apply
       const t = setTimeout(() => applyStarRoll(), 600);
       return () => clearTimeout(t);
@@ -2888,7 +2933,7 @@ export default function Headliners() {
     setStarRollResult({
       pid, faces, stars, amenityFaces, resolvable,
       ignored,
-      decisions: resolvable.map(t => ({ amenity: t, decision: null })), // decision: "absorb" | "lose"
+      decisions: resolvable.map(t => ({ amenity: t, decision: null, lostFromField: null })),
     });
     setStarRollPhase("rolling");
     setTimeout(() => setStarRollPhase("resolving"), 1200); // animation delay
@@ -2903,29 +2948,19 @@ export default function Headliners() {
     if (!r) return;
     const { pid, stars, decisions, faces } = r;
     const vpFromStars = starVP(stars);
-    // Tally absorbed (security shields used) and lost amenities
+    // Tally absorbed (security shields used)
     const absorbed = decisions.filter(d => d.decision === "absorb").length;
-    const lostByType = {};
-    decisions.forEach(d => {
-      if (d.decision === "lose") {
-        lostByType[d.amenity] = (lostByType[d.amenity] || 0) + 1;
-      }
-    });
+    // Build per-(field, amenity) loss counts using each decision's chosen field
+    const lossesByField = decisions.filter(d => d.decision === "lose"); // [{amenity, lostFromField}, ...]
     // Mutate player data: VP, dice returned, amenity counters reduced
     setPlayerData(p => {
       const cur = p[pid];
       let updated = cur;
-      // Remove each lost amenity from the field with the most of that type (greedy).
-      // Build 2 will let the player choose which field to lose from.
-      Object.entries(lostByType).forEach(([t, n]) => {
-        for (let i = 0; i < n; i++) {
-          const fields = updated.fields || emptyFields();
-          let bestIdx = 0, bestCount = fields[0]?.[t] || 0;
-          for (let f = 1; f < fields.length; f++) {
-            const c = fields[f]?.[t] || 0;
-            if (c > bestCount) { bestCount = c; bestIdx = f; }
-          }
-          if (bestCount > 0) updated = mutateAmenity(updated, bestIdx, t, -1);
+      lossesByField.forEach(d => {
+        const fIdx = d.lostFromField != null ? d.lostFromField : 0;
+        // Only decrement if the field actually has the amenity (defensive)
+        if ((updated.fields?.[fIdx]?.[d.amenity] || 0) > 0) {
+          updated = mutateAmenity(updated, fIdx, d.amenity, -1);
         }
       });
       return { ...p, [pid]: {
@@ -2940,7 +2975,7 @@ export default function Headliners() {
     // Track avoided count for "+VP per neg star avoided" effects
     setNegStarFacesAvoidedThisYear(prev => ({ ...prev, [pid]: (prev[pid] || 0) + absorbed }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
-    const lostStr = Object.entries(lostByType).map(([t, n]) => `${n} ${AMENITY_LABELS[t]}`).join(", ");
+    const lostStr = lossesByField.map(d => `${AMENITY_LABELS[d.amenity]} (F${(d.lostFromField ?? 0) + 1})`).join(", ");
     addLog(pName, `🎲 Rolled ${stars} stars (+${vpFromStars} VP)${absorbed ? `, absorbed ${absorbed}` : ""}${lostStr ? `, lost ${lostStr}` : ""}`);
     sfx.gainFame();
     // Advance to next player
@@ -2954,7 +2989,8 @@ export default function Headliners() {
     }
   };
 
-  // AI auto-resolves star roll: absorb non-security amenity faces with security shields, lose what can't be absorbed
+  // AI auto-resolves star roll: absorb non-security amenity faces with security shields, lose what can't be absorbed.
+  // For losses, AI picks field with most of that amenity (greedy — Build 7 will add smarter logic).
   // After updating decisions, the useEffect notices all decisions are set and schedules applyStarRoll.
   const aiResolveStarRoll = () => {
     const r = starRollResult;
@@ -2962,13 +2998,29 @@ export default function Headliners() {
     const pid = r.pid;
     const pd = playerData[pid];
     let secShields = (pd.amenities?.security) || 0;
+    // Track running field counts per amenity so we don't double-count after a loss
+    const runningFields = (pd.fields || emptyFields()).map(f => ({ ...f }));
+    const pickFieldForLoss = (amenityType) => {
+      let bestIdx = 0, bestCount = runningFields[0]?.[amenityType] || 0;
+      for (let f = 1; f < runningFields.length; f++) {
+        const c = runningFields[f]?.[amenityType] || 0;
+        if (c > bestCount) { bestCount = c; bestIdx = f; }
+      }
+      if (bestCount > 0) runningFields[bestIdx][amenityType] -= 1;
+      return bestIdx;
+    };
     const decisions = r.decisions.map(d => {
-      if (d.amenity === "security") return { ...d, decision: "lose" };
+      if (d.amenity === "security") {
+        // Security can't shield itself — must lose
+        const fIdx = pickFieldForLoss(d.amenity);
+        return { ...d, decision: "lose", lostFromField: fIdx };
+      }
       if (secShields > 0) {
         secShields--;
-        return { ...d, decision: "absorb" };
+        return { ...d, decision: "absorb", lostFromField: null };
       }
-      return { ...d, decision: "lose" };
+      const fIdx = pickFieldForLoss(d.amenity);
+      return { ...d, decision: "lose", lostFromField: fIdx };
     });
     setStarRollResult({ ...r, decisions });
   };
@@ -3389,10 +3441,27 @@ export default function Headliners() {
           <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{(setupDraftSelected || []).length}/2 selected</p>
           <button onClick={confirmSetupDraft} disabled={(setupDraftSelected || []).length !== 2} style={{ ...bp, width: "100%", opacity: (setupDraftSelected || []).length === 2 ? 1 : 0.4 }}>Draft 2 Artists →</button>
         </div>}
-        {setupStep === "pickAmenity" && <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
+        {setupStep === "pickAmenity" && <div style={{ ...card, maxWidth: 580, width: "100%", textAlign: "center" }}>
           <h3 style={{ color: "#e9d5ff", marginBottom: 12 }}>Choose your starting amenity</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
-          <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity} style={{ ...bp, marginTop: 20, width: "100%", opacity: setupSelectedAmenity ? 1 : 0.4 }}>Confirm →</button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
+          {setupSelectedAmenity && <>
+            <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Now pick which field to place it in:</div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 10, marginBottom: 12 }}>
+              {Array.from({ length: FIELD_COUNT }).map((_, fIdx) => (
+                <button key={fIdx} onClick={() => setSetupSelectedField(fIdx)} style={{
+                  padding: 14,
+                  borderRadius: 10,
+                  border: setupSelectedField === fIdx ? "2px solid #a78bfa" : "2px solid #2a2a4a",
+                  background: setupSelectedField === fIdx ? "rgba(167,139,250,0.18)" : "#1a1a2e",
+                  color: "#e9d5ff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 13,
+                }}>Field {fIdx + 1}</button>
+              ))}
+            </div>
+          </>}
+          <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity || setupSelectedField == null} style={{ ...bp, marginTop: 12, width: "100%", opacity: (setupSelectedAmenity && setupSelectedField != null) ? 1 : 0.4 }}>Confirm →</button>
         </div>}
         {setupStep === "confirm" && <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
           <p style={{ color: "#34d399", margin: 0, fontSize: 14, fontWeight: 600, marginBottom: 12 }}>✓ Confirm your starting setup.</p>
@@ -3561,21 +3630,22 @@ export default function Headliners() {
         const pid = pendingEffectPid;
         const pd = playerData[pid] || {};
 
-        const placeBonusAmenity = (aType) => {
-          if (!aType) return;
+        const placeBonusAmenity = (aType, fieldIdx) => {
+          if (!aType || fieldIdx == null) return;
           setPlayerData(p => {
             const cur = p[pid];
-            let updated = mutateAmenity(cur, 0, aType, +1); // Build 1: field 0
+            let updated = mutateAmenity(cur, fieldIdx, aType, +1);
             if (aType === "security" && cur.vpPerSecurity > 0) {
               updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
               addLog("Effect", `+${cur.vpPerSecurity} VP from security build!`);
             }
             return { ...p, [pid]: updated };
           });
-          addLog("Effect", `Built bonus ${AMENITY_LABELS[aType]}`);
+          addLog("Effect", `Built bonus ${AMENITY_LABELS[aType]} in Field ${fieldIdx + 1}`);
           sfx.placeAmenity();
           const remaining = (pe.placeCount || 1) - 1;
           if (remaining > 0) {
+            // Reset chosenType for placeAmenity (player picks again); keep amenityType for placeSpecific
             if (pe.type === "placeAmenity") setPendingEffect({ ...pe, placeCount: remaining, chosenType: null });
             else setPendingEffect({ ...pe, placeCount: remaining });
           } else {
@@ -3584,28 +3654,66 @@ export default function Headliners() {
           setTimeout(() => recalcTickets(), 50);
         };
 
+        // Reusable field picker — shows 3 field buttons with current counts
+        const fieldPicker = (aType) => {
+          const fields = pd.fields || emptyFields();
+          return <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Pick a field:</div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 8 }}>
+              {fields.map((f, fIdx) => {
+                const fTotal = (f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0);
+                return <button key={fIdx} onClick={() => placeBonusAmenity(aType, fIdx)} style={{
+                  padding: 12,
+                  borderRadius: 10,
+                  border: "2px solid #a78bfa",
+                  background: "rgba(167,139,250,0.12)",
+                  color: "#e9d5ff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}>
+                  <div>Field {fIdx + 1}</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 500, marginTop: 2 }}>{fTotal} amenities</div>
+                </button>;
+              })}
+            </div>
+          </div>;
+        };
+
         if (pe.type === "placeSpecific") {
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 440 }}>
               <h3 style={{ color: "#4ade80", marginBottom: 12 }}>✨ {pe.artistName}</h3>
-              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 16 }}>Build your bonus {AMENITY_ICONS[pe.amenityType]} {AMENITY_LABELS[pe.amenityType]}{(pe.placeCount || 1) > 1 ? ` (${pe.placeCount} remaining)` : ""}</p>
-              <button onClick={() => placeBonusAmenity(pe.amenityType)} style={{ ...bp, width: "100%" }}>Build {AMENITY_ICONS[pe.amenityType]} {AMENITY_LABELS[pe.amenityType]}</button>
+              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 4 }}>Build a bonus {AMENITY_ICONS[pe.amenityType]} {AMENITY_LABELS[pe.amenityType]}{(pe.placeCount || 1) > 1 ? ` (${pe.placeCount} remaining)` : ""}</p>
+              {fieldPicker(pe.amenityType)}
             </div>
           </div>;
         }
 
         if (pe.type === "placeAmenity") {
-          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
-              <h3 style={{ color: "#4ade80", marginBottom: 12 }}>✨ {pe.artistName || "Effect"}: Choose an amenity to build!{(pe.placeCount || 1) > 1 ? ` (${pe.placeCount} remaining)` : ""}</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {AMENITY_TYPES.map(t => <button key={t} onClick={() => placeBonusAmenity(t)} style={{ padding: 14, borderRadius: 10, border: "2px solid #2a2a4a", background: "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}>
-                  <div style={{ fontSize: 24 }}>{AMENITY_ICONS[t]}</div>
-                  <div style={{ fontWeight: 600, marginTop: 4, fontSize: 12 }}>{AMENITY_LABELS[t]}</div>
-                </button>)}
+          // Step 1: pick amenity type. Step 2: pick field (when chosenType is set).
+          if (!pe.chosenType) {
+            return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
+                <h3 style={{ color: "#4ade80", marginBottom: 12 }}>✨ {pe.artistName || "Effect"}: Choose an amenity to build!{(pe.placeCount || 1) > 1 ? ` (${pe.placeCount} remaining)` : ""}</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {AMENITY_TYPES.map(t => <button key={t} onClick={() => setPendingEffect({ ...pe, chosenType: t })} style={{ padding: 14, borderRadius: 10, border: "2px solid #2a2a4a", background: "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}>
+                    <div style={{ fontSize: 24 }}>{AMENITY_ICONS[t]}</div>
+                    <div style={{ fontWeight: 600, marginTop: 4, fontSize: 12 }}>{AMENITY_LABELS[t]}</div>
+                  </button>)}
+                </div>
               </div>
-            </div>
-          </div>;
+            </div>;
+          } else {
+            return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ ...card, textAlign: "center", maxWidth: 440 }}>
+                <h3 style={{ color: "#4ade80", marginBottom: 4 }}>✨ {pe.artistName || "Effect"}</h3>
+                <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 4 }}>{AMENITY_ICONS[pe.chosenType]} {AMENITY_LABELS[pe.chosenType]} selected</p>
+                {fieldPicker(pe.chosenType)}
+                <button onClick={() => setPendingEffect({ ...pe, chosenType: null })} style={{ ...bs, marginTop: 12, fontSize: 11 }}>← Change amenity</button>
+              </div>
+            </div>;
+          }
         }
 
         if (pe.type === "signArtist") {
@@ -4125,6 +4233,8 @@ export default function Headliners() {
               pd={currentPD}
               stageColors={currentPD.stageColors || []}
               pickStageMode={artistAction === "pickStage"}
+              pickFieldMode={pickingFieldFor != null}
+              onFieldClick={handleFieldClickForPlacement}
               onStageClick={(si) => {
                 const sa = (currentPD.stageArtists || [])[si] || [];
                 if (artistAction === "pickStage" && sa.length < 3) {
@@ -4197,10 +4307,15 @@ export default function Headliners() {
             </div>}
 
             {/* Pick Amenity */}
-            {!actionTaken && turnAction === "pickAmenity" && <div style={{ textAlign: "center" }}>
+            {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>Pick a die to build that amenity:</p>
               <DiceDisplay dice={dice} onPick={handleDiePick} canReroll={diceNeedReroll(dice)} onReroll={handleRerollDice} />
               <button onClick={() => setTurnAction(null)} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button>
+            </div>}
+
+            {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor != null && <div style={{ textAlign: "center", padding: 14, borderRadius: 12, background: "rgba(167,139,250,0.12)", border: "1px solid #a78bfa", marginBottom: 12 }}>
+              <p style={{ color: "#fbbf24", fontSize: 14, fontWeight: 700, margin: 0 }}>{AMENITY_ICONS[pickingFieldFor]} Click a field below to place your {AMENITY_LABELS[pickingFieldFor]}</p>
+              <button onClick={cancelFieldPlacement} style={{ ...bs, marginTop: 8, fontSize: 11 }}>← Cancel</button>
             </div>}
 
             {/* Deploy Agent — pool claim only */}
@@ -4580,7 +4695,7 @@ export default function Headliners() {
       const secAvail = (pd.amenities?.security) || 0;
       const usedShields = r.decisions.filter(d => d.decision === "absorb").length;
       const remainingShields = secAvail - usedShields;
-      const allDecided = r.decisions.every(d => d.decision !== null);
+      const allDecided = r.decisions.every(d => d.decision === 'absorb' || (d.decision === 'lose' && d.lostFromField != null));
       const vpFromStars = starVP(r.stars);
 
       // (AI auto-resolve handled by useEffect to avoid render-side-effect double-firing)
@@ -4612,23 +4727,41 @@ export default function Headliners() {
               <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>You have {secAvail} 👮‍♀️ shield{secAvail !== 1 ? "s" : ""} available — {remainingShields} remaining.</div>
               {r.decisions.map((d, i) => {
                 const isSec = d.amenity === "security";
-                return <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 8, borderRadius: 8, background: "rgba(0,0,0,0.25)", marginBottom: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                    <span style={{ fontSize: 18 }}>{AMENITY_ICONS[d.amenity]}</span>
-                    <span style={{ color: "#e9d5ff" }}>{AMENITY_LABELS[d.amenity]}</span>
+                const fields = pd.fields || emptyFields();
+                const needsField = d.decision === "lose" && d.lostFromField == null;
+                return <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 8, background: "rgba(0,0,0,0.25)", marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                      <span style={{ fontSize: 18 }}>{AMENITY_ICONS[d.amenity]}</span>
+                      <span style={{ color: "#e9d5ff" }}>{AMENITY_LABELS[d.amenity]}</span>
+                      {d.decision === "lose" && d.lostFromField != null && <span style={{ fontSize: 10, color: "#fca5a5" }}>→ Field {d.lostFromField + 1}</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {!isSec && <button onClick={() => {
+                        const newDecisions = [...r.decisions];
+                        newDecisions[i] = { ...d, decision: "absorb", lostFromField: null };
+                        setStarRollResult({ ...r, decisions: newDecisions });
+                      }} disabled={d.decision !== "absorb" && remainingShields <= 0} style={{ ...bs, fontSize: 11, padding: "4px 10px", background: d.decision === "absorb" ? "#22c55e30" : undefined, border: d.decision === "absorb" ? "1px solid #22c55e" : undefined, opacity: (d.decision !== "absorb" && remainingShields <= 0) ? 0.4 : 1 }}>🛡️ Absorb</button>}
+                      <button onClick={() => {
+                        const newDecisions = [...r.decisions];
+                        newDecisions[i] = { ...d, decision: "lose", lostFromField: null };
+                        setStarRollResult({ ...r, decisions: newDecisions });
+                      }} style={{ ...bs, fontSize: 11, padding: "4px 10px", background: d.decision === "lose" ? "#ef444430" : undefined, border: d.decision === "lose" ? "1px solid #ef4444" : undefined }}>💔 Lose 1</button>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {!isSec && <button onClick={() => {
-                      const newDecisions = [...r.decisions];
-                      newDecisions[i] = { ...d, decision: "absorb" };
-                      setStarRollResult({ ...r, decisions: newDecisions });
-                    }} disabled={d.decision !== "absorb" && remainingShields <= 0} style={{ ...bs, fontSize: 11, padding: "4px 10px", background: d.decision === "absorb" ? "#22c55e30" : undefined, border: d.decision === "absorb" ? "1px solid #22c55e" : undefined, opacity: (d.decision !== "absorb" && remainingShields <= 0) ? 0.4 : 1 }}>🛡️ Absorb</button>}
-                    <button onClick={() => {
-                      const newDecisions = [...r.decisions];
-                      newDecisions[i] = { ...d, decision: "lose" };
-                      setStarRollResult({ ...r, decisions: newDecisions });
-                    }} style={{ ...bs, fontSize: 11, padding: "4px 10px", background: d.decision === "lose" ? "#ef444430" : undefined, border: d.decision === "lose" ? "1px solid #ef4444" : undefined }}>💔 Lose 1</button>
-                  </div>
+                  {needsField && <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 30 }}>
+                    <span style={{ fontSize: 10, color: "#fbbf24" }}>From which field?</span>
+                    {fields.map((f, fIdx) => {
+                      const c = f?.[d.amenity] || 0;
+                      const enabled = c > 0;
+                      return <button key={fIdx} onClick={() => {
+                        if (!enabled) return;
+                        const newDecisions = [...r.decisions];
+                        newDecisions[i] = { ...d, decision: "lose", lostFromField: fIdx };
+                        setStarRollResult({ ...r, decisions: newDecisions });
+                      }} disabled={!enabled} style={{ ...bs, fontSize: 10, padding: "3px 8px", opacity: enabled ? 1 : 0.3, cursor: enabled ? "pointer" : "not-allowed" }}>F{fIdx + 1} ({c})</button>;
+                    })}
+                  </div>}
                 </div>;
               })}
             </div>}
