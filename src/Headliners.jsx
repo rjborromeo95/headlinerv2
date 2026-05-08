@@ -634,6 +634,10 @@ export default function Headliners() {
   const [players, setPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
   const [playerCount, setPlayerCount] = useState(2);
   const [playerData, setPlayerData] = useState({});
+  // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
+  // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
+  const playerDataRef = useRef(playerData);
+  useEffect(() => { playerDataRef.current = playerData; }, [playerData]);
   const [setupIndex, setSetupIndex] = useState(0);
   const [setupStep, setSetupStep] = useState("pickAmenity");
   const [setupSelectedAmenity, setSetupSelectedAmenity] = useState(null);
@@ -755,6 +759,10 @@ export default function Headliners() {
   // Shared dice pool — sized by player count: 2P=12, 3P=16, 4P=23
   const STAR_DICE_POOL_BY_PLAYER_COUNT = { 2: 12, 3: 16, 4: 23 };
   const [dicePool, setDicePool] = useState(0); // initialized at game start
+  const dicePoolRef = useRef(dicePool);
+  useEffect(() => { dicePoolRef.current = dicePool; }, [dicePool]);
+  // Idempotency latch — only grant positional dice once per year, even if entry point fires multiple times
+  const positionalGrantedYearRef = useRef(0);
   // Per-player held dice count is on pd.heldDice
   // Per-player fame high-water mark is pd.fameHighWater (for "new fame level → +1 die" trigger)
   // Per-player filled-stage-count high-water is pd.filledStagesHighWater (for "stage filled → +1 die" trigger)
@@ -1975,6 +1983,8 @@ export default function Headliners() {
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
     const tl = {}; order.forEach(id => { tl[id] = TURNS_PER_YEAR[1]; }); setTurnsLeft(tl);
     setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    // Reset year-scoped latches
+    positionalGrantedYearRef.current = 0;
     // Init Star Dice shared pool (replaces old event deck)
     const poolSize = STAR_DICE_POOL_BY_PLAYER_COUNT[players.length] || 12;
     setDicePool(poolSize);
@@ -2890,7 +2900,12 @@ export default function Headliners() {
     });
 
     if (!anyEffects) {
-      // Skip straight to events
+      // No year-end artist effects — but still need fresh tickets/fame snapshot for positional grants
+      const prev = playerDataRef.current || {};
+      const fresh = {};
+      Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
+      setPlayerData(fresh);
+      playerDataRef.current = fresh;
       beginStarDicePhase();
       return;
     }
@@ -2955,7 +2970,23 @@ export default function Headliners() {
           setYearEndDiceRoll(null);
         } else {
           // All done — go to events
-          setTimeout(() => { try { recalcTickets(); beginStarDicePhase(); } catch(e) { console.error("beginStarDicePhase error:", e); setPhase("game"); } }, 100);
+          // All year-end artist effects done — recompute tickets/fame and transition to star dice phase.
+          // Compute the fresh snapshot synchronously and prime playerDataRef so grantPositionalDice
+          // (which runs inside beginStarDicePhase via the ref) reads the just-recomputed values
+          // rather than the pre-recalc closure / pre-render React state.
+          setTimeout(() => {
+            try {
+              const prev = playerDataRef.current || {};
+              const fresh = {};
+              Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
+              setPlayerData(fresh);
+              playerDataRef.current = fresh;
+              beginStarDicePhase();
+            } catch(e) {
+              console.error("beginStarDicePhase error:", e);
+              setPhase("game");
+            }
+          }, 100);
         }
       }
     } catch (err) {
@@ -3109,53 +3140,76 @@ export default function Headliners() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, starRollPhase, starRollPlayer]);
 
-  // Grant positional star dice based on year-end stats. Called at year end before rolling.
+  // Grant positional star dice based on year-end stats. Called once per year-end before rolling.
   // - Most fame: +2 (sole) or +1 each (tied)
   // - Most tickets: +1 each (sole or tied)
   // - Least tickets (3+ players only): +1 each (sole or tied)
-  // All grants pull from the shared pool and stop if it runs dry.
+  //
+  // Implementation notes (these guard against the bugs we hit before):
+  // - Reads playerData & dicePool from refs (not closure) so values are fresh even when called
+  //   from chained setTimeout callbacks during the year-end transition.
+  // - Idempotent via positionalGrantedYearRef — re-entry on the same year is a no-op.
+  // - All side effects (addLog, setPlayerData) happen OUTSIDE setDicePool's updater so React
+  //   Strict Mode's double-invocation can't fire them twice.
   function grantPositionalDice() {
-    // Snapshot current player data
+    if (positionalGrantedYearRef.current === year) return;
+    positionalGrantedYearRef.current = year;
+
+    const pdSnap = playerDataRef.current || {};
     const pids = players.map(p => p.id);
     const fame = {}, tickets = {};
     pids.forEach(pid => {
-      const pd = playerData[pid];
-      fame[pid] = pd?.fame || 0;
-      tickets[pid] = pd?.tickets || 0;
+      fame[pid] = pdSnap[pid]?.fame || 0;
+      tickets[pid] = pdSnap[pid]?.tickets || 0;
     });
-    // Most fame
+
+    // Build the desired grant list based on snapshot
+    const desired = [];
     const maxFame = Math.max(...pids.map(pid => fame[pid]));
     const fameLeaders = pids.filter(pid => fame[pid] === maxFame);
     const fameAward = fameLeaders.length === 1 ? 2 : 1;
-    fameLeaders.forEach(pid => grantOnePositionalDice(pid, fameAward, `Most Fame (${maxFame})`));
-    // Most tickets
+    fameLeaders.forEach(pid => desired.push({ pid, count: fameAward, reason: `Most Fame (${maxFame})` }));
     const maxTickets = Math.max(...pids.map(pid => tickets[pid]));
-    const ticketLeaders = pids.filter(pid => tickets[pid] === maxTickets);
-    if (maxTickets > 0) ticketLeaders.forEach(pid => grantOnePositionalDice(pid, 1, `Most Tickets (${maxTickets})`));
-    // Least tickets — only in 3+ player games
+    if (maxTickets > 0) {
+      const ticketLeaders = pids.filter(pid => tickets[pid] === maxTickets);
+      ticketLeaders.forEach(pid => desired.push({ pid, count: 1, reason: `Most Tickets (${maxTickets})` }));
+    }
     if (pids.length >= 3) {
       const minTickets = Math.min(...pids.map(pid => tickets[pid]));
-      // Only grant if there's actually a "least" (i.e., not everyone tied at the top — but with min === max all tied)
       if (minTickets < maxTickets) {
         const ticketLosers = pids.filter(pid => tickets[pid] === minTickets);
-        ticketLosers.forEach(pid => grantOnePositionalDice(pid, 1, `Least Tickets (${minTickets})`));
+        ticketLosers.forEach(pid => desired.push({ pid, count: 1, reason: `Least Tickets (${minTickets})` }));
       }
     }
-  }
-  function grantOnePositionalDice(pid, count, reason) {
-    if (count <= 0) return;
-    setDicePool(prevPool => {
-      const got = Math.min(count, prevPool);
+
+    if (desired.length === 0) return;
+
+    // Drain the pool synchronously using the ref's current value
+    let pool = dicePoolRef.current;
+    const actualGrants = [];
+    for (const g of desired) {
+      const got = Math.min(g.count, pool);
       if (got > 0) {
-        const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
-        addLog("🎲", `${pName} gained ${got} Star Die${got === 1 ? "" : "s"} (${reason}) — ${prevPool - got} left in pool`);
-        setPlayerData(prevPD => ({
-          ...prevPD,
-          [pid]: { ...prevPD[pid], heldDice: (prevPD[pid].heldDice || 0) + got },
-        }));
+        pool -= got;
+        actualGrants.push({ ...g, granted: got, poolAfter: pool });
       }
-      return prevPool - got;
+    }
+    if (actualGrants.length === 0) return;
+
+    // Apply state changes — direct setDicePool with the computed value (no updater callback,
+    // so Strict Mode can't double-invoke), single setPlayerData, then logs.
+    setDicePool(pool);
+    setPlayerData(prev => {
+      const next = { ...prev };
+      for (const g of actualGrants) {
+        next[g.pid] = { ...next[g.pid], heldDice: (next[g.pid].heldDice || 0) + g.granted };
+      }
+      return next;
     });
+    for (const g of actualGrants) {
+      const pName = players.find(pl => pl.id === g.pid)?.festivalName || "?";
+      addLog("🎲", `${pName} gained ${g.granted} Star Die${g.granted === 1 ? "" : "s"} (${g.reason}) — ${g.poolAfter} left in pool`);
+    }
   }
 
   const beginStarDicePhase = () => {
