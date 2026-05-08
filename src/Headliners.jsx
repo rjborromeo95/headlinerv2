@@ -28,6 +28,30 @@ const ALL_ARTISTS = [{"name": "Kara Okay", "fame": 0, "vp": 1, "campCost": 0, "s
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════
 const AMENITY_TYPES = ["campsite", "security", "catering", "portaloo"];
+// Each player has 3 fields. Each field is an independent counter object.
+// pd.fields[i] is the source of truth for amenity placement; pd.amenities is the
+// derived sum across fields, kept in sync by computeTicketsForPlayer / setPlayerData.
+const FIELD_COUNT = 3;
+function emptyField() { return { campsite: 0, security: 0, catering: 0, portaloo: 0 }; }
+function emptyFields() { return Array.from({ length: FIELD_COUNT }, emptyField); }
+function sumFields(fields) {
+  const out = { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+  if (!fields) return out;
+  for (const f of fields) {
+    if (!f) continue;
+    out.campsite += f.campsite || 0;
+    out.security += f.security || 0;
+    out.catering += f.catering || 0;
+    out.portaloo += f.portaloo || 0;
+  }
+  return out;
+}
+// Returns a new pd with fields[fieldIdx][type] += delta and amenities re-synced.
+// Use this for ALL amenity mutations to keep the two views consistent.
+function mutateAmenity(pd, fieldIdx, type, delta) {
+  const fields = (pd.fields || emptyFields()).map((f, i) => i === fieldIdx ? { ...f, [type]: Math.max(0, (f?.[type] || 0) + delta) } : f);
+  return { ...pd, fields, amenities: sumFields(fields) };
+}
 const AMENITY_LABELS = { campsite: "Campsite", portaloo: "Portaloo", security: "Security", catering: "Catering Van" };
 const AMENITY_ICONS = { campsite: "⛺", portaloo: "🚽", security: "👮‍♀️", catering: "🍔" };
 const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f87171", catering: "#fbbf24" };
@@ -291,6 +315,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
   const stageNames = pd?.stageNames || [];
   const sColors = stageColors || pd?.stageColors || [];
   const am = pd?.amenities || {};
+  const fields = pd?.fields || emptyFields();
 
   const stageBox = {
     minWidth: compact ? 120 : 140,
@@ -311,19 +336,19 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
     flexShrink: 0,
   });
 
-  // Render up to ~10 tokens per amenity type, then a "+N" pill
-  const renderTokens = (type) => {
-    const count = am[type] || 0;
+  // Render up to N tokens per amenity type within a single field, then a "+N" pill
+  const renderFieldTokens = (fieldData, type) => {
+    const count = fieldData?.[type] || 0;
     if (count === 0) return null;
-    const cap = compact ? 5 : 10;
+    const cap = compact ? 4 : 6;
     const visible = Math.min(count, cap);
     const tokens = [];
-    const tSize = compact ? 22 : 28;
+    const tSize = compact ? 18 : 22;
     for (let i = 0; i < visible; i++) {
       tokens.push(<div key={i} style={{ ...tokenStyle(AMENITY_COLORS[type], tSize), marginLeft: i === 0 ? 0 : -tSize * 0.35 }}>{AMENITY_ICONS[type]}</div>);
     }
     if (count > cap) {
-      tokens.push(<div key="more" style={{ marginLeft: 4, fontSize: 11, color: "#c4b5fd", fontWeight: 700 }}>+{count - cap}</div>);
+      tokens.push(<div key="more" style={{ marginLeft: 4, fontSize: 10, color: "#c4b5fd", fontWeight: 700 }}>+{count - cap}</div>);
     }
     return <div style={{ display: "flex", alignItems: "center" }}>{tokens}</div>;
   };
@@ -357,15 +382,22 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           </div>;
         })}
       </div>}
-      {/* Amenities — grouped tokens */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, padding: compact ? 10 : 12, borderRadius: 12, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)" }}>
-        {AMENITY_TYPES.map(t => {
-          const c = am[t] || 0;
-          return <div key={t} style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 6, borderRadius: 8, background: c > 0 ? `${AMENITY_COLORS[t]}10` : "rgba(0,0,0,0.2)", opacity: c > 0 ? 1 : 0.5 }}>
-            <div style={{ fontSize: 9, color: AMENITY_COLORS[t], fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{AMENITY_LABELS[t]} × {c}</div>
-            <div style={{ minHeight: compact ? 22 : 28, display: "flex", alignItems: "center" }}>
-              {c > 0 ? renderTokens(t) : <div style={{ ...tokenStyle("#1a1a2e", compact ? 22 : 28), opacity: 0.3 }}>{AMENITY_ICONS[t]}</div>}
+      {/* Three Fields side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 8 }}>
+        {fields.map((field, fIdx) => {
+          const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
+          return <div key={fIdx} style={{ padding: compact ? 8 : 10, borderRadius: 12, background: "rgba(15,14,26,0.6)", border: "1px solid rgba(124,58,237,0.2)", display: "flex", flexDirection: "column" }}>
+            <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {AMENITY_TYPES.map(t => {
+                const c = field?.[t] || 0;
+                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 6px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}15` : "rgba(0,0,0,0.2)", opacity: c > 0 ? 1 : 0.45, minHeight: compact ? 22 : 28 }}>
+                  <span style={{ fontSize: 10, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                  {c > 0 && renderFieldTokens(field, t)}
+                </div>;
+              })}
             </div>
+            {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
           </div>;
         })}
       </div>
@@ -688,15 +720,17 @@ export default function Headliners() {
 
   // Pure function: compute tickets/fame for a single player data object
   function computeTicketsForPlayer(pd) {
-    if (!pd || !pd.amenities) return pd;
-    const am = pd.amenities;
+    if (!pd) return pd;
+    // Backfill missing fields[] (in case loaded from older state) and re-sync amenities
+    const fields = pd.fields || emptyFields();
+    const am = sumFields(fields);
     let t = (am.campsite || 0) * 2;
     (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += a.tickets; }));
     t += pd.bonusTickets || 0;
     let fame = pd.baseFame || 0;
     fame += Math.floor(t / 10);
     fame = Math.min(FAME_MAX, fame);
-    return { ...pd, tickets: t, rawTickets: t, fame };
+    return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame };
   }
 
   // Recalculate ALL players' tickets using latest state
@@ -1572,7 +1606,7 @@ export default function Headliners() {
   const canStartSetup = players.every(p => p.festivalName.trim().length > 0);
 
   const startSetup = () => {
-    const data = {}; players.forEach(p => { data[p.id] = { stages: [], amenities: { campsite: 0, security: 0, catering: 0, portaloo: 0 }, fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0 }; });
+    const data = {}; players.forEach(p => { const fields = emptyFields(); data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0 }; });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null);
     // Separate 0-fame and 5-fame artists for drafting
     const all = shuffle([...ALL_ARTISTS]);
@@ -1616,18 +1650,23 @@ export default function Headliners() {
     const availNames = STAGE_NAMES.filter(n => !usedNames.includes(n));
     const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage 1`;
     const sColor = STAGE_COLORS[Math.floor(Math.random() * STAGE_COLORS.length)];
-    setPlayerData(p => ({
-      ...p,
-      [pid]: {
-        ...p[pid],
-        setupAmenity: choice,
-        amenities: { ...p[pid].amenities, [choice]: (p[pid].amenities?.[choice] || 0) + 1 },
-        stages: [...(p[pid].stages || []), { fameRequired: 0 }],
-        stageArtists: [...(p[pid].stageArtists || []), []],
-        stageNames: [...(p[pid].stageNames || []), sName],
-        stageColors: [...(p[pid].stageColors || []), sColor],
-      }
-    }));
+    setPlayerData(p => {
+      const cur = p[pid];
+      const fieldIdx = 0; // Build 1: default field. Build 2 will let player choose.
+      const updated = mutateAmenity(cur, fieldIdx, choice, +1);
+      return {
+        ...p,
+        [pid]: {
+          ...updated,
+          setupAmenity: choice,
+          setupField: fieldIdx,
+          stages: [...(cur.stages || []), { fameRequired: 0 }],
+          stageArtists: [...(cur.stageArtists || []), []],
+          stageNames: [...(cur.stageNames || []), sName],
+          stageColors: [...(cur.stageColors || []), sColor],
+        }
+      };
+    });
     addLog(currentSetupPlayer.festivalName, `chose ${AMENITY_LABELS[choice]} and stage`);
     setSetupStep("confirm");
   };
@@ -1672,18 +1711,18 @@ export default function Headliners() {
       setPlayerData(p => {
         const cur = p[pid];
         const t = cur.setupAmenity;
-        const newAmenities = { ...cur.amenities };
-        if (t && (newAmenities[t] || 0) > 0) newAmenities[t] = newAmenities[t] - 1;
+        const fieldIdx = cur.setupField ?? 0;
+        const reverted = (t != null) ? mutateAmenity(cur, fieldIdx, t, -1) : cur;
         return {
           ...p,
           [pid]: {
-            ...cur,
-            amenities: newAmenities,
+            ...reverted,
             stages: (cur.stages || []).slice(0, -1),
             stageArtists: (cur.stageArtists || []).slice(0, -1),
             stageNames: (cur.stageNames || []).slice(0, -1),
             stageColors: (cur.stageColors || []).slice(0, -1),
             setupAmenity: null,
+            setupField: null,
           }
         };
       });
@@ -1842,12 +1881,9 @@ export default function Headliners() {
         const aType = pe.amenityType || pe.chosenType;
         setPlayerData(p => {
           const cur = p[pid];
-          const updated = {
-            ...cur,
-            amenities: { ...cur.amenities, [aType]: (cur.amenities?.[aType] || 0) + 1 },
-          };
+          let updated = mutateAmenity(cur, 0, aType, +1); // Build 1: AI uses field 0
           if (aType === "security" && cur.vpPerSecurity > 0) {
-            updated.vp = (updated.vp || 0) + cur.vpPerSecurity;
+            updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
           }
           return { ...p, [pid]: updated };
         });
@@ -2096,7 +2132,7 @@ export default function Headliners() {
             if (pk.type === "fame") {
               setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
             } else {
-              setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], amenities: { ...p[currentPlayerId].amenities, [pk.type]: (p[currentPlayerId].amenities?.[pk.type] || 0) + 1 } } }));
+              setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], 0, pk.type, +1) }));
             }
             setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
           }
@@ -2174,7 +2210,7 @@ export default function Headliners() {
 
       // Remove die, increment amenity counter directly
       const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
-      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], amenities: { ...p[currentPlayerId].amenities, [amenityType]: (p[currentPlayerId].amenities?.[amenityType] || 0) + 1 } } }));
+      setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], 0, amenityType, +1) }));
       addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
@@ -2201,9 +2237,10 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => { setTurnAction("pickAmenity"); if (dice.length === 0) setDice(rollDice()); };
-  // Direct amenity placement when player picks a die
-  const placeAmenityCounter = (amenityType) => {
-    recalcAfterUpdate(currentPlayerId, pd => ({ ...pd, amenities: { ...pd.amenities, [amenityType]: (pd.amenities?.[amenityType] || 0) + 1 } }));
+  // Direct amenity placement when player picks a die. Build 1: defaults to field 0.
+  // Build 2 will accept a fieldIdx parameter and the UI will prompt for selection.
+  const placeAmenityCounter = (amenityType, fieldIdx = 0) => {
+    recalcAfterUpdate(currentPlayerId, pd => mutateAmenity(pd, fieldIdx, amenityType, +1));
     addLog(currentPlayer.festivalName, `built ${AMENITY_LABELS[amenityType]}`);
     checkSecurityVPBonus(currentPlayerId, amenityType);
     sfx.placeAmenity();
@@ -2867,14 +2904,23 @@ export default function Headliners() {
     // Mutate player data: VP, dice returned, amenity counters reduced
     setPlayerData(p => {
       const cur = p[pid];
-      const newAm = { ...(cur.amenities || {}) };
+      let updated = cur;
+      // Remove each lost amenity from the field with the most of that type (greedy).
+      // Build 2 will let the player choose which field to lose from.
       Object.entries(lostByType).forEach(([t, n]) => {
-        newAm[t] = Math.max(0, (newAm[t] || 0) - n);
+        for (let i = 0; i < n; i++) {
+          const fields = updated.fields || emptyFields();
+          let bestIdx = 0, bestCount = fields[0]?.[t] || 0;
+          for (let f = 1; f < fields.length; f++) {
+            const c = fields[f]?.[t] || 0;
+            if (c > bestCount) { bestCount = c; bestIdx = f; }
+          }
+          if (bestCount > 0) updated = mutateAmenity(updated, bestIdx, t, -1);
+        }
       });
       return { ...p, [pid]: {
-        ...cur,
-        amenities: newAm,
-        vp: (cur.vp || 0) + vpFromStars,
+        ...updated,
+        vp: (updated.vp || 0) + vpFromStars,
         heldDice: 0,
       } };
     });
@@ -3503,9 +3549,9 @@ export default function Headliners() {
           if (!aType) return;
           setPlayerData(p => {
             const cur = p[pid];
-            const updated = { ...cur, amenities: { ...cur.amenities, [aType]: (cur.amenities?.[aType] || 0) + 1 } };
+            let updated = mutateAmenity(cur, 0, aType, +1); // Build 1: field 0
             if (aType === "security" && cur.vpPerSecurity > 0) {
-              updated.vp = (updated.vp || 0) + cur.vpPerSecurity;
+              updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
               addLog("Effect", `+${cur.vpPerSecurity} VP from security build!`);
             }
             return { ...p, [pid]: updated };
@@ -3694,9 +3740,14 @@ export default function Headliners() {
                   {owned.map(t => <button key={t} onClick={() => {
                     setPlayerData(p => {
                       const cur = p[pid];
-                      const newAm = { ...cur.amenities };
-                      newAm[t] = Math.max(0, (newAm[t] || 0) - 1);
-                      return { ...p, [pid]: { ...cur, amenities: newAm, bonusTickets: (cur.bonusTickets || 0) + pe.ticketReward } };
+                      const fields = cur.fields || emptyFields();
+                      let bestIdx = 0, bestCount = fields[0]?.[t] || 0;
+                      for (let f = 1; f < fields.length; f++) {
+                        const c = fields[f]?.[t] || 0;
+                        if (c > bestCount) { bestCount = c; bestIdx = f; }
+                      }
+                      const updated = bestCount > 0 ? mutateAmenity(cur, bestIdx, t, -1) : cur;
+                      return { ...p, [pid]: { ...updated, bonusTickets: (cur.bonusTickets || 0) + pe.ticketReward } };
                     });
                     addLog("Effect", `Discarded ${AMENITY_LABELS[t]} → +${pe.ticketReward} tickets`);
                     showFloatingBonus(`+${pe.ticketReward} 🎟️`, "#fbbf24");
@@ -4253,8 +4304,14 @@ export default function Headliners() {
               {((currentPD.amenities?.portaloo) || 0) > 0 && draw2Picks.length < 2 && <button onClick={() => {
                 setPlayerData(p => {
                   const cur = p[currentPlayerId];
-                  const newAm = { ...cur.amenities, portaloo: Math.max(0, (cur.amenities?.portaloo || 0) - 1) };
-                  return { ...p, [currentPlayerId]: { ...cur, amenities: newAm } };
+                  const fields = cur.fields || emptyFields();
+                  let bestIdx = 0, bestCount = fields[0]?.portaloo || 0;
+                  for (let f = 1; f < fields.length; f++) {
+                    const c = fields[f]?.portaloo || 0;
+                    if (c > bestCount) { bestCount = c; bestIdx = f; }
+                  }
+                  const updated = bestCount > 0 ? mutateAmenity(cur, bestIdx, "portaloo", -1) : cur;
+                  return { ...p, [currentPlayerId]: updated };
                 });
                 addLog(currentPlayer.festivalName, `Sacrificed 🚽 portaloo to refresh pool`);
                 sfx.placeAmenity();
