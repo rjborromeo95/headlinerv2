@@ -3674,28 +3674,43 @@ export default function Headliners() {
             <button onClick={confirmCouncilAssign} disabled={!allAssigned} style={{ ...bp, width: "100%", opacity: allAssigned ? 1 : 0.4 }}>Lock in Councils →</button>
           </div>;
         })()}
-        {setupStep === "pickAmenity" && <div style={{ ...card, maxWidth: 580, width: "100%", textAlign: "center" }}>
-          <h3 style={{ color: "#e9d5ff", marginBottom: 12 }}>Choose your starting amenity</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
-          {setupSelectedAmenity && <>
-            <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Now pick which field to place it in:</div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 10, marginBottom: 12 }}>
-              {Array.from({ length: FIELD_COUNT }).map((_, fIdx) => (
-                <button key={fIdx} onClick={() => setSetupSelectedField(fIdx)} style={{
-                  padding: 14,
-                  borderRadius: 10,
-                  border: setupSelectedField === fIdx ? "2px solid #a78bfa" : "2px solid #2a2a4a",
-                  background: setupSelectedField === fIdx ? "rgba(167,139,250,0.18)" : "#1a1a2e",
-                  color: "#e9d5ff",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  fontSize: 13,
-                }}>Field {fIdx + 1}</button>
-              ))}
-            </div>
-          </>}
-          <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity || setupSelectedField == null} style={{ ...bp, marginTop: 12, width: "100%", opacity: (setupSelectedAmenity && setupSelectedField != null) ? 1 : 0.4 }}>Confirm →</button>
-        </div>}
+        {setupStep === "pickAmenity" && (() => {
+          const pd = playerData[currentSetupPlayer.id] || {};
+          const councils = pd.councils || [];
+          return <div style={{ ...card, maxWidth: 720, width: "100%", textAlign: "center" }}>
+            <h3 style={{ color: "#e9d5ff", marginBottom: 12 }}>Choose your starting amenity</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
+            {setupSelectedAmenity && <>
+              <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Now pick which field to place it in:</div>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 10, marginBottom: 12 }}>
+                {Array.from({ length: FIELD_COUNT }).map((_, fIdx) => {
+                  const c = councils[fIdx];
+                  const isSelected = setupSelectedField === fIdx;
+                  return <button key={fIdx} onClick={() => setSetupSelectedField(fIdx)} style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: isSelected ? "2px solid #a78bfa" : "2px solid #2a2a4a",
+                    background: isSelected ? "rgba(167,139,250,0.18)" : "#1a1a2e",
+                    color: "#e9d5ff",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    textAlign: "left",
+                    boxShadow: isSelected ? "0 0 12px rgba(167,139,250,0.3)" : "none",
+                  }}>
+                    <div style={{ textAlign: "center", color: isSelected ? "#fbbf24" : "#c4b5fd", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 11 }}>Field {fIdx + 1}</div>
+                    {c ? <div style={{ padding: 6, borderRadius: 6, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#86efac", marginBottom: 3 }}>📋 {c.name}</div>
+                      <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3, marginBottom: 2 }}>{formatCouncilCondition(c)}</div>
+                      <div style={{ fontSize: 9, color: "#4ade80", lineHeight: 1.3 }}>{formatCouncilReward(c)}</div>
+                    </div> : <div style={{ fontSize: 10, color: "#475569", textAlign: "center", fontStyle: "italic" }}>(no council)</div>}
+                  </button>;
+                })}
+              </div>
+            </>}
+            <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity || setupSelectedField == null} style={{ ...bp, marginTop: 12, width: "100%", opacity: (setupSelectedAmenity && setupSelectedField != null) ? 1 : 0.4 }}>Confirm →</button>
+          </div>;
+        })()}
         {setupStep === "confirm" && <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
           <p style={{ color: "#34d399", margin: 0, fontSize: 14, fontWeight: 600, marginBottom: 12 }}>✓ Confirm your starting setup.</p>
           <PlayerBoard pd={playerData[currentSetupPlayer.id] || {}} compact />
@@ -3887,16 +3902,18 @@ export default function Headliners() {
           setTimeout(() => recalcTickets(), 50);
         };
 
-        // Reusable field picker — shows 3 field buttons with current counts
+        // Reusable field picker — shows 3 field buttons with current counts and assigned council
         const fieldPicker = (aType) => {
           const fields = pd.fields || emptyFields();
+          const councils = pd.councils || [];
           return <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Pick a field:</div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 8 }}>
               {fields.map((f, fIdx) => {
                 const fTotal = (f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0);
+                const c = councils[fIdx];
                 return <button key={fIdx} onClick={() => placeBonusAmenity(aType, fIdx)} style={{
-                  padding: 12,
+                  padding: 10,
                   borderRadius: 10,
                   border: "2px solid #a78bfa",
                   background: "rgba(167,139,250,0.12)",
@@ -3904,9 +3921,15 @@ export default function Headliners() {
                   cursor: "pointer",
                   fontWeight: 700,
                   fontSize: 12,
+                  textAlign: "left",
                 }}>
-                  <div>Field {fIdx + 1}</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 500, marginTop: 2 }}>{fTotal} amenities</div>
+                  <div style={{ textAlign: "center", marginBottom: 4 }}>Field {fIdx + 1}</div>
+                  <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 500, textAlign: "center", marginBottom: 6 }}>{fTotal} amenit{fTotal === 1 ? "y" : "ies"}</div>
+                  {c ? <div style={{ padding: 5, borderRadius: 5, background: "rgba(34,197,94,0.08)", border: "1px solid #22c55e30" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#86efac", marginBottom: 1 }}>📋 {c.name}</div>
+                    <div style={{ fontSize: 8, color: "#94a3b8", lineHeight: 1.2 }}>{formatCouncilCondition(c)}</div>
+                    <div style={{ fontSize: 8, color: "#4ade80", lineHeight: 1.2, marginTop: 1 }}>{formatCouncilReward(c)}</div>
+                  </div> : <div style={{ fontSize: 9, color: "#475569", textAlign: "center", fontStyle: "italic" }}>(no council)</div>}
                 </button>;
               })}
             </div>
