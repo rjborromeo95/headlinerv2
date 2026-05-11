@@ -4040,12 +4040,36 @@ export default function Headliners() {
   const revealNext = () => { if (revealIndex < players.length - 1) setRevealIndex(revealIndex + 1); else setLeaderboardRevealed(true); };
   const proceedFromRoundEnd = () => {
     if (year >= 4) { setPhase("gameOver"); addLogH("Game Over!", "round"); return; }
-    // Reset baseFame for all players at start of between-years phase
-    // Any fame gained during pre-round (opening stages) will be preserved into the new year
+    const newYear = year + 1;
+    // ── New fame carryover mechanic ──
+    // At the start of a new year, each player's Fame = max(0, end-of-year Fame - 2).
+    // Pre-round bonuses (opening stages, etc.) still add on top of this floor.
+    //
+    // Fame is computed as: baseFame + floor(tickets/10) + councilFame, clamped to FAME_MAX.
+    // To hit a target total, we calculate the "natural floor" the player would land at next
+    // year from council/amenity contributions alone (baseFame=0, no artists, no bonus tickets),
+    // then set baseFame to fill the gap between that floor and the target.
+    const fameDiffs = []; // { id, festivalName, fameEnd, target } for the log line
     setPlayerData(prev => {
       const next = { ...prev };
-      for (const p of players) { next[p.id] = { ...next[p.id], baseFame: 0 }; }
+      for (const p of players) {
+        const pd = next[p.id];
+        const fameEnd = pd.fame || 0;
+        const target = Math.max(0, fameEnd - 2);
+        // Natural floor: council fame + campsite/council-derived tickets at the NEW year's thresholds
+        const hypothetical = { ...pd, baseFame: 0, stageArtists: (pd.stages || []).map(() => []), bonusTickets: 0 };
+        const computed = computeTicketsForPlayer(hypothetical, newYear);
+        const naturalFloor = computed.fame || 0;
+        const newBaseFame = Math.max(0, target - naturalFloor);
+        next[p.id] = { ...pd, baseFame: newBaseFame };
+        fameDiffs.push({ id: p.id, festivalName: p.festivalName, fameEnd, target });
+      }
       return next;
+    });
+    // Log fame transitions OUTSIDE the updater (so they don't fire twice in StrictMode dev).
+    fameDiffs.forEach(({ festivalName, fameEnd, target }) => {
+      const delta = target - fameEnd; // negative
+      addLog(festivalName, `Year transition: 🔥 Fame ${fameEnd} → ${target} (${delta} carryover)`);
     });
     setPreRoundIndex(0); setPreRoundStep("notify");
     setFreeAmenityCount(0); setFreeAmenityPlaced(0); setFreeAmenityType(null);
