@@ -212,6 +212,62 @@ function rollDice() { return shuffle([...DICE_OPTIONS]).slice(0, 5); }
 function diceNeedReroll(dice) { if (dice.length < 3) return true; const faces = new Set(dice); return faces.size === 1; }
 function getGenres(genre) { return genre.split(",").map(g => g.trim()); }
 
+// True iff `lineup` (array of artists) can cover all required genres, with each artist
+// assigned to exactly one required genre and each requirement covered by exactly one artist.
+// The previous greedy "first match wins" approach failed on cases like:
+//   required = [Rock, Pop, Indie], lineup = [Sadchild(Pop), Wolf Alice(Rock,Indie), Limp Bizkit(Rock)]
+// where it consumed Wolf Alice for Rock, leaving Indie uncovered. Backtracking is correct
+// (and trivially fast for ≤3 artists × ≤3 genres).
+function lineupCoversGenres(lineup, required) {
+  if (!Array.isArray(lineup) || !Array.isArray(required) || lineup.length < required.length) return false;
+  const artistGenreLists = lineup.map(a => getGenres(a.genre || ""));
+  const used = new Array(artistGenreLists.length).fill(false);
+  function tryAssign(reqIdx) {
+    if (reqIdx === required.length) return true;
+    const g = required[reqIdx];
+    for (let ai = 0; ai < artistGenreLists.length; ai++) {
+      if (used[ai]) continue;
+      if (artistGenreLists[ai].includes(g)) {
+        used[ai] = true;
+        if (tryAssign(reqIdx + 1)) return true;
+        used[ai] = false;
+      }
+    }
+    return false;
+  }
+  return tryAssign(0);
+}
+
+// Returns the count of required genres still uncovered by the best assignment of `partial`
+// to `required`. Used by AI scoring to estimate progress toward an objective.
+function genresStillNeeded(partial, required) {
+  if (!Array.isArray(partial) || partial.length === 0) return required.length;
+  const artistGenreLists = partial.map(a => getGenres(a.genre || ""));
+  // For each subset size k of artists used, find max requirements covered. We just want the
+  // max coverage: try assigning each artist to one requirement (or skip), maximize count.
+  let best = 0;
+  const used = new Array(artistGenreLists.length).fill(false);
+  const reqUsed = new Array(required.length).fill(false);
+  function dfs(reqIdx, covered) {
+    if (covered > best) best = covered;
+    if (reqIdx === required.length) return;
+    // Skip this requirement
+    dfs(reqIdx + 1, covered);
+    // Try to cover this requirement
+    const g = required[reqIdx];
+    for (let ai = 0; ai < artistGenreLists.length; ai++) {
+      if (used[ai]) continue;
+      if (artistGenreLists[ai].includes(g)) {
+        used[ai] = true;
+        dfs(reqIdx + 1, covered + 1);
+        used[ai] = false;
+      }
+    }
+  }
+  dfs(0, 0);
+  return required.length - best;
+}
+
 function genreGradient(genre) {
   const gs = getGenres(genre);
   if (gs.length === 1) return GENRE_COLORS[gs[0]] || "#6b7280";
@@ -700,30 +756,20 @@ function aiPickSetupAmenityWithCouncils(pd) {
 function aiScoreArtistForLineupObjectives(artist, pd, lineupObjectives) {
   if (!artist || !lineupObjectives || lineupObjectives.length === 0) return 0;
   const sa = pd?.stageArtists || [];
-  const artistGenres = artist.genre.split(",").map(g => g.trim());
   let bestBonus = 0;
   // For each open stage, check if booking this artist there helps progress an unclaimed objective
   for (let si = 0; si < sa.length; si++) {
     const stage = sa[si] || [];
     if (stage.length >= 3) continue;
-    // Hypothetical lineup if we book this artist on this stage
     const hypothetical = [...stage, artist];
     for (const lo of lineupObjectives) {
       if (!lo || lo.claimed2nd !== null) continue;
-      const required = [...lo.genres];
-      for (const a of hypothetical) {
-        const ag = a.genre.split(",").map(g => g.trim());
-        const matchIdx = required.findIndex(g => ag.includes(g));
-        if (matchIdx >= 0) required.splice(matchIdx, 1);
-      }
-      // Bonus scales with how much closer this artist gets us to the 3-genre target
+      // Use bipartite matcher to count requirements covered (handles multi-genre artists correctly).
       const initialNeeded = lo.genres.length;
-      const stillNeeded = required.length;
+      const stillNeeded = genresStillNeeded(hypothetical, lo.genres);
       const progress = initialNeeded - stillNeeded;
       if (progress > 0) {
-        // First-claim worth more than second-claim
-        const claimValue = (lo.claimed1st === null) ? 6 : 3;
-        // Weight by relative completion (booking the 3rd matching artist is way more valuable than the 1st)
+        const claimValue = (lo.claimed1st === null) ? 5 : 3;
         const proximity = (3 - stage.length); // 3 if empty, 1 if 2/3 full
         const bonus = (claimValue / proximity) * (progress / initialNeeded);
         if (bonus > bestBonus) bestBonus = bonus;
@@ -798,13 +844,7 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
       if (hypothetical.length === 3 && lineupObjectives) {
         for (const lo of lineupObjectives) {
           if (!lo || lo.claimed2nd !== null) continue;
-          const required = [...lo.genres];
-          for (const a of hypothetical) {
-            const ag = a.genre.split(",").map(g => g.trim());
-            const matchIdx = required.findIndex(g => ag.includes(g));
-            if (matchIdx >= 0) required.splice(matchIdx, 1);
-          }
-          if (required.length === 0) {
+          if (lineupCoversGenres(hypothetical, lo.genres)) {
             score += (lo.claimed1st === null) ? 80 : 40;
             break;
           }
@@ -866,6 +906,10 @@ export default function Headliners() {
 
   // Game state
   const [year, setYear] = useState(1);
+  // yearRef so functions wrapped in useCallback([]) (recalcTickets, recalcAfterUpdate)
+  // always read the current year, not the first render's year.
+  const yearRef = useRef(1);
+  useEffect(() => { yearRef.current = year; }, [year]);
   const [turnOrder, setTurnOrder] = useState([]);
   const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
   const [turnsLeft, _setTurnsLeft] = useState({});
@@ -1079,7 +1123,9 @@ export default function Headliners() {
   // `year` still reflects the previous year).
   function computeTicketsForPlayer(pd, yearOverride) {
     if (!pd) return pd;
-    const y = (yearOverride != null) ? yearOverride : (year || 1);
+    // Read year from a ref so callers wrapped in useCallback([]) (which captured an old
+    // closure) still get today's year. yearOverride wins if explicitly provided.
+    const y = (yearOverride != null) ? yearOverride : (yearRef.current || year || 1);
     const fields = pd.fields || emptyFields();
     const am = sumFields(fields);
     let t = (am.campsite || 0) * 2;
@@ -1395,14 +1441,10 @@ export default function Headliners() {
     for (let oi = 0; oi < lineupObjectives.length; oi++) {
       const lo = lineupObjectives[oi];
       if (!lo || lo.claimed2nd !== null) continue;
-      const required = [...lo.genres];
-      for (const artist of lineup) {
-        const artistGenres = getGenres(artist.genre);
-        const matchIdx = required.findIndex(g => artistGenres.includes(g));
-        if (matchIdx >= 0) required.splice(matchIdx, 1);
-      }
-      if (required.length > 0) continue;
-      
+      // Proper bipartite match (greedy was buggy when a multi-genre artist could cover
+      // either of two remaining requirements but only one assignment was valid overall).
+      if (!lineupCoversGenres(lineup, lo.genres)) continue;
+
       const pName = players.find(p => p.id === pid)?.festivalName || "?";
       if (lo.claimed1st === null) {
         setLineupObjectives(prev => {
@@ -1410,9 +1452,9 @@ export default function Headliners() {
           next[oi] = { ...next[oi], claimed1st: pid };
           return next;
         });
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 6 } }));
-        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +6 VP!`);
-        showFloatingBonus("🎯 +6 VP!", "#fbbf24"); sfx.headliner();
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 5 } }));
+        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +5 VP!`);
+        showFloatingBonus("🎯 +5 VP!", "#fbbf24"); sfx.headliner();
       } else if (lo.claimed2nd === null && lo.claimed1st !== pid) {
         setLineupObjectives(prev => {
           const next = [...prev];
@@ -1774,6 +1816,11 @@ export default function Headliners() {
 
   // ─── Book artist to stage ───
   function bookArtistToStage(artist, stageIdx, pid) {
+    // Track whether the actual stage update went through. The setPlayerData updater may
+    // reject if the stage is full or the artist is already booked elsewhere; in that case
+    // we must NOT fire the artist effect or show the booking modal (which would make the
+    // user think the artist was placed and was then somehow removed).
+    let bookingSucceeded = false;
     setPlayerData(prev => {
       const pd = { ...prev[pid] };
       const sa = [...(pd.stageArtists || pd.stages.map(() => []))];
@@ -1801,8 +1848,17 @@ export default function Headliners() {
       if (isFullLineup) {
         addLog("🎤 Full Lineup", `${players.find(p => p.id === pid)?.festivalName} completed a lineup!`);
       }
+      bookingSucceeded = true;
       return { ...prev, [pid]: pd };
     });
+
+    // If the updater rejected the booking, abort here — no effect, no modal, no log of "booked".
+    // The caller (handleStageSelect) is supposed to dupe-check before consuming the source,
+    // so reaching this point with bookingSucceeded=false means a race or programmer error.
+    if (!bookingSucceeded) {
+      addLog(players.find(p => p.id === pid)?.festivalName || "?", `Booking ${artist.name} was rejected (already booked or stage full)`);
+      return;
+    }
 
     const pd = playerData[pid];
     const sa = pd.stageArtists || pd.stages.map(() => []);
@@ -2338,6 +2394,11 @@ export default function Headliners() {
   const isCurrentPlayerAI = () => {
     if (phase === "setup") return players[setupIndex]?.isAI;
     if (phase === "game") return currentPlayer?.isAI;
+    // Pre-round: each player walks the stage-open + free-draw flow in turn.
+    // The "current" player is the one preRoundIndex points at, not the regular turn order.
+    if (phase === "preRound") return currentPreRoundPlayer?.isAI || false;
+    // Year-end effects auto-resolve for AI within their flow.
+    if (phase === "yearEndEffects") return true;
     return false;
   };
 
@@ -2645,9 +2706,22 @@ export default function Headliners() {
         let artist = null;
         if (source === "hand" && artistIdx < (pd.hand || []).length) {
           artist = pd.hand[artistIdx];
-          setPlayerData(p => { const nh = [...p[currentPlayerId].hand]; nh.splice(artistIdx, 1); return { ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: nh } }; });
+        }
+        // Dupe-check before consuming hand — same pattern as handleStageSelect.
+        // If another player has this artist booked, skip this booking, leave the card in hand.
+        if (artist) {
+          const allBookedNames = new Set();
+          Object.values(playerData).forEach(opd => (opd.stageArtists || []).flat().forEach(a => allBookedNames.add(a.name)));
+          if (allBookedNames.has(artist.name)) {
+            addLog("🤖 AI", `${currentPlayer?.festivalName} would book ${artist.name}, but it's already on a stage — passing`);
+            artist = null;
+          }
         }
         if (artist) {
+          // Now safe to consume hand and book.
+          if (source === "hand") {
+            setPlayerData(p => { const nh = [...p[currentPlayerId].hand]; nh.splice(artistIdx, 1); return { ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: nh } }; });
+          }
           bookArtistToStage(artist, stageIdx, currentPlayerId);
           setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
           setActionTaken(true);
@@ -2763,7 +2837,7 @@ export default function Headliners() {
     if (aiProcessing.current) return;
     aiTimer.current = setTimeout(() => aiStep(), 700);
     return () => { if (aiTimer.current) clearTimeout(aiTimer.current); clearTimeout(safetyTimer); };
-  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement]);
+  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced]);
 
   // AI objective choices are handled in startGame — no useEffect needed
 
@@ -3039,6 +3113,23 @@ export default function Headliners() {
   const handleStageSelect = (stageIdx) => {
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
+    // Dupe-guard: before consuming the source (hand/pool/discard), check that no player —
+    // including the current one — already has this artist on a stage. If we discover the dupe
+    // only inside bookArtistToStage's setPlayerData updater, the splice has already happened
+    // and the card is lost. (This was the "Chaka Khan disappeared" bug.)
+    const latestPD = playerDataRef.current || playerData;
+    let dupeOwner = null;
+    for (const [oid, opd] of Object.entries(latestPD)) {
+      const bookedNames = (opd.stageArtists || []).flat().map(a => a.name);
+      if (bookedNames.includes(artist.name)) { dupeOwner = oid; break; }
+    }
+    if (dupeOwner !== null) {
+      const ownerName = players.find(p => p.id === parseInt(dupeOwner))?.festivalName || "another player";
+      addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — ${parseInt(dupeOwner) === currentPlayerId ? "already on your stage" : `already booked by ${ownerName}`}`);
+      showFloatingBonus(`Can't book ${artist.name}`, "#ef4444");
+      setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null);
+      return;
+    }
     // Remove from source
     if (source === "pool") {
       const newPool = [...artistPool]; newPool.splice(poolIdx, 1); setArtistPool(newPool);
@@ -3238,6 +3329,32 @@ export default function Headliners() {
     const p = players[specialGuestPlayer];
     const artist = specialGuestCard;
     if (!p || !artist) return;
+    // Defensive dupe-guard: although drawFromDeck filters in-use names, edge cases
+    // (stale closures, race conditions, ref-sync timing) could still produce an artist
+    // already booked elsewhere. If so, drop the guest instead of double-booking.
+    const latestPD = playerDataRef.current || playerData;
+    let dupeOwner = null;
+    for (const [oid, opd] of Object.entries(latestPD)) {
+      const booked = (opd.stageArtists || []).flat().map(a => a.name);
+      if (booked.includes(artist.name)) { dupeOwner = oid; break; }
+    }
+    if (dupeOwner !== null) {
+      const ownerName = players.find(pl => pl.id === parseInt(dupeOwner))?.festivalName || "another player";
+      addLog("🌟 Special Guest", `${artist.name} is already booked by ${ownerName} — special guest skipped`);
+      // Send the special guest card to discard so the deck doesn't keep yielding it
+      setDiscardPile(prev => [...prev, artist]);
+      setSpecialGuestCard(null);
+      setSpecialGuestEligible([]);
+      // Move to next player
+      const nextIdx = specialGuestPlayer + 1;
+      if (nextIdx < players.length) {
+        setSpecialGuestPlayer(nextIdx);
+        setTimeout(() => setupSpecialGuestForPlayer(nextIdx), 300);
+      } else {
+        setTimeout(() => beginYearEndEffectsPhase(), 300);
+      }
+      return;
+    }
     // Add artist to stage as 3rd slot (headliner position) but without double effect
     setPlayerData(prev => {
       const pd = { ...prev[p.id] };
