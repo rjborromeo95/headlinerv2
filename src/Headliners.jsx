@@ -1822,49 +1822,53 @@ export default function Headliners() {
 
   // ─── Book artist to stage ───
   function bookArtistToStage(artist, stageIdx, pid) {
-    // Track whether the actual stage update went through. The setPlayerData updater may
-    // reject if the stage is full or the artist is already booked elsewhere; in that case
-    // we must NOT fire the artist effect or show the booking modal (which would make the
-    // user think the artist was placed and was then somehow removed).
-    let bookingSucceeded = false;
+    // SYNCHRONOUS dupe check (using ref-fresh state) before we call setPlayerData.
+    // Previously this lived inside the setPlayerData updater with a `bookingSucceeded`
+    // flag — but React 18 state updaters aren't guaranteed to run synchronously inside
+    // the dispatching event handler, so the flag was unreliably false at the `if (!flag)`
+    // check, which caused effects, microtrend checks, and the booking modal to silently
+    // be skipped for every booking. This pre-check is synchronous and authoritative.
+    const latestPD = playerDataRef.current || playerData;
+    const myStages = (latestPD[pid]?.stageArtists || []);
+    if ((myStages[stageIdx] || []).length >= 3) {
+      addLog(players.find(p => p.id === pid)?.festivalName || "?", `Stage is full — cannot book ${artist.name}`);
+      return;
+    }
+    for (const [otherId, otherPd] of Object.entries(latestPD)) {
+      const otherBooked = (otherPd.stageArtists || []).flat().map(a => a.name);
+      if (otherBooked.includes(artist.name)) {
+        const isSelf = parseInt(otherId) === pid;
+        const ownerName = isSelf ? "you" : (players.find(p => p.id === parseInt(otherId))?.festivalName || "another player");
+        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Can't book ${artist.name} — already on ${ownerName === "you" ? "your" : `${ownerName}'s`} stage`);
+        return;
+      }
+    }
     setPlayerData(prev => {
       const pd = { ...prev[pid] };
       const sa = [...(pd.stageArtists || pd.stages.map(() => []))];
-      // Guard: don't book if stage is full or artist already on ANY stage for ANY player
+      // Defensive guard in case of race with another concurrent state update.
       if ((sa[stageIdx] || []).length >= 3) return prev;
       const allBookedThisPlayer = sa.flat().map(a => a.name);
-      if (allBookedThisPlayer.includes(artist.name)) { console.warn("Duplicate artist blocked (same player):", artist.name); return prev; }
-      // Check all other players too
+      if (allBookedThisPlayer.includes(artist.name)) { console.warn("Duplicate artist blocked (same player race):", artist.name); return prev; }
       for (const [otherId, otherPd] of Object.entries(prev)) {
         if (parseInt(otherId) === pid) continue;
         const otherBooked = (otherPd.stageArtists || []).flat().map(a => a.name);
-        if (otherBooked.includes(artist.name)) { console.warn("Duplicate artist blocked (other player):", artist.name); return prev; }
+        if (otherBooked.includes(artist.name)) { console.warn("Duplicate artist blocked (other player race):", artist.name); return prev; }
       }
       sa[stageIdx] = [...(sa[stageIdx] || []), artist];
       const isFullLineup = sa[stageIdx].length === 3;
       pd.stageArtists = sa;
-      // Artist VP is NOT awarded on booking — tallied at year end
       if (isFullLineup && !firstFullLineup) {
         pd.bonusTickets = (pd.bonusTickets || 0) + 5;
         setFirstFullLineup(true);
         addLog("🎪 FIRST!", `${players.find(p => p.id === pid)?.festivalName} released the first full lineup! +5 tickets!`);
         showFloatingBonus("+5 🎟️ First Lineup!", "#4ade80");
       }
-      // Full lineup bonus: +1 Fame at year start (handled at preRound), no direct VP
       if (isFullLineup) {
         addLog("🎤 Full Lineup", `${players.find(p => p.id === pid)?.festivalName} completed a lineup!`);
       }
-      bookingSucceeded = true;
       return { ...prev, [pid]: pd };
     });
-
-    // If the updater rejected the booking, abort here — no effect, no modal, no log of "booked".
-    // The caller (handleStageSelect) is supposed to dupe-check before consuming the source,
-    // so reaching this point with bookingSucceeded=false means a race or programmer error.
-    if (!bookingSucceeded) {
-      addLog(players.find(p => p.id === pid)?.festivalName || "?", `Booking ${artist.name} was rejected (already booked or stage full)`);
-      return;
-    }
 
     const pd = playerData[pid];
     const sa = pd.stageArtists || pd.stages.map(() => []);
