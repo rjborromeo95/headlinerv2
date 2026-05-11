@@ -966,6 +966,12 @@ export default function Headliners() {
   // Pre-round
   const [preRoundIndex, setPreRoundIndex] = useState(0);
   const [preRoundStep, setPreRoundStep] = useState("notify");
+  // freeAmenity state declared early so the AI dispatcher useEffect deps array can reference
+  // freeAmenityPlaced without hitting a temporal dead zone (it was previously declared
+  // far below in the pre-round block, which TDZ'd on render).
+  const [freeAmenityCount, setFreeAmenityCount] = useState(0);
+  const [freeAmenityPlaced, setFreeAmenityPlaced] = useState(0);
+  const [freeAmenityType, setFreeAmenityType] = useState(null);
   // (displacedAmenities / displacedPlaceIdx removed)
 
   // Artist system
@@ -4044,9 +4050,6 @@ export default function Headliners() {
 
   // Pre-round — ALL players participate
   const preRoundPlayers = players; // everyone now
-  const [freeAmenityCount, setFreeAmenityCount] = useState(0);
-  const [freeAmenityPlaced, setFreeAmenityPlaced] = useState(0);
-  const [freeAmenityType, setFreeAmenityType] = useState(null);
   const currentPreRoundPlayer = preRoundPlayers[preRoundIndex];
   const canOpenStage = currentPreRoundPlayer && (playerData[currentPreRoundPlayer.id]?.fame || 0) >= 3 && (playerData[currentPreRoundPlayer.id]?.stages || []).length < 3;
 
