@@ -68,28 +68,28 @@ const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 const ALL_COUNCILS = [
   { id: "glamping", name: "Glamping", condition: { type: "thresholdPaired", a: "campsite", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
   { id: "foodCourts", name: "Food Courts", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
-  { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "shepherds", name: "Shepherds", condition: { type: "comparative", greater: "campsite", lesser: "security" }, reward: { type: "refreshPool" } },
   { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
-  { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
   { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdFixed", amenity: "catering", count: 1 }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
   { id: "staffArea", name: "Staff Area", condition: { type: "thresholdFixed", amenity: "security", count: 1 }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
   { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdFixed", amenity: "security", count: 2 }, reward: { type: "refreshPool" } },
-  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdFixed", amenity: "catering", count: 2 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdFixed", amenity: "catering", count: 2 }, reward: { type: "agentFame" } },
   { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
   { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "wellStaffed", name: "Well Staffed", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
-  { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
   { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "funkyFood", name: "Funky Food", condition: { type: "comparative", greater: "portaloo", lesser: "catering" }, reward: { type: "refreshPool" } },
   { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
   { id: "wellEquipped", name: "Well Equipped", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
-  { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdFixed", amenity: "campsite", count: 1 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdFixed", amenity: "campsite", count: 1 }, reward: { type: "agentFame" } },
   { id: "spoiltForChoice", name: "Spoilt for Choice", condition: { type: "comparative", greater: "catering", lesser: "campsite" }, reward: { type: "refreshPool" } },
-  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdFixed", amenity: "portaloo", count: 2 }, reward: { type: "tickets", perYear: [3,6,10,15] } },
+  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdFixed", amenity: "portaloo", count: 2 }, reward: { type: "agentFame" } },
 ];
 
 function getCouncilById(id) { return ALL_COUNCILS.find(c => c.id === id); }
@@ -113,6 +113,8 @@ function formatCouncilReward(c) {
   if (r.type === "refreshPool") return `🔄 Refresh artist pool / turn`;
   if (r.type === "drawArtists") return `Draw +${r.perYear.join("/")} artist(s) when drawing`;
   if (r.type === "drawSpecialGuests") return `Draw +${r.perYear.join("/")} special guest(s)`;
+  if (r.type === "agents") return `+${r.perYear.join("/")} 🕵️ Agent use(s) / year`;
+  if (r.type === "agentFame") return `+1 🔥 Fame per successful 🕵️ Agent action`;
   return "?";
 }
 
@@ -669,6 +671,8 @@ function scoreCouncilForKeep(council) {
     refreshPool: 10,
     drawArtists: 9,
     drawSpecialGuests: 13,
+    agents: 11,      // extra agent uses — useful for snatching pool artists
+    agentFame: 10,   // +1 fame each agent success — niche but stacks
   })[reward.type] || 0;
   let difficultyPenalty = 0;
   if (cond.type === "thresholdFixed") difficultyPenalty = cond.count === 1 ? 0 : 2;
@@ -949,6 +953,10 @@ export default function Headliners() {
   const [agentPlacements, setAgentPlacements] = useState({});
   // Tracks which players have successfully used their agent this year (exhausted until next year)
   const [agentExhausted, setAgentExhausted] = useState({});
+  // Tracks how many bonus agent uses each player has consumed this year (granted by "+N Agents" councils).
+  // Each qualifying "agents" council reward provides perYear[yIdx] extra deployments after the base agent
+  // is exhausted. Resets to {} each year transition.
+  const [agentBonusUsesUsed, setAgentBonusUsesUsed] = useState({});
   // Pending agent amenity placements (player needs to place amenity gained from agent)
   const [pendingAgentAmenity, setPendingAgentAmenity] = useState([]); // [{ pid, amenityType }]
   // Pending agent artist booking (uncontested pool claim)
@@ -1205,11 +1213,49 @@ export default function Headliners() {
     setAgentPlacements(prev => { const n = { ...prev }; delete n[pid]; return n; });
   };
   
-  // Exhaust agent after successful use — removed until next year
+  // Exhaust agent after successful use. Two new council rewards interact here:
+  //   - "agentFame": each qualifying council grants +1 Fame when this agent succeeds
+  //   - "agents":    each qualifying council grants perYear[yIdx] additional uses before exhaustion
   const exhaustAgent = (pid) => {
+    const pd = playerDataRef.current?.[pid] || playerData[pid];
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    const y = yearRef.current || year || 1;
+    const yIdx = Math.max(0, Math.min(3, y - 1));
+
+    // (1) agentFame councils: +1 Fame per qualifying council
+    let agentFameGain = 0;
+    (pd?.councils || []).forEach((c, i) => {
+      if (c?.reward?.type === "agentFame" && councilQualifies(c, (pd.fields || [])[i], y)) {
+        agentFameGain += 1;
+      }
+    });
+    if (agentFameGain > 0) {
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + agentFameGain) } }));
+      addLog("🕵️ Agent", `${pName}: +${agentFameGain} 🔥 Fame from successful agent action (Council reward)`);
+      showFloatingBonus(`+${agentFameGain} 🔥 Fame!`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
+    }
+
+    // (2) agents councils: bonus charges allow re-deployment without exhausting
+    let totalBonusCharges = 0;
+    (pd?.councils || []).forEach((c, i) => {
+      if (c?.reward?.type === "agents" && councilQualifies(c, (pd.fields || [])[i], y)) {
+        totalBonusCharges += c.reward.perYear?.[yIdx] || 0;
+      }
+    });
+    const usedSoFar = agentBonusUsesUsed[pid] || 0;
+    if (usedSoFar < totalBonusCharges) {
+      // Use a bonus charge — agent returns instead of exhausting
+      setAgentBonusUsesUsed(prev => ({ ...prev, [pid]: usedSoFar + 1 }));
+      setAgentPlacements(prev => { const n = { ...prev }; delete n[pid]; return n; });
+      addLog("🕵️ Agent", `${pName}: agent returns (bonus charge ${usedSoFar + 1}/${totalBonusCharges} used — Council)`);
+      showFloatingBonus("🕵️ Agent returns!", "#86efac");
+      return;
+    }
+
+    // Standard exhaustion
     setAgentPlacements(prev => { const n = { ...prev }; delete n[pid]; return n; });
     setAgentExhausted(prev => ({ ...prev, [pid]: true }));
-    const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("🕵️ Agent", `${pName}'s agent exhausted until next year`);
   };
   
@@ -3413,6 +3459,7 @@ export default function Headliners() {
     // Clear all agents — they don't carry over between years
     setAgentPlacements({});
     setAgentExhausted({});
+    setAgentBonusUsesUsed({}); // reset bonus charges granted by "+N Agents" councils
     setPendingAgentAmenity([]);
     setPendingAgentArtist(null);
     setAgentContest(null);
@@ -5670,10 +5717,17 @@ export default function Headliners() {
           <p style={{ color: "#86efac", fontSize: 12, marginBottom: 4, fontWeight: 700 }}>📋 Council bonus: drew {specialGuestDrawnPool.length} options</p>
           <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 16 }}>Pick one to consider as your guest. The rest go to discard.</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
-            {specialGuestDrawnPool.map((a, i) => <div key={i} onClick={() => pickSpecialGuestFromPool(i)} style={{ cursor: "pointer", transition: "transform 0.15s" }}>
-              <ArtistCard artist={a} showCost />
-            </div>)}
+            {specialGuestDrawnPool.map((a, i) => {
+              const canAfford = sgPd ? canAffordSpecialGuest(a, sgPd) : false;
+              return <div key={i} onClick={() => pickSpecialGuestFromPool(i)} style={{ cursor: "pointer", transition: "transform 0.15s", position: "relative", padding: 4, borderRadius: 10, border: canAfford ? "2px solid #4ade80" : "2px solid rgba(248,113,113,0.4)", background: canAfford ? "rgba(34,197,94,0.08)" : "rgba(248,113,113,0.05)" }} title={canAfford ? "You can afford this guest" : "You can't afford this guest's amenities"}>
+                <ArtistCard artist={a} showCost />
+                <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: canAfford ? "#4ade80" : "#f87171" }}>
+                  {canAfford ? "✅ Can afford" : "❌ Can't afford"}
+                </div>
+              </div>;
+            })}
           </div>
+          <p style={{ color: "#94a3b8", fontSize: 10, fontStyle: "italic" }}>Affordability is checked against amenities only — fame doesn't matter for special guests.</p>
         </div> : sgArtist ? <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 24, marginBottom: 4 }}>🌟 Special Guest — Year {year}</h2>
           <h3 style={{ color: "#c4b5fd", fontSize: 18, marginBottom: 16 }}>{sgPlayer?.festivalName}</h3>
