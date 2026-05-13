@@ -179,9 +179,11 @@ function makeMicrotrend(usedGenres, usedAmenities) {
   return { kind: "genre", genre: pick, claimedBy: null };
 }
 function generateMicrotrends() {
+  // Just one active microtrend at a time. When claimed, it'll be replaced by a fresh one
+  // at the end of the claimer's turn (kind also reshuffled — genre or amenity).
   const usedGenres = new Set();
   const usedAmenities = new Set();
-  return [makeMicrotrend(usedGenres, usedAmenities), makeMicrotrend(usedGenres, usedAmenities)];
+  return [makeMicrotrend(usedGenres, usedAmenities)];
 }
 const STAGE_NAMES = [
   "The Pyramid","The Beacon","Sunset Strip","The Warehouse","Neon Tent",
@@ -922,19 +924,26 @@ export default function Headliners() {
   const [playerCount, setPlayerCount] = useState(2);
   // Game mode options — set in lobby, immutable once a game starts.
   // stageOpenFameBonus: ON (default) gives +1 Fame for opening a new stage during pre-round.
-  //   OFF tightens Fame supply — Fame must come from artists, microtrends, dice, councils.
+  //   OFF disables that one-shot bonus.
+  // stagesProvideNoFame: OFF (default) preserves current behavior. ON is a master switch
+  //   that disables ALL stage→Fame paths. Currently that's just the +1 on opening (gated
+  //   redundantly with the toggle above), but it future-proofs against any further
+  //   stage-fame mechanics we add later.
   // preRoundArtistDraws: ON (default) gives a free artist draw per stage between years.
   //   OFF makes artists only obtainable through turn actions — tighter card economy.
   // totalYears: how many rounds the game lasts. 4 is standard; 3 is a shorter format.
   const [stageOpenFameBonus, setStageOpenFameBonus] = useState(true);
   const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
+  const [stagesProvideNoFame, setStagesProvideNoFame] = useState(false);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
   const preRoundArtistDrawsRef = useRef(true);
+  const stagesProvideNoFameRef = useRef(false);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
+  useEffect(() => { stagesProvideNoFameRef.current = stagesProvideNoFame; }, [stagesProvideNoFame]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -2441,7 +2450,7 @@ export default function Headliners() {
     const mt = generateMicrotrends();
     setMicrotrends(mt);
     const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
-    addLog("🎵 Microtrends", `${describeMt(mt[0])} • ${describeMt(mt[1])}`);
+    addLog("🎵 Microtrend", mt.map(describeMt).join(" • "));
     // Offer first human player their objective choice, auto-assign AI
     let firstHumanId = null;
     const order0 = players.map(p => p.id);
@@ -4237,17 +4246,22 @@ export default function Headliners() {
       updPd.stageArtists = [...(updPd.stageArtists || []), []];
       updPd.stageNames = [...(updPd.stageNames || []), sName];
       updPd.stageColors = [...(updPd.stageColors || []), sColor];
-      // Stage-opening Fame bonus is its own lobby toggle (default ON).
-      if (stageOpenFameBonusRef.current) {
+      // +1 Fame fires only if BOTH the stage-open bonus toggle is on AND the "stages
+      // provide no Fame" master switch is OFF. Two toggles overlap intentionally so the
+      // user can express their intent either way (ban just the open bonus, or ban all
+      // stage-fame globally).
+      const stageFameAllowed = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
+      if (stageFameAllowed) {
         updPd.baseFame = Math.min(FAME_MAX, (updPd.baseFame || 0) + 1);
       }
       return { ...p, [pid]: updPd };
     });
-    if (stageOpenFameBonusRef.current) {
+    const stageFameAllowed = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
+    if (stageFameAllowed) {
       addLog(currentPreRoundPlayer.festivalName, `built new stage → +1 🔥 Fame!`);
       showFloatingBonus("+1 🔥 New Stage!", "#f97316");
     } else {
-      addLog(currentPreRoundPlayer.festivalName, `built new stage (Fame bonus disabled)`);
+      addLog(currentPreRoundPlayer.festivalName, `built new stage (no Fame bonus)`);
     }
     setTimeout(() => recalcTickets(), 50);
     // The setPlayerData above is queued. startPreRoundDraws would otherwise read stale
@@ -4533,6 +4547,13 @@ export default function Headliners() {
             <div style={{ flex: 1 }}>
               <div style={{ color: preRoundArtistDraws ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>Free artist draws between years</div>
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{preRoundArtistDraws ? "Standard — players get one free artist draw per stage in the pre-round." : "Off — artists only come from turn actions. Tighter card economy."}</div>
+            </div>
+          </label>
+          <label onClick={() => setStagesProvideNoFame(!stagesProvideNoFame)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stagesProvideNoFame ? "2px solid #fbbf24" : "1px solid #4c1d95", background: stagesProvideNoFame ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stagesProvideNoFame ? "#fbbf24" : "#4c1d95"}`, background: stagesProvideNoFame ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stagesProvideNoFame ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: stagesProvideNoFame ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Stages provide no base Fame</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stagesProvideNoFame ? "On — master switch: no Fame can come from stages regardless of the toggle above. Fame must come from artists, microtrends, dice, councils." : "Off — stage Fame follows the toggle above. Default."}</div>
             </div>
           </label>
         </div>
