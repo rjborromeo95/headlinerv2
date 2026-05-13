@@ -3974,8 +3974,12 @@ export default function Headliners() {
     // Collect all data BEFORE any setState
     const logs = [];
     const nat = { ...allTickets };
-    // Use current playerData snapshot for calculations
-    const snap = JSON.parse(JSON.stringify(playerData));
+    // Use ref-fresh playerData rather than closure-captured. beginRoundEnd is invoked via
+    // setTimeout from applyStarRoll, so the closure-captured `playerData` predates the
+    // last star-roll's setPlayerData update. Reading from the ref ensures the most recent
+    // star-VP additions (and any other in-flight player state) are visible in the leaderboard.
+    const latestPD = playerDataRef.current || playerData;
+    const snap = JSON.parse(JSON.stringify(latestPD));
     
     // PASS 1: Calculate tickets for all players
     const playerTickets = {};
@@ -4038,7 +4042,11 @@ export default function Headliners() {
       // and include it in totalYearVP. This keeps the equation preVP + totalYearVP = currentVP truthful.
       const starDiceVP = pd.starDiceVPThisYear || 0;
       const preYearVP = (pd.vp || 0) - starDiceVP;
-      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: finalFameVP, ticketVP, artistVP, councilVP: 0, effectVP, starDiceVP, preYearVP, totalYearVP: vpBonus + starDiceVP };
+      // totalYearVP is for the breakdown display (shows everything earned this year, including
+      // the star-dice VP that was already added in applyStarRoll). yearEndDelta is the actual
+      // VP delta to ADD to cur.vp during the merge — it excludes starDiceVP because that's
+      // already part of cur.vp. Using totalYearVP in the merge would double-count star VP.
+      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: finalFameVP, ticketVP, artistVP, councilVP: 0, effectVP, starDiceVP, preYearVP, totalYearVP: vpBonus + starDiceVP, yearEndDelta: vpBonus };
       logs.push({ type: "entry", who: p.festivalName, text: `🎟️ ${rawT} tickets${ticketVP ? " 👑+1VP" : ""} | 🔥${finalFame}→${finalFameVP}VP | Artists+${artistVP}VP` });
       // Store computed values back into snap for use by subsequent players
       snap[p.id] = { ...pd, tickets: rawT, rawTickets: rawT, fame: finalFame, vp: (pd.vp || 0) + vpBonus };
@@ -4059,7 +4067,7 @@ export default function Headliners() {
         const cur = prev[p.id];
         const sn = snap[p.id];
         if (!cur || !sn) continue;
-        const bonus = nat[p.id]?.[year]?.totalYearVP || 0;
+        const bonus = nat[p.id]?.[year]?.yearEndDelta || 0;
         next[p.id] = {
           ...cur,
           tickets: sn.tickets,
