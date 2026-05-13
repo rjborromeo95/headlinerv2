@@ -157,9 +157,31 @@ function hasQualifyingCouncilOfType(pd, year, rewardType) {
   return councils.some((c, i) => c?.reward?.type === rewardType && councilQualifies(c, fields[i], year || 1));
 }
 
+// A microtrend is either a "book this genre" trigger or a "place this amenity" trigger.
+// Either way the claim reward is +1 Fame for the first player to satisfy it.
+//   { kind: "genre",   genre:   "Pop",      claimedBy }
+//   { kind: "amenity", amenity: "campsite", claimedBy }
+// roughly 1/3 of generated microtrends are amenity-kind — common enough to vary play but
+// rare enough that "book a matching artist" remains the typical trigger.
+function makeMicrotrend(usedGenres, usedAmenities) {
+  const rollAmenity = Math.random() < 0.33;
+  if (rollAmenity) {
+    const pool = ["campsite", "security", "catering", "portaloo"].filter(a => !usedAmenities.has(a));
+    if (pool.length > 0) {
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      usedAmenities.add(pick);
+      return { kind: "amenity", amenity: pick, claimedBy: null };
+    }
+  }
+  const pool = ALL_GENRES.filter(g => !usedGenres.has(g));
+  const pick = pool[Math.floor(Math.random() * pool.length)] || ALL_GENRES[0];
+  usedGenres.add(pick);
+  return { kind: "genre", genre: pick, claimedBy: null };
+}
 function generateMicrotrends() {
-  const shuffled = shuffle([...ALL_GENRES]);
-  return [{ genre: shuffled[0], claimedBy: null }, { genre: shuffled[1], claimedBy: null }];
+  const usedGenres = new Set();
+  const usedAmenities = new Set();
+  return [makeMicrotrend(usedGenres, usedAmenities), makeMicrotrend(usedGenres, usedAmenities)];
 }
 const STAGE_NAMES = [
   "The Pyramid","The Beacon","Sunset Strip","The Warehouse","Neon Tent",
@@ -898,6 +920,16 @@ export default function Headliners() {
   const [phase, setPhase] = useState("lobby");
   const [players, setPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
   const [playerCount, setPlayerCount] = useState(2);
+  // Game mode options — set in lobby, immutable once a game starts.
+  // tacticalMode: skip the +1 fame for opening a stage, and skip the between-year free artist
+  //   draw. Makes fame scarcer and the pre-round less generous; feels more strategic.
+  // totalYears: how many rounds the game lasts. 4 is the default; 3 is a shorter format.
+  const [tacticalMode, setTacticalMode] = useState(false);
+  const [totalYears, setTotalYears] = useState(4);
+  const totalYearsRef = useRef(4);
+  const tacticalModeRef = useRef(false);
+  useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
+  useEffect(() => { tacticalModeRef.current = tacticalMode; }, [tacticalMode]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -1975,9 +2007,11 @@ export default function Headliners() {
         });
       }, 200);
     }
-    // Check microtrends — first player to book matching genre claims it
+    // Check microtrends — first player to book matching genre claims a genre-kind microtrend.
+    // Amenity-kind microtrends are claimed via amenity placement (handled separately).
     setMicrotrends(prev => prev.map(mt => {
       if (mt.claimedBy !== null) return mt;
+      if (mt.kind !== "genre") return mt;
       if (getGenres(artist.genre).includes(mt.genre)) {
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
         addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame!`);
@@ -2401,7 +2435,8 @@ export default function Headliners() {
     // Init microtrends
     const mt = generateMicrotrends();
     setMicrotrends(mt);
-    addLog("🎵 Microtrends", `Book a ${mt[0].genre} artist • Book a ${mt[1].genre} artist`);
+    const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
+    addLog("🎵 Microtrends", `${describeMt(mt[0])} • ${describeMt(mt[1])}`);
     // Offer first human player their objective choice, auto-assign AI
     let firstHumanId = null;
     const order0 = players.map(p => p.id);
@@ -2793,6 +2828,7 @@ export default function Headliners() {
             } else {
               const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1);
               setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, pk.type, +1) }));
+              claimAmenityMicrotrend(currentPlayerId, pk.type);
             }
             setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
           }
@@ -2877,6 +2913,7 @@ export default function Headliners() {
       setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, amenityType, +1) }));
       addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]} in F${fIdx + 1}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
+      claimAmenityMicrotrend(currentPlayerId, amenityType);
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
       setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       scheduleNext(500); return;
@@ -2903,10 +2940,28 @@ export default function Headliners() {
   const handlePickAmenity = () => { setTurnAction("pickAmenity"); if (dice.length === 0) setDice(rollDice()); };
   // Direct amenity placement when player picks a die. Build 1: defaults to field 0.
   // Build 2 will accept a fieldIdx parameter and the UI will prompt for selection.
+  // Check microtrends — amenity-kind microtrends are claimed by the first player to place
+  // a matching amenity. Reward is +1 Fame, same as genre microtrends. The trigger fires
+  // from any deliberate amenity placement (turn action, dice placement, effect-driven gain).
+  const claimAmenityMicrotrend = (pid, amenityType) => {
+    const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    setMicrotrends(prev => prev.map(mt => {
+      if (mt.claimedBy !== null) return mt;
+      if (mt.kind !== "amenity") return mt;
+      if (mt.amenity !== amenityType) return mt;
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame!`);
+      showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
+      return { ...mt, claimedBy: pid };
+    }));
+  };
+
   const placeAmenityCounter = (amenityType, fieldIdx = 0) => {
     recalcAfterUpdate(currentPlayerId, pd => mutateAmenity(pd, fieldIdx, amenityType, +1));
     addLog(currentPlayer.festivalName, `built ${AMENITY_LABELS[amenityType]}`);
     checkSecurityVPBonus(currentPlayerId, amenityType);
+    claimAmenityMicrotrend(currentPlayerId, amenityType);
     sfx.placeAmenity();
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
     setTurnAction(null);
@@ -3209,20 +3264,22 @@ export default function Headliners() {
     // Evaluate council objectives for current player before moving on
     evaluateCouncils(currentPlayerId);
 
-    // Microtrend overhaul: any claimed microtrend is replaced by a fresh one (avoiding currently
-    // active genres) at the end of the claimer's turn, so it appears for the next player.
+    // Microtrend overhaul: any claimed microtrend is replaced by a fresh one at the end
+    // of the claimer's turn. Avoid duplicating active genres/amenities so trends stay distinct.
     setMicrotrends(prev => {
-      const activeGenres = new Set(prev.filter(mt => mt.claimedBy === null).map(mt => mt.genre));
+      const activeGenres = new Set(prev.filter(mt => mt.claimedBy === null && mt.kind === "genre").map(mt => mt.genre));
+      const activeAmenities = new Set(prev.filter(mt => mt.claimedBy === null && mt.kind === "amenity").map(mt => mt.amenity));
       let anyReplaced = false;
       const next = prev.map(mt => {
         if (mt.claimedBy === null) return mt;
-        const candidates = ALL_GENRES.filter(g => !activeGenres.has(g));
-        if (candidates.length === 0) return mt; // can't generate unique new — stay claimed
-        const newGenre = candidates[Math.floor(Math.random() * candidates.length)];
-        activeGenres.add(newGenre);
+        const fresh = makeMicrotrend(activeGenres, activeAmenities);
         anyReplaced = true;
-        addLog("🎵 Microtrend", `New ${newGenre} microtrend appeared!`);
-        return { genre: newGenre, claimedBy: null };
+        if (fresh.kind === "genre") {
+          addLog("🎵 Microtrend", `New "${fresh.genre}" microtrend appeared — book a matching artist!`);
+        } else {
+          addLog("🎵 Microtrend", `New "${AMENITY_LABELS[fresh.amenity]}" microtrend appeared — place a matching amenity!`);
+        }
+        return fresh;
       });
       return anyReplaced ? next : prev;
     });
@@ -4094,7 +4151,7 @@ export default function Headliners() {
   const sortedPlayersForReveal = useMemo(() => [...players].sort((a, b) => (playerData[a.id]?.tickets || 0) - (playerData[b.id]?.tickets || 0)), [players, playerData]);
   const revealNext = () => { if (revealIndex < players.length - 1) setRevealIndex(revealIndex + 1); else setLeaderboardRevealed(true); };
   const proceedFromRoundEnd = () => {
-    if (year >= 4) { setPhase("gameOver"); addLogH("Game Over!", "round"); return; }
+    if (year >= totalYearsRef.current) { setPhase("gameOver"); addLogH("Game Over!", "round"); return; }
     const newYear = year + 1;
     // ── New fame carryover mechanic ──
     // At the start of a new year, each player's Fame = max(0, end-of-year Fame - 2).
@@ -4141,6 +4198,12 @@ export default function Headliners() {
   };
 
   const startPreRoundDraws = (drawCountOverride) => {
+    // Tactical mode: no free between-year artist draws — players only ever get artists
+    // through pool/deck actions on their turn. Pre-round phase still runs but draws are skipped.
+    if (tacticalModeRef.current) {
+      nextPreRound();
+      return;
+    }
     // Ensure pool has 5 artists before draws
     refillPoolTo5();
     const pd = playerData[currentPreRoundPlayer.id];
@@ -4169,11 +4232,18 @@ export default function Headliners() {
       updPd.stageArtists = [...(updPd.stageArtists || []), []];
       updPd.stageNames = [...(updPd.stageNames || []), sName];
       updPd.stageColors = [...(updPd.stageColors || []), sColor];
-      updPd.baseFame = Math.min(FAME_MAX, (updPd.baseFame || 0) + 1);
+      // Tactical mode skips the stage-opening fame bonus so Fame stays scarce.
+      if (!tacticalModeRef.current) {
+        updPd.baseFame = Math.min(FAME_MAX, (updPd.baseFame || 0) + 1);
+      }
       return { ...p, [pid]: updPd };
     });
-    addLog(currentPreRoundPlayer.festivalName, `built new stage → +1 🔥 Fame!`);
-    showFloatingBonus("+1 🔥 New Stage!", "#f97316");
+    if (tacticalModeRef.current) {
+      addLog(currentPreRoundPlayer.festivalName, `built new stage (Tactical Mode — no Fame bonus)`);
+    } else {
+      addLog(currentPreRoundPlayer.festivalName, `built new stage → +1 🔥 Fame!`);
+      showFloatingBonus("+1 🔥 New Stage!", "#f97316");
+    }
     setTimeout(() => recalcTickets(), 50);
     // The setPlayerData above is queued. startPreRoundDraws would otherwise read stale
     // stages.length and miss the new stage. Pass explicit count = old length + 1.
@@ -4432,6 +4502,28 @@ export default function Headliners() {
             }} style={{ ...bs, padding: "10px 12px", fontSize: 14, background: p.isAI ? "rgba(251,191,36,0.3)" : "rgba(124,58,237,0.15)", border: p.isAI ? "1px solid #fbbf24" : "1px solid #7c3aed", color: p.isAI ? "#fbbf24" : "#c4b5fd" }} title="Toggle AI">🤖</button>
           </div></div>)}
         <button onClick={startSetup} disabled={!canStartSetup} style={{ ...bp, width: "100%", marginTop: 16, padding: "14px 24px", fontSize: 16, opacity: canStartSetup ? 1 : 0.4 }}>Start Setup →</button>
+      </div>
+      {/* ── Game Options ── */}
+      <div style={{ ...card, maxWidth: 520, width: "100%", marginTop: 12 }}>
+        <div style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>⚙️ Game Options</div>
+        {/* Game length */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ color: "#a78bfa", fontWeight: 600, fontSize: 12, display: "block", marginBottom: 6 }}>Game Length</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[3, 4].map(n => <button key={n} onClick={() => setTotalYears(n)} style={{ ...bs, background: totalYears === n ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "rgba(124,58,237,0.15)", flex: 1, padding: "10px 12px", fontSize: 13 }}>{n} Years</button>)}
+          </div>
+          <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>{totalYears === 3 ? "Shorter game — faster, fewer rounds to build" : "Standard length"}</div>
+        </div>
+        {/* Tactical mode */}
+        <div>
+          <label onClick={() => setTacticalMode(!tacticalMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: tacticalMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: tacticalMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${tacticalMode ? "#fbbf24" : "#4c1d95"}`, background: tacticalMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{tacticalMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: tacticalMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Tactical Mode</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>No fame bonus for opening a new stage. No free artist draw between years. Fame is scarce — every booking matters.</div>
+            </div>
+          </label>
+        </div>
       </div>
     </div>{anim}</div>
   );
@@ -5103,9 +5195,12 @@ export default function Headliners() {
           <h2 style={{ color: "#fbbf24", fontSize: 26, margin: "0 0 4px" }}>Year {year} — What's Trending</h2>
           <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 16 }}>Here's what the industry is buzzing about this year</p>
           {microtrends.length > 0 && <div style={{ padding: 12, borderRadius: 10, background: "rgba(124,58,237,0.06)", border: "1px solid rgba(124,58,237,0.2)", marginBottom: 10 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>🎵 Microtrends — First to Book → +1 Fame</div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              {microtrends.map((mt, i) => <span key={i} style={{ padding: "5px 14px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 13, fontWeight: 700 }}>{mt.genre}</span>)}
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>🎵 Microtrends — First to Match → +1 Fame</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {microtrends.map((mt, i) => mt.kind === "amenity"
+                ? <span key={i} style={{ padding: "5px 14px", borderRadius: 20, background: "#1e293b", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 13, fontWeight: 700 }}>{AMENITY_ICONS[mt.amenity]} {AMENITY_LABELS[mt.amenity]}</span>
+                : <span key={i} style={{ padding: "5px 14px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 13, fontWeight: 700 }}>{mt.genre}</span>
+              )}
             </div>
           </div>}
           <button onClick={() => { setShowYearAnnouncement(false); setShowTurnStart(true); }} style={{ ...bp, marginTop: 16 }}>Let's Go! 🎶</button>
@@ -5128,9 +5223,12 @@ export default function Headliners() {
             </div>;
           })()}
           {microtrends.some(mt => mt.claimedBy === null) && <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🎵 Microtrends (first to book → +1 Fame)</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-              {microtrends.filter(mt => mt.claimedBy === null).map((mt, i) => <span key={i} style={{ padding: "3px 10px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 11, fontWeight: 700 }}>{mt.genre}</span>)}
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🎵 Microtrends (first to match → +1 Fame)</div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+              {microtrends.filter(mt => mt.claimedBy === null).map((mt, i) => mt.kind === "amenity"
+                ? <span key={i} style={{ padding: "3px 10px", borderRadius: 20, background: "#1e293b", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 11, fontWeight: 700 }}>{AMENITY_ICONS[mt.amenity]} {AMENITY_LABELS[mt.amenity]}</span>
+                : <span key={i} style={{ padding: "3px 10px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 11, fontWeight: 700 }}>{mt.genre}</span>
+              )}
             </div>
           </div>}
           <button onClick={() => {
@@ -5260,12 +5358,37 @@ export default function Headliners() {
           <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
           </div>
+          {/* ── Always-visible Trending Lineups panel (desktop). The trending-lineup race is
+              the game's most engaging mechanic — promoted out of the tab system so players
+              always see what they're racing for. ── */}
+          {!isMobile && lineupObjectives.length > 0 && <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)", boxShadow: "0 0 18px rgba(251,191,36,0.12)" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>🎯 Trending Lineups</div>
+            {lineupObjectives.map((lo, oi) => {
+              if (!lo) return null;
+              const bothClaimed = lo.claimed1st !== null && lo.claimed2nd !== null;
+              const oneClaimed = lo.claimed1st !== null && lo.claimed2nd === null;
+              return <div key={oi} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: bothClaimed ? "rgba(107,114,128,0.1)" : oneClaimed ? "rgba(34,197,94,0.08)" : "rgba(15,14,26,0.5)", border: `1px solid ${bothClaimed ? "rgba(107,114,128,0.3)" : oneClaimed ? "rgba(34,197,94,0.4)" : "rgba(251,191,36,0.4)"}`, opacity: bothClaimed ? 0.5 : 1 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                  {lo.genres.map((g, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 8, background: GENRE_COLORS[g] || "#6b7280", color: "#fff", fontSize: 12, fontWeight: 800, letterSpacing: 0.3, boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>{g}</span>)}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 10 }}>
+                  <div style={{ padding: "3px 6px", borderRadius: 6, background: lo.claimed1st !== null ? "rgba(34,197,94,0.15)" : "rgba(251,191,36,0.15)", textAlign: "center" }}>
+                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 VP</div>
+                    {lo.claimed1st !== null && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed1st)?.festivalName}</div>}
+                  </div>
+                  <div style={{ padding: "3px 6px", borderRadius: 6, background: lo.claimed2nd !== null ? "rgba(34,197,94,0.15)" : "rgba(196,181,253,0.15)", textAlign: "center" }}>
+                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 VP</div>
+                    {lo.claimed2nd !== null && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed2nd)?.festivalName}</div>}
+                  </div>
+                </div>
+              </div>;
+            })}
+          </div>}
           {/* Desktop sidebar tabs + content */}
           {!isMobile && <>
             <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
               <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
-              <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Trend</button>
-              <button onClick={() => setSidebarTab(sidebarTab === "goals" ? null : "goals")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "goals" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "goals" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 Lineup</button>
+              <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
             {sidebarTab === "my" && <div style={{ marginTop: 6 }}>
               {(playerObjectives[currentPlayerId] || []).length > 0 && (() => { return <div style={{ marginBottom: 6 }}>
@@ -5280,11 +5403,18 @@ export default function Headliners() {
             </div>}
             {sidebarTab === "trending" && <div style={{ marginTop: 6 }}>
               {microtrends.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: "#e9d5ff", marginBottom: 4, textTransform: "uppercase" }}>🎵 Microtrends</div>}
-              {microtrends.map((mt, i) => { const claimed = mt.claimedBy !== null; const claimer = claimed ? players.find(p => p.id === mt.claimedBy)?.festivalName : null; return <div key={i} style={{ padding: 4, borderRadius: 6, marginBottom: 3, background: claimed ? "rgba(107,114,128,0.1)" : `${GENRE_COLORS[mt.genre]}15`, opacity: claimed ? 0.5 : 1 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: claimed ? "#6b7280" : GENRE_COLORS[mt.genre] }}>{claimed ? "✓" : "🔥"} Book a {mt.genre} artist</div>
-                {claimed && <div style={{ fontSize: 8, color: "#6b7280" }}>Claimed by {claimer}</div>}
-                {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to book → +1 Fame</div>}
-              </div>; })}
+              {microtrends.map((mt, i) => {
+                const claimed = mt.claimedBy !== null;
+                const claimer = claimed ? players.find(p => p.id === mt.claimedBy)?.festivalName : null;
+                const isAmenity = mt.kind === "amenity";
+                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[mt.genre] || "#fbbf24");
+                const action = isAmenity ? `Place ${AMENITY_ICONS[mt.amenity]} ${AMENITY_LABELS[mt.amenity]}` : `Book a ${mt.genre} artist`;
+                return <div key={i} style={{ padding: 4, borderRadius: 6, marginBottom: 3, background: claimed ? "rgba(107,114,128,0.1)" : `${accent}15`, opacity: claimed ? 0.5 : 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: claimed ? "#6b7280" : accent }}>{claimed ? "✓" : "🔥"} {action}</div>
+                  {claimed && <div style={{ fontSize: 8, color: "#6b7280" }}>Claimed by {claimer}</div>}
+                  {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to match → +1 Fame</div>}
+                </div>;
+              })}
             </div>}
             {sidebarTab === "goals" && <div style={{ marginTop: 6 }}>
               {lineupObjectives.map((lo, oi) => lo && <div key={oi} style={{ padding: 8, borderRadius: 8, background: lo.claimed1st !== null ? "rgba(34,197,94,0.08)" : "rgba(251,191,36,0.08)", border: `1px solid ${lo.claimed1st !== null ? "rgba(34,197,94,0.3)" : "rgba(251,191,36,0.3)"}`, marginBottom: 6 }}>
@@ -5293,9 +5423,9 @@ export default function Headliners() {
                   {lo.genres.map((g, i) => <span key={i} style={{ padding: "3px 8px", borderRadius: 6, background: GENRE_COLORS[g] || "#6b7280", color: "#fff", fontSize: 10, fontWeight: 700 }}>{g}</span>)}
                 </div>
                 <div style={{ fontSize: 9, marginTop: 3 }}>
-                  <span style={{ color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>1st: +10VP {lo.claimed1st !== null && `→ ${players.find(p => p.id === lo.claimed1st)?.festivalName}`}</span>
+                  <span style={{ color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>1st: +5VP {lo.claimed1st !== null && `→ ${players.find(p => p.id === lo.claimed1st)?.festivalName}`}</span>
                   {" | "}
-                  <span style={{ color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>2nd: +6VP {lo.claimed2nd !== null && `→ ${players.find(p => p.id === lo.claimed2nd)?.festivalName}`}</span>
+                  <span style={{ color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>2nd: +3VP {lo.claimed2nd !== null && `→ ${players.find(p => p.id === lo.claimed2nd)?.festivalName}`}</span>
                 </div>
               </div>)}
             </div>}
@@ -5303,7 +5433,7 @@ export default function Headliners() {
         </div> : <div style={{ padding: "10px 12px", borderBottom: "1px solid #2a2a4a", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "stretch", minWidth: "max-content" }}>
             <div style={{ padding: "6px 12px", borderRadius: 10, background: "rgba(124,58,237,0.15)", border: "1px solid #7c3aed40", whiteSpace: "nowrap" }}>
-              <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Year {year}/4</span>
+              <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Year {year}/{totalYears}</span>
               <span style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}>📦{artistDeck.length}</span>
               <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8 }} title="Star Dice pool">🎲{dicePool}</span>
             </div>
@@ -5331,11 +5461,36 @@ export default function Headliners() {
           </div>
         </div>}
 
+          {/* Always-visible Trending Lineups card on mobile too — the game's most important
+              shared state, doesn't belong hidden in a collapsed accordion. */}
+          {isMobile && lineupObjectives.length > 0 && <div style={{ marginTop: 8, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>🎯 Trending Lineups</div>
+            {lineupObjectives.map((lo, oi) => {
+              if (!lo) return null;
+              const bothClaimed = lo.claimed1st !== null && lo.claimed2nd !== null;
+              const oneClaimed = lo.claimed1st !== null && lo.claimed2nd === null;
+              return <div key={oi} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: bothClaimed ? "rgba(107,114,128,0.1)" : oneClaimed ? "rgba(34,197,94,0.08)" : "rgba(15,14,26,0.5)", border: `1px solid ${bothClaimed ? "rgba(107,114,128,0.3)" : oneClaimed ? "rgba(34,197,94,0.4)" : "rgba(251,191,36,0.4)"}`, opacity: bothClaimed ? 0.5 : 1 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                  {lo.genres.map((g, i) => <span key={i} style={{ padding: "4px 12px", borderRadius: 8, background: GENRE_COLORS[g] || "#6b7280", color: "#fff", fontSize: 13, fontWeight: 800, letterSpacing: 0.3, boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>{g}</span>)}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 11 }}>
+                  <div style={{ padding: "4px 8px", borderRadius: 6, background: lo.claimed1st !== null ? "rgba(34,197,94,0.15)" : "rgba(251,191,36,0.15)", textAlign: "center" }}>
+                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 VP</div>
+                    {lo.claimed1st !== null && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed1st)?.festivalName}</div>}
+                  </div>
+                  <div style={{ padding: "4px 8px", borderRadius: 6, background: lo.claimed2nd !== null ? "rgba(34,197,94,0.15)" : "rgba(196,181,253,0.15)", textAlign: "center" }}>
+                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 VP</div>
+                    {lo.claimed2nd !== null && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed2nd)?.festivalName}</div>}
+                  </div>
+                </div>
+              </div>;
+            })}
+          </div>}
+
           {/* Accordion info panels — mobile only */}
           {isMobile && <>{[
             { key: "my", label: "🎯 My Festival", color: "#c4b5fd", bg: "rgba(124,58,237,0.3)" },
-            { key: "trending", label: "📢 Trending", color: "#fbbf24", bg: "rgba(251,191,36,0.3)" },
-            { key: "goals", label: "🎯 Lineup", color: "#fbbf24", bg: "rgba(251,191,36,0.3)" },
+            { key: "trending", label: "📢 Microtrends", color: "#fbbf24", bg: "rgba(251,191,36,0.3)" },
           ].map(tab => (
             <div key={tab.key} style={{ marginTop: 6 }}>
               <button onClick={() => setSidebarTab(sidebarTab === tab.key ? null : tab.key)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "none", background: sidebarTab === tab.key ? tab.bg : "rgba(124,58,237,0.08)", color: sidebarTab === tab.key ? tab.color : "#64748b", cursor: "pointer", fontSize: 13, fontWeight: 700, textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -5367,12 +5522,15 @@ export default function Headliners() {
               {microtrends.map((mt, i) => {
                 const claimed = mt.claimedBy !== null;
                 const claimer = claimed ? players.find(p => p.id === mt.claimedBy)?.festivalName : null;
-                return <div key={i} style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 4, background: claimed ? "rgba(107,114,128,0.15)" : `${GENRE_COLORS[mt.genre]}15`, border: `1px solid ${claimed ? "#4b5563" : GENRE_COLORS[mt.genre]}40`, opacity: claimed ? 0.5 : 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: claimed ? "#6b7280" : GENRE_COLORS[mt.genre] }}>
-                    {claimed ? "✓" : "🔥"} Book a {mt.genre} artist
+                const isAmenity = mt.kind === "amenity";
+                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[mt.genre] || "#fbbf24");
+                const action = isAmenity ? `Place ${AMENITY_ICONS[mt.amenity]} ${AMENITY_LABELS[mt.amenity]}` : `Book a ${mt.genre} artist`;
+                return <div key={i} style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 4, background: claimed ? "rgba(107,114,128,0.15)" : `${accent}15`, border: `1px solid ${claimed ? "#4b5563" : accent}40`, opacity: claimed ? 0.5 : 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: claimed ? "#6b7280" : accent }}>
+                    {claimed ? "✓" : "🔥"} {action}
                   </div>
                   {claimed && <div style={{ fontSize: 11, color: "#6b7280" }}>Claimed by {claimer}</div>}
-                  {!claimed && <div style={{ fontSize: 11, color: "#94a3b8" }}>First to book → +1 Fame</div>}
+                  {!claimed && <div style={{ fontSize: 11, color: "#94a3b8" }}>First to match → +1 Fame</div>}
                 </div>;
               })}
             </div>}
@@ -5385,9 +5543,9 @@ export default function Headliners() {
                 {lo.genres.map((g, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: GENRE_COLORS[g] || "#6b7280", color: "#fff", fontSize: 13, fontWeight: 700 }}>{g}</span>)}
               </div>
               <div style={{ fontSize: 12 }}>
-                <span style={{ color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24", fontWeight: 600 }}>1st: +10VP {lo.claimed1st !== null && `→ ${players.find(p => p.id === lo.claimed1st)?.festivalName}`}</span>
+                <span style={{ color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24", fontWeight: 600 }}>1st: +5VP {lo.claimed1st !== null && `→ ${players.find(p => p.id === lo.claimed1st)?.festivalName}`}</span>
                 {" | "}
-                <span style={{ color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd", fontWeight: 600 }}>2nd: +6VP {lo.claimed2nd !== null && `→ ${players.find(p => p.id === lo.claimed2nd)?.festivalName}`}</span>
+                <span style={{ color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd", fontWeight: 600 }}>2nd: +3VP {lo.claimed2nd !== null && `→ ${players.find(p => p.id === lo.claimed2nd)?.festivalName}`}</span>
               </div>
             </div>)}
           </>}
@@ -6018,7 +6176,7 @@ export default function Headliners() {
               </div>;
             })}
           </div>
-          {!leaderboardRevealed ? <button onClick={revealNext} style={bp}>{revealIndex < players.length - 1 ? "Reveal Next 🥁" : "Reveal All! 🎉"}</button> : <button onClick={proceedFromRoundEnd} style={bp}>{year >= 4 ? "See Final Results 🏆" : "Continue →"}</button>}
+          {!leaderboardRevealed ? <button onClick={revealNext} style={bp}>{revealIndex < players.length - 1 ? "Reveal Next 🥁" : "Reveal All! 🎉"}</button> : <button onClick={proceedFromRoundEnd} style={bp}>{year >= totalYears ? "See Final Results 🏆" : "Continue →"}</button>}
         </div>
       </div>{anim}</div>
   );
