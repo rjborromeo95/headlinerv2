@@ -921,15 +921,20 @@ export default function Headliners() {
   const [players, setPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
   const [playerCount, setPlayerCount] = useState(2);
   // Game mode options — set in lobby, immutable once a game starts.
-  // tacticalMode: skip the +1 fame for opening a stage, and skip the between-year free artist
-  //   draw. Makes fame scarcer and the pre-round less generous; feels more strategic.
-  // totalYears: how many rounds the game lasts. 4 is the default; 3 is a shorter format.
-  const [tacticalMode, setTacticalMode] = useState(false);
+  // stageOpenFameBonus: ON (default) gives +1 Fame for opening a new stage during pre-round.
+  //   OFF tightens Fame supply — Fame must come from artists, microtrends, dice, councils.
+  // preRoundArtistDraws: ON (default) gives a free artist draw per stage between years.
+  //   OFF makes artists only obtainable through turn actions — tighter card economy.
+  // totalYears: how many rounds the game lasts. 4 is standard; 3 is a shorter format.
+  const [stageOpenFameBonus, setStageOpenFameBonus] = useState(true);
+  const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
-  const tacticalModeRef = useRef(false);
+  const stageOpenFameBonusRef = useRef(true);
+  const preRoundArtistDrawsRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
-  useEffect(() => { tacticalModeRef.current = tacticalMode; }, [tacticalMode]);
+  useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
+  useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -4198,9 +4203,9 @@ export default function Headliners() {
   };
 
   const startPreRoundDraws = (drawCountOverride) => {
-    // Tactical mode: no free between-year artist draws — players only ever get artists
-    // through pool/deck actions on their turn. Pre-round phase still runs but draws are skipped.
-    if (tacticalModeRef.current) {
+    // Skip free between-year artist draws if that option is off — players only get artists
+    // through turn actions. Pre-round phase still runs (stage opening, etc.) but draws are skipped.
+    if (!preRoundArtistDrawsRef.current) {
       nextPreRound();
       return;
     }
@@ -4232,17 +4237,17 @@ export default function Headliners() {
       updPd.stageArtists = [...(updPd.stageArtists || []), []];
       updPd.stageNames = [...(updPd.stageNames || []), sName];
       updPd.stageColors = [...(updPd.stageColors || []), sColor];
-      // Tactical mode skips the stage-opening fame bonus so Fame stays scarce.
-      if (!tacticalModeRef.current) {
+      // Stage-opening Fame bonus is its own lobby toggle (default ON).
+      if (stageOpenFameBonusRef.current) {
         updPd.baseFame = Math.min(FAME_MAX, (updPd.baseFame || 0) + 1);
       }
       return { ...p, [pid]: updPd };
     });
-    if (tacticalModeRef.current) {
-      addLog(currentPreRoundPlayer.festivalName, `built new stage (Tactical Mode — no Fame bonus)`);
-    } else {
+    if (stageOpenFameBonusRef.current) {
       addLog(currentPreRoundPlayer.festivalName, `built new stage → +1 🔥 Fame!`);
       showFloatingBonus("+1 🔥 New Stage!", "#f97316");
+    } else {
+      addLog(currentPreRoundPlayer.festivalName, `built new stage (Fame bonus disabled)`);
     }
     setTimeout(() => recalcTickets(), 50);
     // The setPlayerData above is queued. startPreRoundDraws would otherwise read stale
@@ -4514,13 +4519,20 @@ export default function Headliners() {
           </div>
           <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>{totalYears === 3 ? "Shorter game — faster, fewer rounds to build" : "Standard length"}</div>
         </div>
-        {/* Tactical mode */}
-        <div>
-          <label onClick={() => setTacticalMode(!tacticalMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: tacticalMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: tacticalMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${tacticalMode ? "#fbbf24" : "#4c1d95"}`, background: tacticalMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{tacticalMode ? "✓" : ""}</div>
+        {/* Two independent gameplay toggles — were previously bundled as "Tactical Mode" */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label onClick={() => setStageOpenFameBonus(!stageOpenFameBonus)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !stageOpenFameBonus ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !stageOpenFameBonus ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenFameBonus ? "#22c55e" : "#fbbf24"}`, background: stageOpenFameBonus ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenFameBonus ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ color: tacticalMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Tactical Mode</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>No fame bonus for opening a new stage. No free artist draw between years. Fame is scarce — every booking matters.</div>
+              <div style={{ color: stageOpenFameBonus ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>+1 Fame when opening a new stage</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenFameBonus ? "Standard — opening a stage during the pre-round grants +1 Fame." : "Off — opening a stage costs the action but gives no Fame. Fame is scarcer."}</div>
+            </div>
+          </label>
+          <label onClick={() => setPreRoundArtistDraws(!preRoundArtistDraws)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !preRoundArtistDraws ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !preRoundArtistDraws ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${preRoundArtistDraws ? "#22c55e" : "#fbbf24"}`, background: preRoundArtistDraws ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{preRoundArtistDraws ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: preRoundArtistDraws ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>Free artist draws between years</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{preRoundArtistDraws ? "Standard — players get one free artist draw per stage in the pre-round." : "Off — artists only come from turn actions. Tighter card economy."}</div>
             </div>
           </label>
         </div>
