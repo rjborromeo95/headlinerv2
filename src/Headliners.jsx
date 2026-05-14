@@ -1790,6 +1790,81 @@ export default function Headliners() {
     setArtistPool(pool); setArtistDeck(deck); setDiscardPile(disc);
   }
 
+  // Defensive de-duplication pass — scans every card zone in priority order
+  // (stage > hand > pool > deck > discard) and removes any subsequent occurrence
+  // of an already-seen artist name. The stage-versus-hand case is the one we've
+  // actually seen in playtest: an artist on a stage AND in another player's hand,
+  // typically the result of a stale-ref draw earlier in the game. This runs as
+  // a safety net at turn transitions and year boundaries — the underlying draw
+  // logic *should* prevent duplicates, but this catches anything that slips through.
+  const dedupeAllCards = () => {
+    const seen = new Set();
+    let changed = false;
+    const removalLog = [];
+
+    // Pass 1: stages — always kept; record names
+    Object.values(playerData).forEach(pd => {
+      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { if (a?.name) seen.add(a.name); }));
+    });
+
+    // Pass 2: hands — remove anything already seen on a stage; record the rest
+    let newPlayerData = playerData;
+    Object.entries(playerData).forEach(([pid, pd]) => {
+      const oldHand = pd.hand || [];
+      const newHand = [];
+      let modified = false;
+      for (const a of oldHand) {
+        if (!a?.name) continue;
+        if (seen.has(a.name)) {
+          changed = true; modified = true;
+          const owner = players.find(p => String(p.id) === String(pid))?.festivalName || pid;
+          removalLog.push(`${a.name} (from ${owner}'s hand)`);
+        } else {
+          newHand.push(a);
+          seen.add(a.name);
+        }
+      }
+      if (modified) newPlayerData = { ...newPlayerData, [pid]: { ...newPlayerData[pid], hand: newHand } };
+    });
+
+    // Pass 3: pool
+    const newPool = [];
+    for (const a of artistPool) {
+      if (!a?.name) continue;
+      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from pool)`); }
+      else { newPool.push(a); seen.add(a.name); }
+    }
+
+    // Pass 4: deck
+    const newDeck = [];
+    for (const a of artistDeck) {
+      if (!a?.name) continue;
+      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from deck)`); }
+      else { newDeck.push(a); seen.add(a.name); }
+    }
+
+    // Pass 5: discard
+    const newDiscard = [];
+    for (const a of discardPile) {
+      if (!a?.name) continue;
+      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from discard)`); }
+      else { newDiscard.push(a); seen.add(a.name); }
+    }
+
+    if (!changed) return false;
+    setPlayerData(newPlayerData);
+    setArtistPool(newPool);
+    setArtistDeck(newDeck);
+    setDiscardPile(newDiscard);
+    // Update refs synchronously so any chained reads in the same handler see the cleaned state.
+    artistPoolRef.current = newPool;
+    artistDeckRef.current = newDeck;
+    discardPileRef.current = newDiscard;
+    playerDataRef.current = newPlayerData;
+    addLog("⚙️ Cleanup", `Removed duplicate(s): ${removalLog.slice(0, 5).join(", ")}${removalLog.length > 5 ? ` +${removalLog.length - 5} more` : ""}`);
+    return true;
+  };
+
   /** Trigger an effect dice roll — shows the overlay and calls callback with results */
   /** Track goal progress and check milestones */
   // trackGoalProgress — now a no-op (goals removed)
@@ -3689,6 +3764,10 @@ export default function Headliners() {
     const ni = findNext();
     if (ni < 0) { beginSpecialGuestPhase(); return; }
 
+    // Safety net: catch any cross-hand duplicates from earlier in the game before
+    // the next player picks up their turn. See dedupeAllCards comment for rationale.
+    dedupeAllCards();
+
     // Refill pool to 5 before next player's turn
     refillPool();
 
@@ -4759,9 +4838,78 @@ export default function Headliners() {
   const [showUpdateNotes, setShowUpdateNotes] = useState(false);
   const [showPopupObjectives, setShowPopupObjectives] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const logBtn = <button onClick={() => setShowLog(!showLog)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.2)", color: "#c4b5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📜</button>;
   const discardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowDiscard(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #6b7280", background: "rgba(107,114,128,0.2)", color: "#94a3b8", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🗑️</button> : null;
   const updateNotesBtn = <button onClick={() => setShowUpdateNotes(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #22c55e", background: "rgba(34,197,94,0.2)", color: "#4ade80", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📋</button>;
+  const howToPlayBtn = <button onClick={() => setShowHowToPlay(true)} title="How to Play" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #60a5fa", background: "rgba(96,165,250,0.18)", color: "#93c5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📖</button>;
+  // ── How to Play content — single source of truth, rendered into both the in-game
+  // modal overlay and the lobby's tab section. Sections are individual cards with a
+  // bold heading + italic flavour hook + plain-prose mechanics. No bullet lists.
+  const howToPlayContent = (() => {
+    const sectionCard = { padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.45)", border: "1px solid rgba(124,58,237,0.18)", marginBottom: 10 };
+    const heading = { color: "#fbbf24", fontSize: 14, fontWeight: 800, marginBottom: 4 };
+    const flavour = { color: "#c4b5fd", fontSize: 12, fontStyle: "italic", marginBottom: 6, lineHeight: 1.45 };
+    const body = { color: "#cbd5e1", fontSize: 12, lineHeight: 1.55 };
+    return <div>
+      <div style={{ ...sectionCard, background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.25)" }}>
+        <h3 style={{ ...heading, fontSize: 18, color: "#fde68a", marginBottom: 6 }}>HEADLINERS</h3>
+        <p style={body}>Turn a humble field into a music lover's paradise. Build your festival infrastructure, attract artists to the main stage, and become famous. Will your festival be the most successful in the country?</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>A turn at a glance</h4>
+        <p style={body}>Players have three options on their turn. <strong>Build infrastructure</strong> by taking one die from the Amenity Dice pool — this is crucial for covering the cost of an artist. <strong>Draw an artist</strong> from the deck or the pool of face-up artists. Or <strong>play an artist</strong> from your hand, provided you have the right infrastructure and Fame.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🎯 Trending Lineups</h4>
+        <p style={flavour}>Three Festival Lineups dominate the press this season. Be the first to deliver them and the headlines write themselves.</p>
+        <p style={body}>Each Trending Lineup shows three genres. Play all three genres (in any order) to edge closer to victory.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🏛️ Council Objectives</h4>
+        <p style={flavour}>The local council can make or break your festival. Keep them happy and they'll reward you handsomely with effects that give you an edge over the others.</p>
+        <p style={body}>All players pick three council objectives at the beginning of the game, and must fulfil each one year on year by having the right combination of amenities.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🎲 Amenity Dice</h4>
+        <p style={flavour}>Five shared dice. Crucial infrastructure needed to cover for artists.</p>
+        <p style={body}>Players take one amenity and place it in their festival, and sometimes get a choice between two amenities. The Fame face grants +1 Fame — a fleeting resource needed to attract the artists you want.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🎵 Microtrends</h4>
+        <p style={flavour}>One genre or amenity is having a moment right now. Catch the wave and ride it.</p>
+        <p style={body}>A single microtrend is active at a time. First player to book a matching artist or place a matching amenity wins +1 Fame. Players are also made aware of the microtrend on the horizon.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🕵️ Agents</h4>
+        <p style={flavour}>The industry's dark art, and your festival's edge. Send yours out into the talent pool and lock down a booking before your rivals can move.</p>
+        <p style={body}>Players all have one agent every year by default. Players can deploy agents on the available artist pool if they can afford them. If two agents converge on the same artist, a contest die rolls one of the seven faces — highest matching stat wins. Whichever way it goes, every contestant gains +1 Fame: the industry buzz reward. Agents can also be deployed on microtrends to gain a crucial Fame and keep the microtrends moving.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🌟 The Star Die</h4>
+        <p style={flavour}>We can control every moment leading up to the festival, but not the festival itself. The Star Die represents the highlights and the lowlights of your festival.</p>
+        <p style={body}>Every Star Die earned through the year (from artists, councils, special guests) goes onto the table at year-end. Roll them all. Each ⭐ face converts to VP on an escalating ladder (more stars = exponentially more). Players lose any amenity that is shown — unless they have a security. A player may use a security to absorb the loss of any other amenity. A security is not lost this way.</p>
+      </div>
+      <div style={sectionCard}>
+        <h4 style={heading}>🎪 Special Guests</h4>
+        <p style={flavour}>At year-end, the headline names show up unannounced — for whoever's built the festival worth showing up at.</p>
+        <p style={body}>Players who are yet to fill the final slot for their lineups are offered a special guest, chosen by drawing the top card of the artist deck.</p>
+      </div>
+      <div style={{ ...sectionCard, background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.25)" }}>
+        <h4 style={{ ...heading, color: "#86efac" }}>Scoring</h4>
+        <p style={body}>Most VP wins. VP comes from artists booked, council rewards earned, lineup objectives claimed, star rolls cashed in, end-of-game artist effects (Coldplay, Lady Gaga, etc.), and your final Fame ladder. Ties broken by tickets sold.</p>
+      </div>
+    </div>;
+  })();
+  const howToPlayModal = showHowToPlay ? <div onClick={() => setShowHowToPlay(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 640, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, position: "sticky", top: -24, background: "rgba(15,14,26,0.95)", padding: "8px 0", borderBottom: "1px solid rgba(124,58,237,0.2)", marginTop: -24 }}>
+        <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>📖 How to Play</h2>
+        <button onClick={() => setShowHowToPlay(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
+      </div>
+      {howToPlayContent}
+    </div>
+  </div> : null;
   const leaderboardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowLeaderboard(true)} title="Leaderboard" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251,191,36,0.2)", color: "#fbbf24", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🏆</button> : null;
   const leaderboardModal = showLeaderboard ? (() => {
     // Live leaderboard — sorted by VP, then tickets, then fame as tiebreakers
@@ -4807,7 +4955,7 @@ export default function Headliners() {
       </div>
     </div>;
   })() : null;
-  const utilButtons = <><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{updateNotesBtn}{leaderboardBtn}{discardBtn}{logBtn}</div>{leaderboardModal}</>;
+  const utilButtons = <><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{howToPlayBtn}{updateNotesBtn}{leaderboardBtn}{discardBtn}{logBtn}</div>{leaderboardModal}{howToPlayModal}</>;
   const popupObjectivesPanel = showPopupObjectives ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "rgba(124,58,237,0.1)", border: "1px solid #7c3aed40", textAlign: "left" }}>
     {(playerObjectives[currentPlayerId] || []).length > 0 && <div style={{ marginBottom: 8 }}>
       {(playerObjectives[currentPlayerId] || []).map((entry, oi) => <div key={oi} style={{ marginBottom: 4 }}>
@@ -4955,6 +5103,15 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "Standard — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Off — agents can only target pool artists and dice. Microtrends only claimable via booking/amenity."}</div>
             </div>
           </label>
+        </div>
+      </div>
+      <div style={{ ...card, marginTop: 16, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ color: "#93c5fd", fontWeight: 700, fontSize: 14, marginBottom: 2 }}>📖 New to Headliners?</div>
+            <div style={{ color: "#94a3b8", fontSize: 12 }}>Read the quick guide — turn flow, the dice, microtrends, agents, the lot.</div>
+          </div>
+          <button onClick={() => setShowHowToPlay(true)} style={{ ...bs, fontSize: 13, padding: "10px 18px", whiteSpace: "nowrap" }}>How to Play →</button>
         </div>
       </div>
     </div>{anim}</div>
