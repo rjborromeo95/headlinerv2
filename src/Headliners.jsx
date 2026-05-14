@@ -4706,7 +4706,7 @@ export default function Headliners() {
           <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>🏆 Leaderboard</h2>
           <button onClick={() => setShowLeaderboard(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
         </div>
-        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of 4 — sorted by VP, ties broken by tickets then fame</p>
+        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of {totalYears} — sorted by VP, ties broken by tickets then fame</p>
         {ranked.map((r, idx) => {
           const fame = r.fame; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
           const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
@@ -5677,7 +5677,7 @@ export default function Headliners() {
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: "100vh" }}>
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
-          <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of 4</h3>
+          <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
