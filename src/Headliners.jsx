@@ -1178,15 +1178,127 @@ export default function Headliners() {
       o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + dur);
     } catch (e) {}
   }, [getCtx]);
-  const sfx = useMemo(() => ({
-    placeAmenity: () => { playTone(800, 0.08, "sine", 0.12); setTimeout(() => playTone(600, 0.06, "sine", 0.08), 60); },
-    bookArtist: () => { playTone(523, 0.1, "triangle", 0.15); setTimeout(() => playTone(659, 0.1, "triangle", 0.15), 80); setTimeout(() => playTone(784, 0.15, "triangle", 0.12), 160); },
-    headliner: () => { playTone(523, 0.1, "triangle", 0.18); setTimeout(() => playTone(659, 0.08, "triangle", 0.16), 100); setTimeout(() => playTone(784, 0.08, "triangle", 0.16), 180); setTimeout(() => playTone(1047, 0.25, "triangle", 0.2), 260); },
-    gainVP: () => { playTone(880, 0.12, "sine", 0.1); setTimeout(() => playTone(1100, 0.1, "sine", 0.08), 80); },
-    gainTickets: () => { playTone(660, 0.08, "square", 0.06); setTimeout(() => playTone(770, 0.1, "square", 0.05), 70); },
-    gainFame: () => { playTone(440, 0.12, "sawtooth", 0.08); setTimeout(() => playTone(660, 0.15, "sawtooth", 0.1), 100); setTimeout(() => playTone(880, 0.2, "sawtooth", 0.08), 200); },
-    placeStage: () => { playTone(330, 0.15, "triangle", 0.12); setTimeout(() => playTone(440, 0.12, "triangle", 0.1), 120); setTimeout(() => playTone(550, 0.2, "triangle", 0.12), 220); },
-  }), [playTone]);
+  // Noise burst — used for percussion-like sounds (hi-hat, kick attack, tambourine)
+  // by generating white noise through a filter for tonal shaping.
+  const playNoise = useCallback((dur, vol = 0.08, filterFreq = 4000, filterType = "highpass") => {
+    try {
+      const ctx = getCtx();
+      const bufSize = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = filterType; filter.frequency.value = filterFreq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      src.connect(filter); filter.connect(g); g.connect(ctx.destination);
+      src.start(); src.stop(ctx.currentTime + dur);
+    } catch (e) {}
+  }, [getCtx]);
+  const sfx = useMemo(() => {
+    // ── Genre beats ── Each headliner moment kicks off a ~1.5-2s sonic motif keyed
+    // to the artist's primary genre. Built from layered oscillators + filtered noise
+    // so they feel distinct without needing audio assets.
+    const popBeat = () => {
+      // Bright C major arpeggio over a soft pulse — upbeat, radio-friendly
+      playTone(523, 0.12, "triangle", 0.13);
+      setTimeout(() => playTone(659, 0.12, "triangle", 0.13), 130);
+      setTimeout(() => playTone(784, 0.12, "triangle", 0.13), 260);
+      setTimeout(() => playTone(1047, 0.22, "triangle", 0.14), 390);
+      // Light hat accents
+      setTimeout(() => playNoise(0.04, 0.05, 7000), 200);
+      setTimeout(() => playNoise(0.04, 0.05, 7000), 460);
+      setTimeout(() => { playTone(659, 0.4, "sine", 0.09); playTone(784, 0.4, "sine", 0.08); }, 620);
+    };
+    const rockBeat = () => {
+      // Power chord stomp — low square waves for "distortion", crash on top
+      playTone(82, 0.45, "square", 0.16); playTone(123, 0.45, "square", 0.12); // E2 + B2
+      playNoise(0.06, 0.18, 100, "lowpass"); // kick
+      playNoise(0.4, 0.07, 5000); // crash decay
+      setTimeout(() => { playTone(110, 0.45, "square", 0.16); playTone(165, 0.45, "square", 0.12); }, 480); // A2 + E3
+      setTimeout(() => playNoise(0.06, 0.18, 100, "lowpass"), 480);
+      setTimeout(() => { playTone(98, 0.5, "square", 0.16); playTone(147, 0.5, "square", 0.12); }, 960); // G2 + D3
+      setTimeout(() => playNoise(0.06, 0.18, 100, "lowpass"), 960);
+    };
+    const hipHopBeat = () => {
+      // 808 sub-bass with boom-bap hat pattern
+      const boom = () => { playTone(55, 0.45, "sine", 0.26); playTone(82, 0.15, "sine", 0.1); };
+      const hat = () => playNoise(0.025, 0.06, 8500);
+      boom();
+      hat();
+      [180, 360, 540, 720, 900, 1080, 1260].forEach(t => setTimeout(hat, t));
+      setTimeout(boom, 540);
+      setTimeout(() => { playTone(220, 0.2, "sawtooth", 0.06); playTone(330, 0.2, "sawtooth", 0.05); }, 360); // jazz chord stab
+      setTimeout(() => { playTone(220, 0.2, "sawtooth", 0.06); playTone(330, 0.2, "sawtooth", 0.05); }, 900);
+    };
+    const electronicBeat = () => {
+      // Pulsing sawtooth bassline with square-wave arp on top + 4-on-floor kick
+      const bass = (f, t) => setTimeout(() => playTone(f, 0.18, "sawtooth", 0.14), t);
+      const kick = (t) => setTimeout(() => playNoise(0.08, 0.16, 90, "lowpass"), t);
+      const arp = (f, t) => setTimeout(() => playTone(f, 0.09, "square", 0.08), t);
+      const hat = (t) => setTimeout(() => playNoise(0.02, 0.05, 9000), t);
+      [0, 200, 400, 600, 800, 1000, 1200, 1400].forEach((t, i) => {
+        bass(i % 2 === 0 ? 110 : 146, t);
+        kick(t);
+        hat(t + 100);
+      });
+      // Arp on top
+      const notes = [440, 554, 659, 880, 659, 554, 440, 554];
+      notes.forEach((f, i) => arp(f, 100 + i * 175));
+    };
+    const indieBeat = () => {
+      // Clean jangly G chord arpeggio (G-D-G-B-D ascending), bell-like triangle
+      [
+        { f: 196, t: 0, dur: 0.35 },   // G3
+        { f: 294, t: 130, dur: 0.35 }, // D4
+        { f: 392, t: 260, dur: 0.35 }, // G4
+        { f: 493, t: 390, dur: 0.35 }, // B4
+        { f: 587, t: 520, dur: 0.6 },  // D5 sustain
+      ].forEach(({ f, t, dur }) => setTimeout(() => playTone(f, dur, "triangle", 0.11), t));
+      // Soft tambourine
+      [400, 800, 1100].forEach(t => setTimeout(() => playNoise(0.05, 0.04, 7500), t));
+      // Sustain harmonic
+      setTimeout(() => playTone(392, 0.5, "sine", 0.07), 650);
+    };
+    const funkBeat = () => {
+      // Slap bass groove + horn stab on the upbeat
+      const slap = (f, t, vol = 0.18) => setTimeout(() => { playTone(f, 0.13, "sawtooth", vol); playNoise(0.04, 0.05, 200, "lowpass"); }, t);
+      slap(73, 0);     // D2
+      slap(73, 160, 0.12); // ghost
+      slap(98, 300);   // G2
+      slap(73, 460, 0.14);
+      slap(110, 620);  // A2
+      slap(98, 780, 0.12);
+      // Horn stab — three-note chord
+      setTimeout(() => {
+        playTone(440, 0.18, "square", 0.09);
+        playTone(554, 0.18, "square", 0.08);
+        playTone(659, 0.18, "square", 0.07);
+      }, 900);
+      // Hi-hat ticks
+      [100, 300, 500, 700, 900, 1100].forEach(t => setTimeout(() => playNoise(0.02, 0.04, 8500), t));
+    };
+    // Resolve a genre string ("Pop, Funk") to a beat function. Picks the primary (first) genre.
+    const playGenreBeat = (genreStr) => {
+      if (!genreStr) return;
+      const primary = String(genreStr).split(",")[0].trim().toLowerCase();
+      const map = { pop: popBeat, rock: rockBeat, "hip hop": hipHopBeat, electronic: electronicBeat, indie: indieBeat, funk: funkBeat };
+      const beat = map[primary];
+      if (beat) beat();
+    };
+    return {
+      placeAmenity: () => { playTone(800, 0.08, "sine", 0.12); setTimeout(() => playTone(600, 0.06, "sine", 0.08), 60); },
+      bookArtist: () => { playTone(523, 0.1, "triangle", 0.15); setTimeout(() => playTone(659, 0.1, "triangle", 0.15), 80); setTimeout(() => playTone(784, 0.15, "triangle", 0.12), 160); },
+      headliner: () => { playTone(523, 0.1, "triangle", 0.18); setTimeout(() => playTone(659, 0.08, "triangle", 0.16), 100); setTimeout(() => playTone(784, 0.08, "triangle", 0.16), 180); setTimeout(() => playTone(1047, 0.25, "triangle", 0.2), 260); },
+      gainVP: () => { playTone(880, 0.12, "sine", 0.1); setTimeout(() => playTone(1100, 0.1, "sine", 0.08), 80); },
+      gainTickets: () => { playTone(660, 0.08, "square", 0.06); setTimeout(() => playTone(770, 0.1, "square", 0.05), 70); },
+      gainFame: () => { playTone(440, 0.12, "sawtooth", 0.08); setTimeout(() => playTone(660, 0.15, "sawtooth", 0.1), 100); setTimeout(() => playTone(880, 0.2, "sawtooth", 0.08), 200); },
+      placeStage: () => { playTone(330, 0.15, "triangle", 0.12); setTimeout(() => playTone(440, 0.12, "triangle", 0.1), 120); setTimeout(() => playTone(550, 0.2, "triangle", 0.12), 220); },
+      genreBeat: playGenreBeat,
+    };
+  }, [playTone, playNoise]);
   const showFloatingBonus = useCallback((text, color) => {
     const id = Date.now() + Math.random();
     const offset = (floatCounter.current % 4) * 50; // stagger by 50px each
@@ -2163,6 +2275,9 @@ export default function Headliners() {
       setShowHeadliner({ artist, festival });
       addLog("🌟 HEADLINER", `${artist.name} headlines at ${festival}!`);
       sfx.headliner();
+      // Genre beat — kicks in after the headliner sting so they don't clash.
+      // Picks the artist's primary (first) genre for multi-genre artists.
+      setTimeout(() => sfx.genreBeat(artist.genre), 520);
       applyEffect(artist, pid, 1, stageIdx, viaAgent);
     } else {
       setShowBookedArtist({ artist, stageName: sName, isHeadliner: false, festival });
