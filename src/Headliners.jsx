@@ -939,23 +939,17 @@ export default function Headliners() {
   const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
   const [stagesProvideNoFame, setStagesProvideNoFame] = useState(false);
   const [agentEffectsEnabled, setAgentEffectsEnabled] = useState(true);
-  // Allow agents to be placed on the active microtrend for an immediate +1 Fame.
-  // Solves the year-1 "stuck at 0 fame" problem when no one can organically match the
-  // active microtrend. Placing the agent advances the microtrend (forecast promotes).
-  const [agentMicrotrendClaim, setAgentMicrotrendClaim] = useState(true);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
   const preRoundArtistDrawsRef = useRef(true);
   const stagesProvideNoFameRef = useRef(false);
   const agentEffectsEnabledRef = useRef(true);
-  const agentMicrotrendClaimRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
   useEffect(() => { stagesProvideNoFameRef.current = stagesProvideNoFame; }, [stagesProvideNoFame]);
   useEffect(() => { agentEffectsEnabledRef.current = agentEffectsEnabled; }, [agentEffectsEnabled]);
-  useEffect(() => { agentMicrotrendClaimRef.current = agentMicrotrendClaim; }, [agentMicrotrendClaim]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -1401,36 +1395,6 @@ export default function Headliners() {
     addLog("🕵️ Agent", `${pName} deployed agent to claim ${artist.name}`);
     return true;
   };
-
-  // Place agent on the active microtrend — immediate resolution. Grants the placer
-  // +1 Fame and +1 VP, marks the microtrend claimed (so the end-of-turn replacement
-  // logic will promote the forecast in its place), increments the microtrend count
-  // for end-of-game scoring, and exhausts the agent immediately. No "next turn"
-  // resolution — the whole effect happens at placement time. Solves the year-1
-  // stuck-at-zero-fame problem when no one can organically match the active trend.
-  const placeAgentOnMicrotrend = (pid) => {
-    if (!agentMicrotrendClaimRef.current) return false;
-    const active = microtrends.find(mt => mt.claimedBy === null);
-    if (!active) return false; // nothing claimable
-    const pName = players.find(p => p.id === pid)?.festivalName || "?";
-    const trendLabel = active.kind === "amenity" ? AMENITY_LABELS[active.amenity] : active.genre;
-    // Mark microtrend claimed; end-of-turn replacement will swap in the forecast.
-    setMicrotrends(prev => prev.map(mt => mt === active ? { ...mt, claimedBy: pid } : mt));
-    // Apply rewards: +1 Fame, +1 VP, increment count.
-    setPlayerData(p => ({ ...p, [pid]: {
-      ...p[pid],
-      baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-      vp: (p[pid].vp || 0) + 1,
-      microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
-    } }));
-    addLog("🕵️ Agent", `${pName} placed agent on "${trendLabel}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
-    showFloatingBonus(`🎵 ${trendLabel} (Agent)!`, active.kind === "amenity" ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24"));
-    // Agent done — exhausts via the standard pipeline (which also handles agentFame council bonus).
-    setAgentPlacements(prev => ({ ...prev, [pid]: { type: "microtrend", placedTurn: turnNumber } }));
-    exhaustAgent(pid);
-    setTimeout(() => recalcTickets(), 50);
-    return true;
-  };
   
   // Return agent to player (failed/cancelled — available to redeploy this year)
   const returnAgent = (pid) => {
@@ -1623,41 +1587,20 @@ export default function Headliners() {
   function aiDeployAgent(pid) {
     const pd = playerData[pid] || {};
     const openStages = (pd.stageArtists || []).filter(s => s.length < 3);
-
-    // Microtrend fallback: if AI has no stage capacity but can still claim a microtrend,
-    // do that. Also use this as a "last resort" if no pool artist is worth claiming.
-    const tryMicrotrend = () => {
-      if (!agentMicrotrendClaimRef.current) return false;
-      const active = microtrends.find(mt => mt.claimedBy === null);
-      if (!active) return false;
-      // Don't bother if player is already at FAME_MAX and has very high VP — diminishing returns
-      const baseFame = pd.baseFame || 0;
-      if (baseFame >= FAME_MAX) return false;
-      placeAgentOnMicrotrend(pid);
-      return true;
-    };
-
-    if (openStages.length === 0) { tryMicrotrend(); return; } // No stages? Try microtrend.
-
+    
+    if (openStages.length === 0) return; // no point claiming if no stages
+    
     // Use canAffordArtist for parity with the human UI — checks fame AND amenity costs
     const affordable = artistPool.filter(a => canAffordArtist(a, pd));
     const bestPool = affordable.sort((a, b) => (b.vp * 2 + b.tickets) - (a.vp * 2 + a.tickets))[0];
-
-    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) {
-      // No worthwhile pool target — fall back to microtrend if available
-      tryMicrotrend();
-      return;
-    }
-
+    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) return;
+    
     // Will contest if the artist is very valuable (fame 4-5), otherwise only claim unclaimed
     const alreadyClaimed = Object.values(agentPlacements).some(p => p && p.type === "pool" && p.artistName === bestPool.name);
     const worthContesting = (bestPool.vp * 2 + bestPool.tickets) > 14;
     if (!alreadyClaimed || worthContesting) {
       const poolIdx = artistPool.indexOf(bestPool);
       if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
-    } else {
-      // Wouldn't contest a claimed artist — try microtrend instead
-      tryMicrotrend();
     }
   }
 
@@ -1789,81 +1732,6 @@ export default function Headliners() {
     }
     setArtistPool(pool); setArtistDeck(deck); setDiscardPile(disc);
   }
-
-  // Defensive de-duplication pass — scans every card zone in priority order
-  // (stage > hand > pool > deck > discard) and removes any subsequent occurrence
-  // of an already-seen artist name. The stage-versus-hand case is the one we've
-  // actually seen in playtest: an artist on a stage AND in another player's hand,
-  // typically the result of a stale-ref draw earlier in the game. This runs as
-  // a safety net at turn transitions and year boundaries — the underlying draw
-  // logic *should* prevent duplicates, but this catches anything that slips through.
-  const dedupeAllCards = () => {
-    const seen = new Set();
-    let changed = false;
-    const removalLog = [];
-
-    // Pass 1: stages — always kept; record names
-    Object.values(playerData).forEach(pd => {
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { if (a?.name) seen.add(a.name); }));
-    });
-
-    // Pass 2: hands — remove anything already seen on a stage; record the rest
-    let newPlayerData = playerData;
-    Object.entries(playerData).forEach(([pid, pd]) => {
-      const oldHand = pd.hand || [];
-      const newHand = [];
-      let modified = false;
-      for (const a of oldHand) {
-        if (!a?.name) continue;
-        if (seen.has(a.name)) {
-          changed = true; modified = true;
-          const owner = players.find(p => String(p.id) === String(pid))?.festivalName || pid;
-          removalLog.push(`${a.name} (from ${owner}'s hand)`);
-        } else {
-          newHand.push(a);
-          seen.add(a.name);
-        }
-      }
-      if (modified) newPlayerData = { ...newPlayerData, [pid]: { ...newPlayerData[pid], hand: newHand } };
-    });
-
-    // Pass 3: pool
-    const newPool = [];
-    for (const a of artistPool) {
-      if (!a?.name) continue;
-      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from pool)`); }
-      else { newPool.push(a); seen.add(a.name); }
-    }
-
-    // Pass 4: deck
-    const newDeck = [];
-    for (const a of artistDeck) {
-      if (!a?.name) continue;
-      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from deck)`); }
-      else { newDeck.push(a); seen.add(a.name); }
-    }
-
-    // Pass 5: discard
-    const newDiscard = [];
-    for (const a of discardPile) {
-      if (!a?.name) continue;
-      if (seen.has(a.name)) { changed = true; removalLog.push(`${a.name} (from discard)`); }
-      else { newDiscard.push(a); seen.add(a.name); }
-    }
-
-    if (!changed) return false;
-    setPlayerData(newPlayerData);
-    setArtistPool(newPool);
-    setArtistDeck(newDeck);
-    setDiscardPile(newDiscard);
-    // Update refs synchronously so any chained reads in the same handler see the cleaned state.
-    artistPoolRef.current = newPool;
-    artistDeckRef.current = newDeck;
-    discardPileRef.current = newDiscard;
-    playerDataRef.current = newPlayerData;
-    addLog("⚙️ Cleanup", `Removed duplicate(s): ${removalLog.slice(0, 5).join(", ")}${removalLog.length > 5 ? ` +${removalLog.length - 5} more` : ""}`);
-    return true;
-  };
 
   /** Trigger an effect dice roll — shows the overlay and calls callback with results */
   /** Track goal progress and check milestones */
@@ -2463,15 +2331,8 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "genre") return mt;
       if (getGenres(artist.genre).includes(mt.genre)) {
-        // Microtrend claim payout: +1 Fame and +1 VP (the VP is the new microtrend-completion bonus).
-        // Also increment the tracking count for the leaderboard display.
-        setPlayerData(p => ({ ...p, [pid]: {
-          ...p[pid],
-          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-          vp: (p[pid].vp || 0) + 1,
-          microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
-        } }));
-        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame!`);
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         return { ...mt, claimedBy: pid };
       }
@@ -2637,7 +2498,7 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0 };
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -3402,14 +3263,8 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "amenity") return mt;
       if (mt.amenity !== amenityType) return mt;
-      // Microtrend claim payout: +1 Fame and +1 VP (microtrend-completion bonus).
-      setPlayerData(p => ({ ...p, [pid]: {
-        ...p[pid],
-        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-        vp: (p[pid].vp || 0) + 1,
-        microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
-      } }));
-      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame!`);
       showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       return { ...mt, claimedBy: pid };
@@ -3763,10 +3618,6 @@ export default function Headliners() {
     };
     const ni = findNext();
     if (ni < 0) { beginSpecialGuestPhase(); return; }
-
-    // Safety net: catch any cross-hand duplicates from earlier in the game before
-    // the next player picks up their turn. See dedupeAllCards comment for rationale.
-    dedupeAllCards();
 
     // Refill pool to 5 before next player's turn
     refillPool();
@@ -4838,85 +4689,16 @@ export default function Headliners() {
   const [showUpdateNotes, setShowUpdateNotes] = useState(false);
   const [showPopupObjectives, setShowPopupObjectives] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const logBtn = <button onClick={() => setShowLog(!showLog)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.2)", color: "#c4b5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📜</button>;
   const discardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowDiscard(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #6b7280", background: "rgba(107,114,128,0.2)", color: "#94a3b8", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🗑️</button> : null;
   const updateNotesBtn = <button onClick={() => setShowUpdateNotes(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #22c55e", background: "rgba(34,197,94,0.2)", color: "#4ade80", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📋</button>;
-  const howToPlayBtn = <button onClick={() => setShowHowToPlay(true)} title="How to Play" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #60a5fa", background: "rgba(96,165,250,0.18)", color: "#93c5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📖</button>;
-  // ── How to Play content — single source of truth, rendered into both the in-game
-  // modal overlay and the lobby's tab section. Sections are individual cards with a
-  // bold heading + italic flavour hook + plain-prose mechanics. No bullet lists.
-  const howToPlayContent = (() => {
-    const sectionCard = { padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.45)", border: "1px solid rgba(124,58,237,0.18)", marginBottom: 10 };
-    const heading = { color: "#fbbf24", fontSize: 14, fontWeight: 800, marginBottom: 4 };
-    const flavour = { color: "#c4b5fd", fontSize: 12, fontStyle: "italic", marginBottom: 6, lineHeight: 1.45 };
-    const body = { color: "#cbd5e1", fontSize: 12, lineHeight: 1.55 };
-    return <div>
-      <div style={{ ...sectionCard, background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.25)" }}>
-        <h3 style={{ ...heading, fontSize: 18, color: "#fde68a", marginBottom: 6 }}>HEADLINERS</h3>
-        <p style={body}>Turn a humble field into a music lover's paradise. Build your festival infrastructure, attract artists to the main stage, and become famous. Will your festival be the most successful in the country?</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>A turn at a glance</h4>
-        <p style={body}>Players have three options on their turn. <strong>Build infrastructure</strong> by taking one die from the Amenity Dice pool — this is crucial for covering the cost of an artist. <strong>Draw an artist</strong> from the deck or the pool of face-up artists. Or <strong>play an artist</strong> from your hand, provided you have the right infrastructure and Fame.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🎯 Trending Lineups</h4>
-        <p style={flavour}>Three Festival Lineups dominate the press this season. Be the first to deliver them and the headlines write themselves.</p>
-        <p style={body}>Each Trending Lineup shows three genres. Play all three genres (in any order) to edge closer to victory.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🏛️ Council Objectives</h4>
-        <p style={flavour}>The local council can make or break your festival. Keep them happy and they'll reward you handsomely with effects that give you an edge over the others.</p>
-        <p style={body}>All players pick three council objectives at the beginning of the game, and must fulfil each one year on year by having the right combination of amenities.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🎲 Amenity Dice</h4>
-        <p style={flavour}>Five shared dice. Crucial infrastructure needed to cover for artists.</p>
-        <p style={body}>Players take one amenity and place it in their festival, and sometimes get a choice between two amenities. The Fame face grants +1 Fame — a fleeting resource needed to attract the artists you want.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🎵 Microtrends</h4>
-        <p style={flavour}>One genre or amenity is having a moment right now. Catch the wave and ride it.</p>
-        <p style={body}>A single microtrend is active at a time. First player to book a matching artist or place a matching amenity wins +1 Fame. Players are also made aware of the microtrend on the horizon.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🕵️ Agents</h4>
-        <p style={flavour}>The industry's dark art, and your festival's edge. Send yours out into the talent pool and lock down a booking before your rivals can move.</p>
-        <p style={body}>Players all have one agent every year by default. Players can deploy agents on the available artist pool if they can afford them. If two agents converge on the same artist, a contest die rolls one of the seven faces — highest matching stat wins. Whichever way it goes, every contestant gains +1 Fame: the industry buzz reward. Agents can also be deployed on microtrends to gain a crucial Fame and keep the microtrends moving.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🌟 The Star Die</h4>
-        <p style={flavour}>We can control every moment leading up to the festival, but not the festival itself. The Star Die represents the highlights and the lowlights of your festival.</p>
-        <p style={body}>Every Star Die earned through the year (from artists, councils, special guests) goes onto the table at year-end. Roll them all. Each ⭐ face converts to VP on an escalating ladder (more stars = exponentially more). Players lose any amenity that is shown — unless they have a security. A player may use a security to absorb the loss of any other amenity. A security is not lost this way.</p>
-      </div>
-      <div style={sectionCard}>
-        <h4 style={heading}>🎪 Special Guests</h4>
-        <p style={flavour}>At year-end, the headline names show up unannounced — for whoever's built the festival worth showing up at.</p>
-        <p style={body}>Players who are yet to fill the final slot for their lineups are offered a special guest, chosen by drawing the top card of the artist deck.</p>
-      </div>
-      <div style={{ ...sectionCard, background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.25)" }}>
-        <h4 style={{ ...heading, color: "#86efac" }}>Scoring</h4>
-        <p style={body}>Most VP wins. VP comes from artists booked, council rewards earned, lineup objectives claimed, star rolls cashed in, end-of-game artist effects (Coldplay, Lady Gaga, etc.), and your final Fame ladder. Ties broken by tickets sold.</p>
-      </div>
-    </div>;
-  })();
-  const howToPlayModal = showHowToPlay ? <div onClick={() => setShowHowToPlay(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-    <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 640, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, position: "sticky", top: -24, background: "rgba(15,14,26,0.95)", padding: "8px 0", borderBottom: "1px solid rgba(124,58,237,0.2)", marginTop: -24 }}>
-        <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>📖 How to Play</h2>
-        <button onClick={() => setShowHowToPlay(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
-      </div>
-      {howToPlayContent}
-    </div>
-  </div> : null;
   const leaderboardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowLeaderboard(true)} title="Leaderboard" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251,191,36,0.2)", color: "#fbbf24", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🏆</button> : null;
   const leaderboardModal = showLeaderboard ? (() => {
     // Live leaderboard — sorted by VP, then tickets, then fame as tiebreakers
     const ranked = [...players].map(p => {
       const pd = playerData[p.id] || {};
       const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
-      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils, microtrends: pd.microtrendsCompletedCount || 0 };
+      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils };
     }).sort((a, b) => (b.vp - a.vp) || (b.tickets - a.tickets) || (b.fame - a.fame));
     return <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
@@ -4924,7 +4706,7 @@ export default function Headliners() {
           <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>🏆 Leaderboard</h2>
           <button onClick={() => setShowLeaderboard(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
         </div>
-        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of {totalYears} — sorted by VP, ties broken by tickets then fame</p>
+        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of 4 — sorted by VP, ties broken by tickets then fame</p>
         {ranked.map((r, idx) => {
           const fame = r.fame; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
           const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
@@ -4947,15 +4729,12 @@ export default function Headliners() {
               <div><span style={{ color: "#a78bfa" }}>🎲</span> {r.dice}</div>
               <div><span style={{ color: "#86efac" }}>📋</span> {r.activeCouncils}/3</div>
             </div>
-            <div style={{ marginTop: 6, padding: "4px 8px", borderRadius: 6, background: "rgba(124,58,237,0.08)", fontSize: 10, color: "#e9d5ff" }}>
-              📢 {r.microtrends} microtrend{r.microtrends === 1 ? "" : "s"} completed <span style={{ color: "#94a3b8" }}>(+{r.microtrends} ⭐ included in VP)</span>
-            </div>
           </div>;
         })}
       </div>
     </div>;
   })() : null;
-  const utilButtons = <><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{howToPlayBtn}{updateNotesBtn}{leaderboardBtn}{discardBtn}{logBtn}</div>{leaderboardModal}{howToPlayModal}</>;
+  const utilButtons = <><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "4px 12px" }}>{updateNotesBtn}{leaderboardBtn}{discardBtn}{logBtn}</div>{leaderboardModal}</>;
   const popupObjectivesPanel = showPopupObjectives ? <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "rgba(124,58,237,0.1)", border: "1px solid #7c3aed40", textAlign: "left" }}>
     {(playerObjectives[currentPlayerId] || []).length > 0 && <div style={{ marginBottom: 8 }}>
       {(playerObjectives[currentPlayerId] || []).map((entry, oi) => <div key={oi} style={{ marginBottom: 4 }}>
@@ -5096,22 +4875,6 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentEffectsEnabled ? "Standard — 8 artists have bonus effects when booked via an agent (encourages agent play and contests)." : "Off — those artists have only their base effects. Costs stay the same either way."}</div>
             </div>
           </label>
-          <label onClick={() => setAgentMicrotrendClaim(!agentMicrotrendClaim)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !agentMicrotrendClaim ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !agentMicrotrendClaim ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agentMicrotrendClaim ? "#22c55e" : "#fbbf24"}`, background: agentMicrotrendClaim ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{agentMicrotrendClaim ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: agentMicrotrendClaim ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🎵 Agents can claim microtrends</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "Standard — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Off — agents can only target pool artists and dice. Microtrends only claimable via booking/amenity."}</div>
-            </div>
-          </label>
-        </div>
-      </div>
-      <div style={{ ...card, marginTop: 16, padding: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div style={{ color: "#93c5fd", fontWeight: 700, fontSize: 14, marginBottom: 2 }}>📖 New to Headliners?</div>
-            <div style={{ color: "#94a3b8", fontSize: 12 }}>Read the quick guide — turn flow, the dice, microtrends, agents, the lot.</div>
-          </div>
-          <button onClick={() => setShowHowToPlay(true)} style={{ ...bs, fontSize: 13, padding: "10px 18px", whiteSpace: "nowrap" }}>How to Play →</button>
         </div>
       </div>
     </div>{anim}</div>
@@ -5914,7 +5677,7 @@ export default function Headliners() {
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: "100vh" }}>
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
-          <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>
+          <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of 4</h3>
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
@@ -6288,28 +6051,6 @@ export default function Headliners() {
                   </div>;
                 })}
               </div>
-              {agentMicrotrendClaim && microtrends.some(mt => mt.claimedBy === null) && (() => {
-                // Show the active microtrend with a "Place on Microtrend" button as an
-                // alternative agent target. Acts immediately — +1 Fame, +1 VP, microtrend
-                // advances to forecast at end of turn. Useful when the pool has no good
-                // claim targets or no one can organically match the active trend.
-                const active = microtrends.find(mt => mt.claimedBy === null);
-                if (!active) return null;
-                const isAmenity = active.kind === "amenity";
-                const trendLabel = isAmenity ? `Place ${AMENITY_ICONS[active.amenity]} ${AMENITY_LABELS[active.amenity]}` : `Book a ${active.genre} artist`;
-                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24");
-                return <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
-                  <p style={{ color: "#c4b5fd", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>— or instead, place your agent on the active microtrend —</p>
-                  <div style={{ display: "inline-block", padding: "10px 14px", borderRadius: 10, border: `1px dashed ${accent}80`, background: `${accent}10`, marginBottom: 8 }}>
-                    <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>🎵 Active Microtrend</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{trendLabel}</div>
-                  </div>
-                  <div>
-                    <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 ⭐ VP)</button>
-                  </div>
-                  <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>The trend advances to the forecast at end of turn.</p>
-                </div>;
-              })()}
               <button onClick={() => setTurnAction(null)} style={{ ...bs, fontSize: 12, marginTop: 12 }}>← Cancel</button>
             </div>}
 
