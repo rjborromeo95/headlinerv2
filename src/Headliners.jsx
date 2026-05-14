@@ -939,17 +939,23 @@ export default function Headliners() {
   const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
   const [stagesProvideNoFame, setStagesProvideNoFame] = useState(false);
   const [agentEffectsEnabled, setAgentEffectsEnabled] = useState(true);
+  // Allow agents to be placed on the active microtrend for an immediate +1 Fame.
+  // Solves the year-1 "stuck at 0 fame" problem when no one can organically match the
+  // active microtrend. Placing the agent advances the microtrend (forecast promotes).
+  const [agentMicrotrendClaim, setAgentMicrotrendClaim] = useState(true);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
   const preRoundArtistDrawsRef = useRef(true);
   const stagesProvideNoFameRef = useRef(false);
   const agentEffectsEnabledRef = useRef(true);
+  const agentMicrotrendClaimRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
   useEffect(() => { stagesProvideNoFameRef.current = stagesProvideNoFame; }, [stagesProvideNoFame]);
   useEffect(() => { agentEffectsEnabledRef.current = agentEffectsEnabled; }, [agentEffectsEnabled]);
+  useEffect(() => { agentMicrotrendClaimRef.current = agentMicrotrendClaim; }, [agentMicrotrendClaim]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -1395,6 +1401,36 @@ export default function Headliners() {
     addLog("🕵️ Agent", `${pName} deployed agent to claim ${artist.name}`);
     return true;
   };
+
+  // Place agent on the active microtrend — immediate resolution. Grants the placer
+  // +1 Fame and +1 VP, marks the microtrend claimed (so the end-of-turn replacement
+  // logic will promote the forecast in its place), increments the microtrend count
+  // for end-of-game scoring, and exhausts the agent immediately. No "next turn"
+  // resolution — the whole effect happens at placement time. Solves the year-1
+  // stuck-at-zero-fame problem when no one can organically match the active trend.
+  const placeAgentOnMicrotrend = (pid) => {
+    if (!agentMicrotrendClaimRef.current) return false;
+    const active = microtrends.find(mt => mt.claimedBy === null);
+    if (!active) return false; // nothing claimable
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    const trendLabel = active.kind === "amenity" ? AMENITY_LABELS[active.amenity] : active.genre;
+    // Mark microtrend claimed; end-of-turn replacement will swap in the forecast.
+    setMicrotrends(prev => prev.map(mt => mt === active ? { ...mt, claimedBy: pid } : mt));
+    // Apply rewards: +1 Fame, +1 VP, increment count.
+    setPlayerData(p => ({ ...p, [pid]: {
+      ...p[pid],
+      baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
+      vp: (p[pid].vp || 0) + 1,
+      microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+    } }));
+    addLog("🕵️ Agent", `${pName} placed agent on "${trendLabel}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+    showFloatingBonus(`🎵 ${trendLabel} (Agent)!`, active.kind === "amenity" ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24"));
+    // Agent done — exhausts via the standard pipeline (which also handles agentFame council bonus).
+    setAgentPlacements(prev => ({ ...prev, [pid]: { type: "microtrend", placedTurn: turnNumber } }));
+    exhaustAgent(pid);
+    setTimeout(() => recalcTickets(), 50);
+    return true;
+  };
   
   // Return agent to player (failed/cancelled — available to redeploy this year)
   const returnAgent = (pid) => {
@@ -1587,20 +1623,41 @@ export default function Headliners() {
   function aiDeployAgent(pid) {
     const pd = playerData[pid] || {};
     const openStages = (pd.stageArtists || []).filter(s => s.length < 3);
-    
-    if (openStages.length === 0) return; // no point claiming if no stages
-    
+
+    // Microtrend fallback: if AI has no stage capacity but can still claim a microtrend,
+    // do that. Also use this as a "last resort" if no pool artist is worth claiming.
+    const tryMicrotrend = () => {
+      if (!agentMicrotrendClaimRef.current) return false;
+      const active = microtrends.find(mt => mt.claimedBy === null);
+      if (!active) return false;
+      // Don't bother if player is already at FAME_MAX and has very high VP — diminishing returns
+      const baseFame = pd.baseFame || 0;
+      if (baseFame >= FAME_MAX) return false;
+      placeAgentOnMicrotrend(pid);
+      return true;
+    };
+
+    if (openStages.length === 0) { tryMicrotrend(); return; } // No stages? Try microtrend.
+
     // Use canAffordArtist for parity with the human UI — checks fame AND amenity costs
     const affordable = artistPool.filter(a => canAffordArtist(a, pd));
     const bestPool = affordable.sort((a, b) => (b.vp * 2 + b.tickets) - (a.vp * 2 + a.tickets))[0];
-    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) return;
-    
+
+    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) {
+      // No worthwhile pool target — fall back to microtrend if available
+      tryMicrotrend();
+      return;
+    }
+
     // Will contest if the artist is very valuable (fame 4-5), otherwise only claim unclaimed
     const alreadyClaimed = Object.values(agentPlacements).some(p => p && p.type === "pool" && p.artistName === bestPool.name);
     const worthContesting = (bestPool.vp * 2 + bestPool.tickets) > 14;
     if (!alreadyClaimed || worthContesting) {
       const poolIdx = artistPool.indexOf(bestPool);
       if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
+    } else {
+      // Wouldn't contest a claimed artist — try microtrend instead
+      tryMicrotrend();
     }
   }
 
@@ -2331,8 +2388,15 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "genre") return mt;
       if (getGenres(artist.genre).includes(mt.genre)) {
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame!`);
+        // Microtrend claim payout: +1 Fame and +1 VP (the VP is the new microtrend-completion bonus).
+        // Also increment the tracking count for the leaderboard display.
+        setPlayerData(p => ({ ...p, [pid]: {
+          ...p[pid],
+          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
+          vp: (p[pid].vp || 0) + 1,
+          microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+        } }));
+        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         return { ...mt, claimedBy: pid };
       }
@@ -2498,7 +2562,7 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false] };
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0 };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -3263,8 +3327,14 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "amenity") return mt;
       if (mt.amenity !== amenityType) return mt;
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame!`);
+      // Microtrend claim payout: +1 Fame and +1 VP (microtrend-completion bonus).
+      setPlayerData(p => ({ ...p, [pid]: {
+        ...p[pid],
+        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
+        vp: (p[pid].vp || 0) + 1,
+        microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+      } }));
+      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
       showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       return { ...mt, claimedBy: pid };
@@ -4698,7 +4768,7 @@ export default function Headliners() {
     const ranked = [...players].map(p => {
       const pd = playerData[p.id] || {};
       const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
-      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils };
+      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils, microtrends: pd.microtrendsCompletedCount || 0 };
     }).sort((a, b) => (b.vp - a.vp) || (b.tickets - a.tickets) || (b.fame - a.fame));
     return <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
@@ -4728,6 +4798,9 @@ export default function Headliners() {
               <div style={{ color: onFire ? "#fb923c" : "#94a3b8", animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥 {r.fame}</div>
               <div><span style={{ color: "#a78bfa" }}>🎲</span> {r.dice}</div>
               <div><span style={{ color: "#86efac" }}>📋</span> {r.activeCouncils}/3</div>
+            </div>
+            <div style={{ marginTop: 6, padding: "4px 8px", borderRadius: 6, background: "rgba(124,58,237,0.08)", fontSize: 10, color: "#e9d5ff" }}>
+              📢 {r.microtrends} microtrend{r.microtrends === 1 ? "" : "s"} completed <span style={{ color: "#94a3b8" }}>(+{r.microtrends} ⭐ included in VP)</span>
             </div>
           </div>;
         })}
@@ -4873,6 +4946,13 @@ export default function Headliners() {
             <div style={{ flex: 1 }}>
               <div style={{ color: agentEffectsEnabled ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🕵️ Agent-booking effects</div>
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentEffectsEnabled ? "Standard — 8 artists have bonus effects when booked via an agent (encourages agent play and contests)." : "Off — those artists have only their base effects. Costs stay the same either way."}</div>
+            </div>
+          </label>
+          <label onClick={() => setAgentMicrotrendClaim(!agentMicrotrendClaim)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !agentMicrotrendClaim ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !agentMicrotrendClaim ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agentMicrotrendClaim ? "#22c55e" : "#fbbf24"}`, background: agentMicrotrendClaim ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{agentMicrotrendClaim ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: agentMicrotrendClaim ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🎵 Agents can claim microtrends</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "Standard — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Off — agents can only target pool artists and dice. Microtrends only claimable via booking/amenity."}</div>
             </div>
           </label>
         </div>
@@ -6051,6 +6131,28 @@ export default function Headliners() {
                   </div>;
                 })}
               </div>
+              {agentMicrotrendClaim && microtrends.some(mt => mt.claimedBy === null) && (() => {
+                // Show the active microtrend with a "Place on Microtrend" button as an
+                // alternative agent target. Acts immediately — +1 Fame, +1 VP, microtrend
+                // advances to forecast at end of turn. Useful when the pool has no good
+                // claim targets or no one can organically match the active trend.
+                const active = microtrends.find(mt => mt.claimedBy === null);
+                if (!active) return null;
+                const isAmenity = active.kind === "amenity";
+                const trendLabel = isAmenity ? `Place ${AMENITY_ICONS[active.amenity]} ${AMENITY_LABELS[active.amenity]}` : `Book a ${active.genre} artist`;
+                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24");
+                return <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
+                  <p style={{ color: "#c4b5fd", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>— or instead, place your agent on the active microtrend —</p>
+                  <div style={{ display: "inline-block", padding: "10px 14px", borderRadius: 10, border: `1px dashed ${accent}80`, background: `${accent}10`, marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>🎵 Active Microtrend</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{trendLabel}</div>
+                  </div>
+                  <div>
+                    <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 ⭐ VP)</button>
+                  </div>
+                  <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>The trend advances to the forecast at end of turn.</p>
+                </div>;
+              })()}
               <button onClick={() => setTurnAction(null)} style={{ ...bs, fontSize: 12, marginTop: 12 }}>← Cancel</button>
             </div>}
 
