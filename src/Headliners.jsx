@@ -1734,13 +1734,22 @@ export default function Headliners() {
         addLog("🕵️ Agent Effect", `${artist.name}: +${amount} Star Die${amount > 1 ? "s" : ""} (agent booking)`);
         showFloatingBonus(`+${amount} 🎲 Agent!`, "#fbbf24");
       }
-      // +1 [amenity]. Place this turn — gives a free amenity dice (we add to hand-of-dice as a token)
+      // +1 [amenity]. Place this turn — human picks which field; AI auto-picks via heuristic.
       const amenityMatch = ae.match(/\+1\s+(campsite|portaloo|security|catering)/i);
       if (amenityMatch) {
         const amenityType = amenityMatch[1].toLowerCase();
-        // Free amenity is dropped into a default field for the player (field 0). They can re-plan via existing UI.
-        setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], 0, amenityType, +1) }));
-        addLog("🕵️ Agent Effect", `${artist.name}: +1 ${AMENITY_LABELS[amenityType]} placed (agent booking)`);
+        const isAI = players.find(p => p.id === pid)?.isAI;
+        if (isAI) {
+          // AI: drop into a heuristic-picked field immediately
+          const aiPd = playerDataRef.current?.[pid] || playerData[pid] || {};
+          const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1);
+          setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, amenityType, +1) }));
+          addLog("🕵️ Agent Effect", `${artist.name}: +1 ${AMENITY_LABELS[amenityType]} → F${fIdx + 1} (AI agent booking)`);
+        } else {
+          // Human: queue a pending placement so they choose the field
+          setPendingAgentAmenity(prev => [...prev, { pid, amenityType, artistName: artist.name }]);
+          addLog("🕵️ Agent Effect", `${artist.name}: +1 ${AMENITY_LABELS[amenityType]} — choose a field`);
+        }
         showFloatingBonus(`+1 ${AMENITY_ICONS[amenityType]} Agent!`, AMENITY_COLORS[amenityType]);
       }
       // Draw N artists from the deck
@@ -5959,6 +5968,41 @@ export default function Headliners() {
                     exhaustAgent(pa.pid);
                     setPendingAgentArtist(null);
                   }} style={{ ...bs, marginTop: 8 }}>Add to Hand</button></>}
+                </div>
+              </div>;
+            })()}
+
+            {/* Pending agent-amenity placement modal — surfaced when an agent-booked artist's
+                effect grants the player a free amenity (FISHER, Beastie Boys, Lil Dicky).
+                Player picks which field receives the amenity. AI auto-resolves, never shows. */}
+            {pendingAgentAmenity.length > 0 && pendingAgentAmenity[0].pid === currentPlayerId && (() => {
+              const pa = pendingAgentAmenity[0];
+              const pd = playerData[pa.pid] || {};
+              const fields = pd.fields || [];
+              const stageNames = pd.stageNames || [];
+              const placeAndPop = (fIdx) => {
+                setPlayerData(p => ({ ...p, [pa.pid]: mutateAmenity(p[pa.pid], fIdx, pa.amenityType, +1) }));
+                addLog("🕵️ Agent Effect", `${pa.artistName}: +1 ${AMENITY_LABELS[pa.amenityType]} → F${fIdx + 1}`);
+                setPendingAgentAmenity(prev => prev.slice(1));
+                setTimeout(() => recalcTickets(), 50);
+              };
+              return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 955, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                <div style={{ ...card, textAlign: "center", maxWidth: 440, width: "100%", border: `2px solid ${AMENITY_COLORS[pa.amenityType]}80` }}>
+                  <h3 style={{ color: AMENITY_COLORS[pa.amenityType], marginBottom: 6 }}>🕵️ Agent Bonus: +1 {AMENITY_ICONS[pa.amenityType]} {AMENITY_LABELS[pa.amenityType]}</h3>
+                  <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14 }}>From <strong style={{ color: "#e9d5ff" }}>{pa.artistName}</strong> — choose which field receives it.</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {fields.map((field, fi) => {
+                      const counts = sumFields([field]);
+                      const stageName = stageNames[fi] || `Stage ${fi + 1}`;
+                      return <button key={fi} onClick={() => placeAndPop(fi)} style={{ ...bp, padding: "10px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 700 }}>Field {fi + 1} <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: 11 }}>({stageName})</span></span>
+                        <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                          ⛺{counts.campsite || 0} 🚽{counts.portaloo || 0} 👮‍♀️{counts.security || 0} 🍔{counts.catering || 0}
+                        </span>
+                      </button>;
+                    })}
+                  </div>
+                  {pendingAgentAmenity.length > 1 && <div style={{ marginTop: 10, fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>{pendingAgentAmenity.length - 1} more agent bonus{pendingAgentAmenity.length > 2 ? "es" : ""} to place after this.</div>}
                 </div>
               </div>;
             })()}
