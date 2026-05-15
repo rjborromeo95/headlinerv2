@@ -73,23 +73,23 @@ const ALL_COUNCILS = [
   { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
   { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
-  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdFixed", amenity: "catering", count: 1 }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
-  { id: "staffArea", name: "Staff Area", condition: { type: "thresholdFixed", amenity: "security", count: 1 }, reward: { type: "artistOnMicrotrend" } },
-  { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdFixed", amenity: "security", count: 2 }, reward: { type: "refreshPool" } },
-  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdFixed", amenity: "catering", count: 2 }, reward: { type: "artistOnMicrotrend" } },
+  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  { id: "staffArea", name: "Staff Area", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,1,2,2] }, reward: { type: "artistOnMicrotrend" } },
+  { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdSingle", amenity: "security", perYear: [2,2,3,3] }, reward: { type: "refreshPool" } },
+  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdSingle", amenity: "catering", perYear: [2,2,3,3] }, reward: { type: "artistOnMicrotrend" } },
   { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
   { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "wellStaffed", name: "Well Staffed", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
   { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
-  { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "freeStageOpenOnce" } },
+  { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "refreshDice" } },
   { id: "funkyFood", name: "Funky Food", condition: { type: "comparative", greater: "portaloo", lesser: "catering" }, reward: { type: "artistOnMicrotrend" } },
   { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
   { id: "wellEquipped", name: "Well Equipped", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
-  { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdFixed", amenity: "campsite", count: 1 }, reward: { type: "freeStageOpenOnce" } },
+  { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdSingle", amenity: "campsite", perYear: [1,1,2,2] }, reward: { type: "refreshDice" } },
   { id: "spoiltForChoice", name: "Spoilt for Choice", condition: { type: "comparative", greater: "catering", lesser: "campsite" }, reward: { type: "refreshPool" } },
-  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdFixed", amenity: "portaloo", count: 2 }, reward: { type: "freeStageOpenOnce" } },
+  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [2,2,3,3] }, reward: { type: "refreshDice" } },
 ];
 
 function getCouncilById(id) { return ALL_COUNCILS.find(c => c.id === id); }
@@ -111,6 +111,7 @@ function formatCouncilReward(c) {
   if (r.type === "tickets") return `+${r.perYear.join("/")} 🎟️ Tickets`;
   if (r.type === "starDice") return `+${r.perYear.join("/")} 🎲 Star Dice`;
   if (r.type === "refreshPool") return `🔄 Refresh artist pool / turn`;
+  if (r.type === "refreshDice") return `🎲 Refresh amenity dice / turn`;
   if (r.type === "drawArtists") return `Draw +${r.perYear.join("/")} artist(s) when drawing`;
   if (r.type === "drawSpecialGuests") return `Draw +${r.perYear.join("/")} special guest(s)`;
   if (r.type === "agents") return `+${r.perYear.join("/")} 🕵️ Agent use(s) / year`;
@@ -1034,6 +1035,10 @@ export default function Headliners() {
   // Each qualifying "agents" council reward provides perYear[yIdx] extra deployments after the base agent
   // is exhausted. Resets to {} each year transition.
   const [agentBonusUsesUsed, setAgentBonusUsesUsed] = useState({});
+  // Per-player Set of artist names booked via agent this year. Used to surface
+  // year-end agent effects (e.g. Kendrick Lamar's "+8 VP at Year End" agentEffect)
+  // in the year-end resolution. Reset at year transition along with the other agent state.
+  const [agentBookedThisYear, setAgentBookedThisYear] = useState({});
   // Pending agent amenity placements (player needs to place amenity gained from agent)
   const [pendingAgentAmenity, setPendingAgentAmenity] = useState([]); // [{ pid, amenityType }]
   // Pending agent artist booking (uncontested pool claim)
@@ -1155,6 +1160,10 @@ export default function Headliners() {
   // refreshPool councils a player has equals their cap (each council = +1 refresh).
   // Reset to 0 at the start of each turn via the turnAction reset block.
   const [councilRefreshesUsedThisTurn, setCouncilRefreshesUsedThisTurn] = useState(0);
+  // Counter for council "refreshDice" usage this turn. Each qualifying refreshDice
+  // council (Secret Sauce / Quiet Camping / Urinals and Cubicles) grants +1 dice-reroll
+  // charge per turn. Stacks just like the pool refresh: 2 qualifying councils = 2 rerolls.
+  const [councilDiceRefreshesUsedThisTurn, setCouncilDiceRefreshesUsedThisTurn] = useState(0);
 
   // Special Guest phase
   const [specialGuestPlayer, setSpecialGuestPlayer] = useState(0); // index in players array
@@ -2055,13 +2064,29 @@ export default function Headliners() {
       const ae = artist.agentEffect.trim();
       const ael = ae.toLowerCase();
       const festival = players.find(p => p.id === pid)?.festivalName || "?";
+      // Some agent effects say "+N VP at Year End" (Kendrick Lamar). The naive +VP regex
+      // below would match those and fire immediately — wrong timing. Detect the "year end"
+      // marker first, and if present, route to the year-end pending bucket instead so the
+      // VP appears in the year-end summary alongside other year-end effects.
+      const isYearEnd = /year\s*end/i.test(ae);
       // +N VP (year-end or immediate VP grant)
       const vpMatch = ae.match(/\+(\d+)\s*VP/i);
       if (vpMatch) {
         const amount = parseInt(vpMatch[1]);
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + amount } }));
-        addLog("🕵️ Agent Effect", `${artist.name}: +${amount} VP (agent booking)`);
-        showFloatingBonus(`+${amount} ⭐ Agent!`, "#c4b5fd");
+        if (isYearEnd) {
+          // Defer: stash the artist name. The year-end builder reads agentBookedThisYear
+          // and emits an autoVP entry for each on-stage artist found there.
+          setAgentBookedThisYear(prev => {
+            const list = prev[pid] || [];
+            return { ...prev, [pid]: [...list, artist.name] };
+          });
+          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} VP queued for Year End (agent booking)`);
+          showFloatingBonus(`+${amount} ⭐ at Year End!`, "#c4b5fd");
+        } else {
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + amount } }));
+          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} VP (agent booking)`);
+          showFloatingBonus(`+${amount} ⭐ Agent!`, "#c4b5fd");
+        }
       }
       // +N Fame
       const fameMatch = ae.match(/\+(\d+)\s*Fame/i);
@@ -2101,14 +2126,16 @@ export default function Headliners() {
       const drawMatch = ae.match(/draw\s+(\d+)\s+artists?\s+from\s+the\s+deck/i);
       if (drawMatch) {
         const amount = parseInt(drawMatch[1]);
-        const drawn = [];
-        for (let i = 0; i < amount; i++) {
-          const card = drawFromDeck();
-          if (card) drawn.push(card);
-        }
+        // drawFromDeck(count) already returns an array of card objects. The previous
+        // implementation called drawFromDeck() in a loop and pushed each return value
+        // into `drawn`, which meant `drawn` was an array OF arrays — those then got
+        // spread into the hand as nested arrays instead of artist objects, so cards
+        // never appeared. One call with the count fixes it.
+        const drawn = drawFromDeck(amount);
         if (drawn.length > 0) {
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
           addLog("🕵️ Agent Effect", `${artist.name}: drew ${drawn.length} artist${drawn.length > 1 ? "s" : ""} from deck (agent booking)`);
+          showFloatingBonus(`+${drawn.length} 🎴 Agent!`, "#c4b5fd");
         }
       }
       setTimeout(() => recalcTickets(), 60);
@@ -2987,6 +3014,7 @@ export default function Headliners() {
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
     const tl = {}; order.forEach(id => { tl[id] = TURNS_PER_YEAR[1]; }); setTurnsLeft(tl);
     setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    setAgentBookedThisYear({});
     // Reset year-scoped latches
     positionalGrantedYearRef.current = 0;
     // Init Star Dice shared pool (replaces old event deck)
@@ -3844,7 +3872,7 @@ export default function Headliners() {
   const endTurn = () => {
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
-    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0);
+    setTurnAction(null); setSelectedDie(null); setChoiceAmenity(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0);
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
 
     // Evaluate council objectives for current player before moving on
@@ -4136,6 +4164,24 @@ export default function Headliners() {
       const pd = playerData[p.id];
       if (!pd) return;
       const effects = [];
+      // First — surface year-end agent effects. If the player booked an artist via
+      // agent this year AND that artist's agentEffect contains "+N VP at Year End",
+      // emit an autoVP entry. The artist must still be on a stage (i.e. not unbooked
+      // somehow); we cross-reference against current stage artists.
+      const agentBooked = agentBookedThisYear[p.id] || [];
+      const onStageNames = new Set((pd.stageArtists || []).flat().map(a => a.name));
+      agentBooked.forEach(name => {
+        if (!onStageNames.has(name)) return; // artist no longer on stage, skip
+        const a = (pd.stageArtists || []).flat().find(x => x.name === name);
+        if (!a || !a.agentEffect) return;
+        const ae = a.agentEffect;
+        if (!/year\s*end/i.test(ae)) return;
+        const vpMatch = ae.match(/\+(\d+)\s*VP/i);
+        if (vpMatch) {
+          const vp = parseInt(vpMatch[1]);
+          effects.push({ artist: a, type: "autoVP", desc: `🕵️ Agent claim: +${vp} VP`, autoVP: vp });
+        }
+      });
       (pd.stageArtists || []).forEach(sa => sa.forEach(a => {
         const eff = (a.effect || "").toLowerCase();
         if (!eff.includes("year end")) return;
@@ -4897,6 +4943,10 @@ export default function Headliners() {
 
   const startNextYear = () => {
     const ny = year + 1; setYear(ny);
+    // Reset per-year agent-booking tracker (year-end agent effects have already been
+    // resolved in beginYearEndEffectsPhase). Other agent state was cleared there too;
+    // this lives here because it's needed during year-end resolution itself.
+    setAgentBookedThisYear({});
     // Apply artist objective rewards from last year's lineups (BEFORE clearing stages)
     applyObjectiveRewards();
     // Capture pre-round baseFame (from opening stages) BEFORE resetting
@@ -6398,7 +6448,22 @@ export default function Headliners() {
             {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>Pick a die to build that amenity:</p>
               <DiceDisplay dice={dice} onPick={handleDiePick} canReroll={diceNeedReroll(dice)} onReroll={handleRerollDice} />
-              <button onClick={() => setTurnAction(null)} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button>
+              {(() => {
+                // Council "refreshDice" charges available this turn. Stacks across multiple
+                // qualifying councils (3 possible: Secret Sauce / Quiet Camping / Urinals).
+                // Mirrors the refreshPool button pattern.
+                const fields = currentPD?.fields || [];
+                const cap = (currentPD?.councils || []).reduce((acc, c, i) => acc + (c?.reward?.type === "refreshDice" && councilQualifies(c, fields[i], year || 1) ? 1 : 0), 0);
+                const remaining = cap - councilDiceRefreshesUsedThisTurn;
+                if (cap <= 0 || remaining <= 0) return null;
+                return <button onClick={() => {
+                  setDice(rollDice());
+                  setCouncilDiceRefreshesUsedThisTurn(n => n + 1);
+                  addLog(currentPlayer.festivalName, `🎲 Refreshed amenity dice (Council reward — free, ${remaining - 1} left)`);
+                  sfx.placeAmenity();
+                }} style={{ ...bs, fontSize: 12, marginTop: 10, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e", color: "#86efac" }}>🎲 Refresh Dice (Council, free — {remaining} left)</button>;
+              })()}
+              <div><button onClick={() => setTurnAction(null)} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button></div>
             </div>}
 
             {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor != null && <div style={{ textAlign: "center", padding: 14, borderRadius: 12, background: "rgba(167,139,250,0.12)", border: "1px solid #a78bfa", marginBottom: 12 }}>
