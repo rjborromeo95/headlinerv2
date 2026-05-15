@@ -6401,26 +6401,51 @@ export default function Headliners() {
                   </div>;
                 })}
               </div>
-              {agentMicrotrendClaim && microtrends.some(mt => mt.claimedBy === null) && (() => {
-                // Show the active microtrend with a "Place on Microtrend" button as an
-                // alternative agent target. Acts immediately — +1 Fame, +1 VP, microtrend
-                // advances to forecast at end of turn. Useful when the pool has no good
-                // claim targets or no one can organically match the active trend.
+              {agentMicrotrendClaim && (() => {
+                // Always-visible microtrend block in the Deploy Agent UI. Previously this
+                // hid when no microtrend was unclaimed — which silently confused players
+                // who'd just claimed the active trend via a book/amenity on the same turn,
+                // because they'd open Deploy Agent expecting the option and see nothing.
+                // Now we always show the block, and explain why the action is unavailable
+                // when it is.
                 const active = microtrends.find(mt => mt.claimedBy === null);
-                if (!active) return null;
-                const isAmenity = active.kind === "amenity";
-                const trendLabel = isAmenity ? `Place ${AMENITY_ICONS[active.amenity]} ${AMENITY_LABELS[active.amenity]}` : `Book a ${active.genre} artist`;
-                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24");
+                if (active) {
+                  const isAmenity = active.kind === "amenity";
+                  const trendLabel = isAmenity ? `Place ${AMENITY_ICONS[active.amenity]} ${AMENITY_LABELS[active.amenity]}` : `Book a ${active.genre} artist`;
+                  const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24");
+                  return <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
+                    <p style={{ color: "#c4b5fd", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>— or instead, place your agent on the active microtrend —</p>
+                    <div style={{ display: "inline-block", padding: "10px 14px", borderRadius: 10, border: `1px dashed ${accent}80`, background: `${accent}10`, marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>🎵 Active Microtrend</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{trendLabel}</div>
+                    </div>
+                    <div>
+                      <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 ⭐ VP)</button>
+                    </div>
+                    <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>The trend advances to the forecast at end of turn.</p>
+                  </div>;
+                }
+                // No unclaimed microtrend — explain why. The forecast (if any) shows what
+                // will become active at end-of-turn, so the player understands the state.
+                const claimed = microtrends.find(mt => mt.claimedBy !== null);
+                const claimerName = claimed ? (players.find(p => p.id === claimed.claimedBy)?.festivalName || "?") : null;
+                const claimedSelf = claimed && claimed.claimedBy === currentPlayerId;
+                const upcoming = nextMicrotrend;
                 return <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
-                  <p style={{ color: "#c4b5fd", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>— or instead, place your agent on the active microtrend —</p>
-                  <div style={{ display: "inline-block", padding: "10px 14px", borderRadius: 10, border: `1px dashed ${accent}80`, background: `${accent}10`, marginBottom: 8 }}>
-                    <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>🎵 Active Microtrend</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{trendLabel}</div>
+                  <p style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>— microtrend agent placement —</p>
+                  <div style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(148,163,184,0.05)", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                      {claimed
+                        ? (claimedSelf
+                          ? <>You've already claimed the active microtrend this turn — your agent can't double-dip on the same one.</>
+                          : <>The active microtrend has been claimed by {claimerName}.</>)
+                        : <>No microtrend is active right now.</>}
+                    </div>
+                    {upcoming && <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic" }}>
+                      A new {upcoming.kind === "amenity" ? AMENITY_LABELS[upcoming.amenity] : upcoming.genre} microtrend becomes active at end of turn — your next agent action could claim that one.
+                    </div>}
                   </div>
-                  <div>
-                    <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 ⭐ VP)</button>
-                  </div>
-                  <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>The trend advances to the forecast at end of turn.</p>
+                  <button disabled style={{ ...bp, fontSize: 12, padding: "8px 14px", opacity: 0.35, cursor: "not-allowed" }}>🎵 Place on Microtrend — unavailable</button>
                 </div>;
               })()}
               <button onClick={() => setTurnAction(null)} style={{ ...bs, fontSize: 12, marginTop: 12 }}>← Cancel</button>
@@ -7034,22 +7059,37 @@ export default function Headliners() {
             <p style={{ color: "#94a3b8", fontSize: 11 }}>Opening a stage gives +1 Fame and more artist slots.</p>
           </div>}
           {(() => {
-            // Council "freeStageOpenOnce" charges available this year (qualifying, not yet consumed).
-            // Surfaces as separate buttons so the player can pick which council's charge to spend.
-            // Only relevant when they CAN'T already open via fame (no double-bonus) AND have stage room.
+            // Always-visible status of any qualifying-and-unused freeStageOpenOnce charges.
+            // Surfaces the charge's existence even when the player can open via Fame, so
+            // they know it's sitting in their pocket for future years. Without this, a
+            // player who hits Fame 3 early never sees the charge UI and forgets they have it.
             const fields = prpd.fields || [];
             const consumed = prpd.freeStageOpensUsed || [];
             const stageRoom = (prpd.stages || []).length < 3;
-            if (!stageRoom || canOpenStage) return null;
-            const charges = (prpd.councils || []).filter((c, i) => c?.reward?.type === "freeStageOpenOnce" && councilQualifies(c, fields[i], year || 1) && !consumed.includes(c.id));
-            if (charges.length === 0) return null;
+            const unusedCharges = (prpd.councils || []).filter((c, i) => c?.reward?.type === "freeStageOpenOnce" && councilQualifies(c, fields[i], year || 1) && !consumed.includes(c.id));
+            if (unusedCharges.length === 0) return null;
+            // Three states: (a) can-open-via-fame → preserved, (b) can't open via fame but
+            // stage room → actionable, (c) no stage room → just informational ("saved for later").
+            if (canOpenStage) {
+              return <div style={{ padding: 10, borderRadius: 10, background: "rgba(34,197,94,0.06)", border: "1px solid #22c55e30", marginBottom: 12 }}>
+                <p style={{ color: "#86efac", fontSize: 12, fontWeight: 700, margin: "0 0 4px" }}>📋 {unusedCharges.length} free stage charge{unusedCharges.length > 1 ? "s" : ""} — preserved for future years</p>
+                <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>You'll open via Fame this year. Your {unusedCharges.map(c => c.name).join(", ")} charge{unusedCharges.length > 1 ? "s stay" : " stays"} ready for any year you can't reach Fame 3.</p>
+              </div>;
+            }
+            if (!stageRoom) {
+              return <div style={{ padding: 10, borderRadius: 10, background: "rgba(34,197,94,0.06)", border: "1px solid #22c55e30", marginBottom: 12 }}>
+                <p style={{ color: "#86efac", fontSize: 12, fontWeight: 700, margin: "0 0 4px" }}>📋 {unusedCharges.length} free stage charge{unusedCharges.length > 1 ? "s" : ""} — saved (no stage room this year)</p>
+                <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>You've already opened 3 stages. Charges from {unusedCharges.map(c => c.name).join(", ")} stay until a future year where you have room.</p>
+              </div>;
+            }
+            // Actionable state: can't open via fame, but charges are available and there's stage room.
             return <div style={{ padding: 12, borderRadius: 10, background: "rgba(34,197,94,0.1)", border: "1px solid #22c55e40", marginBottom: 12 }}>
               <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700, margin: "0 0 6px" }}>📋 Free Stage Charge Available</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 8 }}>One of your councils lets you open a stage regardless of Fame. Charge is single-use per game.</p>
-              {charges.map(c => <button key={c.id} onClick={() => {
-                // Mark this council's charge as consumed and open a stage.
+              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 8 }}>One of your councils lets you open a stage regardless of Fame. Single-use per game.</p>
+              {unusedCharges.map(c => <button key={c.id} onClick={() => {
                 setPlayerData(prev => ({ ...prev, [prp.id]: { ...prev[prp.id], freeStageOpensUsed: [...(prev[prp.id]?.freeStageOpensUsed || []), c.id] } }));
                 addLog(prp.festivalName, `📋 Opened a free stage (Council reward: ${c.name})`);
+                showFloatingBonus(`📋 ${c.name} charge spent!`, "#86efac");
                 acceptNewStage();
               }} style={{ ...bs, fontSize: 12, padding: "8px 14px", marginRight: 6, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e", color: "#86efac" }}>🎤 Open Stage — Free ({c.name})</button>)}
             </div>;
