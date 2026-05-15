@@ -1125,11 +1125,18 @@ export default function Headliners() {
   // Forecast — the microtrend that will replace the currently active one when it's claimed.
   // Visible to all players so they can plan ahead and pre-position for the upcoming trend.
   const [nextMicrotrend, setNextMicrotrend] = useState(null);
-  // Recent-history tracker for microtrend generation. We keep keys of the last several
-  // retired-or-active trends so new ones avoid recently-seen genres/amenities. Without
-  // this, with only 6 genres and "avoid the active" logic, two-back repeats were common
-  // (Pop → Indie → Pop → Indie...). Avoiding the last 3 keeps the rotation feeling random.
-  const [microtrendHistory, setMicrotrendHistory] = useState([]); // array of { kind, genre|amenity }
+  // Microtrend bag — a shuffled deck of all 10 possible trends (6 genres + 4 amenities).
+  // We pop from the top of this bag whenever we need a new trend. When the bag is empty,
+  // we refill it with a fresh shuffle. This GUARANTEES every trend appears once before
+  // any repeat, eliminating the RNG-clustering of the previous "avoid last N" approach.
+  // The only edge case is the bag boundary — to prevent the last trend of one bag matching
+  // the first trend of the next (which would look like an immediate repeat), we swap the
+  // first two items of a freshly refilled bag if the first matches the most-recent trend.
+  const microtrendBagRef = useRef([]);
+  // Legacy history state kept for backward compatibility but no longer drives generation —
+  // the bag handles all variety guarantees now. Left declared to avoid breaking anything
+  // that might reference it (the leaderboard does for the microtrendsCompletedCount stat).
+  const [microtrendHistory, setMicrotrendHistory] = useState([]);
   const microtrendHistoryRef = useRef([]);
   useEffect(() => { microtrendHistoryRef.current = microtrendHistory; }, [microtrendHistory]);
   const [showObjectives, setShowObjectives] = useState(false);
@@ -1452,6 +1459,43 @@ export default function Headliners() {
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("🕵️ Agent", `${pName} deployed agent to claim ${artist.name}`);
     return true;
+  };
+
+  // ─── Microtrend bag (shuffled deck) ───
+  // Builds a fresh 10-item bag containing every genre + every amenity, shuffled.
+  // Each item appears once per bag cycle — strong variety guarantee.
+  const buildMicrotrendBag = () => {
+    const all = [
+      ...ALL_GENRES.map(g => ({ kind: "genre", genre: g })),
+      ...["campsite", "security", "catering", "portaloo"].map(a => ({ kind: "amenity", amenity: a })),
+    ];
+    return shuffle(all);
+  };
+  // Returns true if two trend entries refer to the same genre/amenity.
+  const trendsMatch = (a, b) => {
+    if (!a || !b) return false;
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "genre") return a.genre === b.genre;
+    return a.amenity === b.amenity;
+  };
+  // Pops a fresh trend from the bag, refilling if needed. Optional avoidEntry guards
+  // the bag-boundary case: if the bag was just refilled and the new top happens to
+  // match the most-recently-shown trend, we swap with the next item to prevent the
+  // visual repeat across the cycle boundary.
+  const popMicrotrendFromBag = (avoidEntry) => {
+    if (microtrendBagRef.current.length === 0) {
+      microtrendBagRef.current = buildMicrotrendBag();
+      if (avoidEntry && microtrendBagRef.current.length >= 2) {
+        if (trendsMatch(microtrendBagRef.current[0], avoidEntry)) {
+          const bag = [...microtrendBagRef.current];
+          [bag[0], bag[1]] = [bag[1], bag[0]];
+          microtrendBagRef.current = bag;
+        }
+      }
+    }
+    const top = microtrendBagRef.current[0];
+    microtrendBagRef.current = microtrendBagRef.current.slice(1);
+    return { ...top, claimedBy: null };
   };
 
   // Place agent on the active microtrend — immediate resolution. Grants the placer
@@ -2949,25 +2993,21 @@ export default function Headliners() {
     const poolSize = STAR_DICE_POOL_BY_PLAYER_COUNT[players.length] || 12;
     setDicePool(poolSize);
     setNegStarFacesAvoidedThisYear({});
-    // Init microtrends — active trend now + one forecast for the "coming up next" preview
-    const mt = generateMicrotrends();
+    // Init microtrends — fresh bag, pop the first trend (active) and the second (forecast).
+    // Each game gets a freshly shuffled 10-trend deck. The bag guarantees no repeats until
+    // all 10 trends have been used, and the boundary guard prevents repeats across refills.
+    microtrendBagRef.current = buildMicrotrendBag();
+    const active = popMicrotrendFromBag();
+    const forecast = popMicrotrendFromBag(active); // boundary-safe avoidance
+    const mt = [active];
     setMicrotrends(mt);
-    // Forecast: a peek at what will replace the active microtrend after it's claimed.
-    // Built to avoid duplicating any currently active trend.
-    const usedGenres = new Set(mt.filter(m => m.kind === "genre").map(m => m.genre));
-    const usedAmenities = new Set(mt.filter(m => m.kind === "amenity").map(m => m.amenity));
-    const nextMt = makeMicrotrend(usedGenres, usedAmenities);
-    setNextMicrotrend(nextMt);
-    // Reset rotation history. The active and forecast trends seed it so the FIRST
-    // post-claim trend already avoids both of them and we don't get a same-genre
-    // repeat at the third microtrend of the game.
-    const seedHistory = [];
-    mt.forEach(m => seedHistory.push(m.kind === "amenity" ? { kind: "amenity", amenity: m.amenity } : { kind: "genre", genre: m.genre }));
-    seedHistory.push(nextMt.kind === "amenity" ? { kind: "amenity", amenity: nextMt.amenity } : { kind: "genre", genre: nextMt.genre });
-    setMicrotrendHistory(seedHistory.slice(-3));
-    microtrendHistoryRef.current = seedHistory.slice(-3);
+    setNextMicrotrend(forecast);
+    // Legacy history seed kept for any code that still reads microtrendHistory — empty
+    // since the bag drives everything now.
+    setMicrotrendHistory([]);
+    microtrendHistoryRef.current = [];
     const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
-    addLog("🎵 Microtrend", `${mt.map(describeMt).join(" • ")} (coming up: ${describeMt(nextMt)})`);
+    addLog("🎵 Microtrend", `${mt.map(describeMt).join(" • ")} (coming up: ${describeMt(forecast)})`);
     // Offer first human player their objective choice, auto-assign AI
     let firstHumanId = null;
     const order0 = players.map(p => p.id);
@@ -3814,39 +3854,28 @@ export default function Headliners() {
     // at the end of the claimer's turn — so the previously-shown "Coming Up Next" becomes
     // the new active trend, and a fresh forecast is rolled. This gives players advance
     // notice of what's coming and lets them position to contest the next trend.
-    // Find the trend being retired (the just-claimed one) so we can add it to history.
+    // Find the trend being retired (the just-claimed one) so the boundary-guard inside
+    // popMicrotrendFromBag can prevent it from showing up again immediately if the bag
+    // happens to refill on this pop.
     const justRetired = microtrends.find(mt => mt.claimedBy !== null);
     setMicrotrends(prev => {
       let anyReplaced = false;
       const next = prev.map(mt => {
         if (mt.claimedBy === null) return mt;
         anyReplaced = true;
-        return nextMicrotrend || makeMicrotrend(new Set(), new Set());
+        return nextMicrotrend || popMicrotrendFromBag();
       });
       return anyReplaced ? next : prev;
     });
-    // Generate a new forecast that doesn't repeat recent history. Avoiding only the
-    // immediately-active trend produced visible clustering (Pop→Indie→Pop→Indie…) so
-    // we now exclude the last few trends as well. The history grows by the trend being
-    // retired this turn (the just-claimed one).
+    // Pop a new forecast from the shuffled bag. The bag guarantees every trend appears
+    // once before any repeat, so back-to-back same-genre microtrends are impossible within
+    // a bag cycle. The boundary guard (passing `promoted` as avoidEntry) prevents the
+    // edge case where a bag refill puts a fresh copy of the just-promoted trend at the
+    // top of the new deck.
     if (justRetired) {
       const promoted = nextMicrotrend;
-      // Build the new history: previous history + the just-retired trend, keep last 3.
-      const retiredKey = justRetired.kind === "amenity" ? { kind: "amenity", amenity: justRetired.amenity } : { kind: "genre", genre: justRetired.genre };
-      const updatedHistory = [...microtrendHistoryRef.current, retiredKey].slice(-3);
-      setMicrotrendHistory(updatedHistory);
-      microtrendHistoryRef.current = updatedHistory;
       if (promoted) {
-        // Build "avoid" sets from history + the now-active (promoted) trend.
-        const usedGenres = new Set();
-        const usedAmenities = new Set();
-        updatedHistory.forEach(h => {
-          if (h.kind === "genre") usedGenres.add(h.genre);
-          if (h.kind === "amenity") usedAmenities.add(h.amenity);
-        });
-        if (promoted.kind === "genre") usedGenres.add(promoted.genre);
-        if (promoted.kind === "amenity") usedAmenities.add(promoted.amenity);
-        const fresh = makeMicrotrend(usedGenres, usedAmenities);
+        const fresh = popMicrotrendFromBag(promoted);
         setNextMicrotrend(fresh);
         if (fresh.kind === "genre") {
           addLog("🎵 Forecast", `Next microtrend: book a ${fresh.genre} artist`);
