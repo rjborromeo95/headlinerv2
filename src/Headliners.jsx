@@ -1420,6 +1420,29 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   const hasAgent = (pid) => !agentPlacements[pid] && !agentExhausted[pid]; // available if not deployed AND not exhausted this year
   const getAgentPlacement = (pid) => agentPlacements[pid] || null;
+
+  // Total agent actions a player has remaining this year. Accounts for:
+  //   - 1 base agent action per year
+  //   - +N from qualifying "agents"-reward councils (council.reward.perYear[yIdx])
+  //   - Minus actions already consumed: agentBonusUsesUsed[pid] counts non-exhausting
+  //     uses; agentExhausted[pid] adds the final use that took the agent out.
+  // Returns 0 when the agent is exhausted. Includes any currently-deployed action
+  // (since its consumption hasn't been recorded yet) — so the counter goes from 2 → 1
+  // only when the deployed agent actually resolves.
+  const getAgentActionsLeft = (pid) => {
+    const pd = playerData[pid] || {};
+    const y = year || 1;
+    const yIdx = Math.max(0, Math.min(3, y - 1));
+    let totalBonusCharges = 0;
+    (pd.councils || []).forEach((c, i) => {
+      if (c?.reward?.type === "agents" && councilQualifies(c, (pd.fields || [])[i], y)) {
+        totalBonusCharges += c.reward.perYear?.[yIdx] || 0;
+      }
+    });
+    const totalCharges = 1 + totalBonusCharges;
+    const used = (agentBonusUsesUsed[pid] || 0) + (agentExhausted[pid] ? 1 : 0);
+    return Math.max(0, totalCharges - used);
+  };
   
   // Place agent on pool artist — start 2-step booking claim
   const placeAgentOnArtist = (pid, poolIdx) => {
@@ -1501,11 +1524,13 @@ export default function Headliners() {
     });
     const usedSoFar = agentBonusUsesUsed[pid] || 0;
     if (usedSoFar < totalBonusCharges) {
-      // Use a bonus charge — agent returns instead of exhausting
+      // Use a bonus charge — agent is freed back to the player instead of being exhausted.
+      // Wording in player-facing strings: "ready to redeploy" not "returns", since "returns"
+      // is ambiguous (could read as "returns home, done for the year").
       setAgentBonusUsesUsed(prev => ({ ...prev, [pid]: usedSoFar + 1 }));
       setAgentPlacements(prev => { const n = { ...prev }; delete n[pid]; return n; });
-      addLog("🕵️ Agent", `${pName}: agent returns (bonus charge ${usedSoFar + 1}/${totalBonusCharges} used — Council)`);
-      showFloatingBonus("🕵️ Agent returns!", "#86efac");
+      addLog("🕵️ Agent", `${pName}: agent is back, ready to redeploy this year (Council bonus charge ${usedSoFar + 1}/${totalBonusCharges})`);
+      showFloatingBonus("🕵️ Agent ready again!", "#86efac");
       return;
     }
 
@@ -1526,9 +1551,9 @@ export default function Headliners() {
     // Find the artist in the pool by name (index may have shifted)
     const poolIdx = artistPool.findIndex(a => a.name === placement.artistName);
     if (poolIdx < 0) {
-      // Artist no longer in pool — agent is redundant
+      // Artist no longer in pool — agent comes back unused. Available to redeploy this year.
       returnAgent(pid);
-      addLog("🕵️ Agent", `Artist ${placement.artistName} no longer available — agent returned`);
+      addLog("🕵️ Agent", `Artist ${placement.artistName} no longer available — agent is back, ready to redeploy this year`);
       return null;
     }
     
@@ -4745,6 +4770,11 @@ export default function Headliners() {
   const canOpenStage = currentPreRoundPlayer && (playerData[currentPreRoundPlayer.id]?.fame || 0) >= 3 && (playerData[currentPreRoundPlayer.id]?.stages || []).length < 3;
 
   const getPreRoundDrawCount = (pd) => {
+    // Respect the lobby toggle. If pre-round draws are off, no free draws — even though
+    // the player has stages. Previously this returned stages.length unconditionally, so
+    // the pre-round screen kept showing a "Draw N free artists!" message in games that
+    // had the toggle off.
+    if (!preRoundArtistDrawsRef.current) return 0;
     return (pd?.stages || []).length; // 1 draw per stage
   };
 
@@ -6139,7 +6169,7 @@ export default function Headliners() {
               }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8", display: "flex", gap: 8 }}>
-                  <span>🎟️{pd.tickets||0}</span><span>⭐{pd.vp||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}
+                  <span>🎟️{pd.tickets||0}</span><span>⭐{pd.vp||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
               </div>); })}
           </div>
@@ -6322,7 +6352,7 @@ export default function Headliners() {
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
                 {undoSnapshot && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
-                {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free)</button>}
+                {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free, {getAgentActionsLeft(currentPlayerId)} left)</button>}
                 <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={bd}>End Turn →</button>
               </div>
             </div>}
@@ -6330,7 +6360,7 @@ export default function Headliners() {
             {!actionTaken && !turnAction && !noTurnsLeft && <div>
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                 <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
-                {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free)</button>}
+                {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free, {getAgentActionsLeft(currentPlayerId)} left)</button>}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
               </div>
             </div>}
