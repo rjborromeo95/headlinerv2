@@ -70,23 +70,30 @@ const ALL_COUNCILS = [
   { id: "foodCourts", name: "Food Courts", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "shepherds", name: "Shepherds", condition: { type: "comparative", greater: "campsite", lesser: "security" }, reward: { type: "refreshPool" } },
-  { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  // v134 xlsx rewrite: Good For Business now grants persistent "free special guests" (no
+  // amenity requirement, no effect application, tickets still counted) rather than +N draws.
+  { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "freeSpecialGuests" } },
   { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "agents", perYear: [1,1,1,2] } },
   { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
-  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  // v134: Official Partner now triggers on each artist play (draw one from deck).
+  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,1,2,2] }, reward: { type: "drawOnPlay" } },
   { id: "staffArea", name: "Staff Area", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,1,2,2] }, reward: { type: "artistOnMicrotrend" } },
   { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdSingle", amenity: "security", perYear: [2,2,3,3] }, reward: { type: "refreshPool" } },
   { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdSingle", amenity: "catering", perYear: [2,2,3,3] }, reward: { type: "artistOnMicrotrend" } },
-  { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  // v134: Liquid Lunches now triggers on each artist play.
+  { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawOnPlay" } },
   { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "wellStaffed", name: "Well Staffed", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
   { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "agents", perYear: [1,1,1,2] } },
-  { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  // v134: VIPee also switched to freeSpecialGuests.
+  { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "freeSpecialGuests" } },
   { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "refreshDice" } },
   { id: "funkyFood", name: "Funky Food", condition: { type: "comparative", greater: "portaloo", lesser: "catering" }, reward: { type: "artistOnMicrotrend" } },
-  { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawArtists", perYear: [1,1,2,2] } },
+  // v134: Number One Fans switched to drawOnPlay.
+  { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawOnPlay" } },
   { id: "wellEquipped", name: "Well Equipped", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
-  { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "drawSpecialGuests", perYear: [1,2,3,4] } },
+  // v134: Plenty For Everyone switched to freeSpecialGuests.
+  { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "freeSpecialGuests" } },
   { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdSingle", amenity: "campsite", perYear: [1,1,2,2] }, reward: { type: "refreshDice" } },
   { id: "spoiltForChoice", name: "Spoilt for Choice", condition: { type: "comparative", greater: "catering", lesser: "campsite" }, reward: { type: "refreshPool" } },
   { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [2,2,3,3] }, reward: { type: "refreshDice" } },
@@ -112,11 +119,13 @@ function formatCouncilReward(c) {
   if (r.type === "starDice") return `+${r.perYear.join("/")} 🎲 Star Dice`;
   if (r.type === "refreshPool") return `🔄 Refresh artist pool / turn`;
   if (r.type === "refreshDice") return `🎲 Refresh amenity dice / turn`;
-  if (r.type === "drawArtists") return `Draw +${r.perYear.join("/")} artist(s) when drawing`;
-  if (r.type === "drawSpecialGuests") return `Draw +${r.perYear.join("/")} special guest(s)`;
+  if (r.type === "drawOnPlay") return `Draw an artist when you play an artist`;
+  if (r.type === "drawArtists") return `Draw +${r.perYear.join("/")} artist(s) when drawing`; // legacy
+  if (r.type === "freeSpecialGuests") return `Special guests are free (no effects, tickets counted)`;
+  if (r.type === "drawSpecialGuests") return `Draw +${r.perYear.join("/")} special guest(s)`; // legacy
   if (r.type === "agents") return `+${r.perYear.join("/")} 🕵️ Agent use(s) / year`;
   if (r.type === "agentFame") return `+1 🔥 Fame per successful 🕵️ Agent action`;
-  if (r.type === "artistOnMicrotrend") return `Draw an artist when you complete a Microtrend`;
+  if (r.type === "artistOnMicrotrend") return `Draw an artist from the pool or deck when you complete a Microtrend`;
   if (r.type === "freeStageOpenOnce") return `Open a free stage at year end (once / game)`;
   return "?";
 }
@@ -372,6 +381,85 @@ function getAvailableStages(pd) {
 // ═══════════════════════════════════════════════════════════
 // COMPONENTS
 // ═══════════════════════════════════════════════════════════
+// v132: Ticket-count hover tooltip. Shows a categorized breakdown of every ticket the
+// player currently holds — campsite bonus, per-artist contributions on stages, active
+// council rewards, and every logged effect/objective/roll/microtrend gain from the ledger.
+// Rendered as a fixed-position tooltip anchored to the cursor so it works cleanly in
+// both the desktop and mobile stat rows without overflow-clipping problems.
+function TicketBreakdown({ pd, pid, ticketsLog, ALL_GENRES, year, councilQualifies, children, style }) {
+  const [hover, setHover] = React.useState(false);
+  const [pos, setPos] = React.useState({ x: 0, y: 0 });
+  if (!pd) return <span style={style}>{children}</span>;
+
+  const am = pd.amenities || {};
+  const y = year || 1;
+  const yIdx = Math.max(0, Math.min(3, y - 1));
+  const rows = [];
+  const campsites = (am.campsite || 0) * 2;
+  if (campsites > 0) rows.push({ label: "⛺ Campsites", amount: campsites });
+  (pd.stageArtists || []).forEach(sa => sa.forEach(a => {
+    const contrib = (a.tickets || 0) + (a.vp || 0);
+    if (contrib > 0) rows.push({ label: `🎤 ${a.name}`, amount: contrib });
+  }));
+  (pd.councils || []).forEach((c, i) => {
+    if (!c || c.reward?.type !== "tickets") return;
+    if (!councilQualifies(c, (pd.fields || [])[i], y)) return;
+    const contrib = c.reward.perYear?.[yIdx] || 0;
+    if (contrib !== 0) rows.push({ label: `📋 ${c.name}`, amount: contrib });
+  });
+  const log = (ticketsLog && ticketsLog[pid]) || [];
+  const aggregated = {};
+  log.forEach(e => { aggregated[e.source] = (aggregated[e.source] || 0) + e.amount; });
+  const effectRows = Object.entries(aggregated)
+    .filter(([_, amount]) => amount !== 0)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const total = rows.reduce((s, r) => s + r.amount, 0) + effectRows.reduce((s, r) => s + r[1], 0);
+
+  return (
+    <span
+      onMouseEnter={e => { setPos({ x: e.clientX, y: e.clientY }); setHover(true); }}
+      onMouseLeave={() => setHover(false)}
+      onMouseMove={e => setPos({ x: e.clientX, y: e.clientY })}
+      style={{ ...style, cursor: "help", position: "relative" }}
+    >
+      {children}
+      {hover && (rows.length > 0 || effectRows.length > 0) && (
+        <div style={{
+          position: "fixed", left: Math.min(pos.x + 14, (typeof window !== "undefined" ? window.innerWidth - 320 : 800)), top: Math.min(pos.y + 14, (typeof window !== "undefined" ? window.innerHeight - 400 : 500)),
+          zIndex: 9999, minWidth: 260, maxWidth: 320, maxHeight: 400, overflowY: "auto",
+          padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.98)", border: "2px solid #fbbf24",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.6)", color: "#e2e8f0", fontSize: 11, fontWeight: 400,
+          textAlign: "left", pointerEvents: "none",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid rgba(251,191,36,0.3)" }}>
+            🎟️ Ticket breakdown
+          </div>
+          {rows.length > 0 && rows.map((r, i) => (
+            <div key={"r"+i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}>
+              <span style={{ color: "#e2e8f0" }}>{r.label}</span>
+              <span style={{ color: r.amount >= 0 ? "#86efac" : "#f87171", fontWeight: 600, whiteSpace: "nowrap" }}>{r.amount >= 0 ? "+" : ""}{r.amount}</span>
+            </div>
+          ))}
+          {effectRows.length > 0 && <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#8b5cf6", marginTop: 8, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Effects & bonuses</div>
+            {effectRows.map(([source, amount], i) => (
+              <div key={"e"+i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}>
+                <span style={{ color: "#c4b5fd" }}>{source}</span>
+                <span style={{ color: amount >= 0 ? "#86efac" : "#f87171", fontWeight: 600, whiteSpace: "nowrap" }}>{amount >= 0 ? "+" : ""}{amount}</span>
+              </div>
+            ))}
+          </>}
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid rgba(251,191,36,0.3)", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 12 }}>
+            <span style={{ color: "#fbbf24" }}>Total tickets</span>
+            <span style={{ color: "#fbbf24" }}>{pd.tickets || 0}</span>
+          </div>
+          {Math.abs(total - (pd.tickets || 0)) > 0 && <div style={{ marginTop: 4, fontSize: 9, color: "#64748b", fontStyle: "italic" }}>(Sum {total} may differ from total — ledger doesn't retro-track pre-v132 games.)</div>}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable, genreMatchGlow }) {
   const gs = getGenres(artist.genre);
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
@@ -771,10 +859,14 @@ function scoreCouncilForKeep(council) {
     tickets: 18,
     starDice: 22,
     refreshPool: 10,
-    drawArtists: 9,
-    drawSpecialGuests: 13,
-    agents: 11,      // extra agent uses — useful for snatching pool artists
-    agentFame: 10,   // +1 fame each agent success — niche but stacks
+    drawArtists: 9,        // legacy — no councils use this in v134
+    drawOnPlay: 13,        // v134: fires per artist played, decent tempo boost
+    drawSpecialGuests: 13, // legacy — no councils use this in v134
+    freeSpecialGuests: 15, // v134: guaranteed free guest placement is strong late-game
+    agents: 11,
+    agentFame: 10,
+    artistOnMicrotrend: 12,
+    refreshDice: 10,
   })[reward.type] || 0;
   let difficultyPenalty = 0;
   if (cond.type === "thresholdFixed") difficultyPenalty = cond.count === 1 ? 0 : 2;
@@ -1146,6 +1238,37 @@ export default function Headliners() {
   // under tempt mode — this array is authoritative. Standard mode ignores this state.
   //   Shape: { pid: Array<{ type: "pool", poolIdx, artistName, placedTurn }> }
   const [temptPlacements, setTemptPlacements] = useState({});
+  // v132: ledger of ticket-gain sources per player. Every time bonusTickets increases,
+  // an entry is appended here for the hover breakdown UI. Losses (negative deltas) are
+  // logged too so the sum reconciles with the actual bonusTickets value.
+  //   Shape: { pid: Array<{ source: string, amount: number, year: number }> }
+  const [ticketsLog, setTicketsLog] = useState({});
+  const logTicketGain = (pid, amount, source) => {
+    if (!amount || pid == null) return;
+    setTicketsLog(prev => ({
+      ...prev,
+      [pid]: [...(prev[pid] || []), { source, amount, year: yearRef.current || year || 1 }]
+    }));
+  };
+  // v132: last-action tracking — small "what did player X do last?" strings shown under
+  // each player's stat row for spectators. Updated on each of the three main action types
+  // (book artist, build amenity, tempt). Cleared on new year.
+  //   Shape: { pid: string }
+  const [lastAction, setLastAction] = useState({});
+  const setLastActionFor = (pid, text) => setLastAction(prev => ({ ...prev, [pid]: text }));
+  // v133: fame-gain popup queue. Every fame gain enqueues an entry the player must
+  // click through — a deliberate friction so the impact of gaining Fame is felt viscerally
+  // instead of scrolling past in the log. Only queues for human players (AI gains are
+  // silent to avoid making the game a click-through slog).
+  //   Shape: Array<{ pid: number, amount: number, source: string, ts: number }>
+  const [fameGainQueue, setFameGainQueue] = useState([]);
+  const logFameGain = (pid, amount, source) => {
+    if (!amount || amount <= 0 || pid == null) return;
+    // Skip queueing for AI players — they don't need to click through their own popups.
+    const player = players.find(pl => pl.id === pid);
+    if (!player || player.isAI) return;
+    setFameGainQueue(prev => [...prev, { pid, amount, source, ts: Date.now() }]);
+  };
   // Tracks which players have successfully used their agent this year (exhausted until next year)
   const [agentExhausted, setAgentExhausted] = useState({});
   // Tracks how many bonus agent uses each player has consumed this year (granted by "+N Agents" councils).
@@ -1625,6 +1748,7 @@ export default function Headliners() {
       const pName = players.find(p => p.id === pid)?.festivalName || "?";
       addLog("💫 Tempt", `${pName} spent 1 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
       showFloatingBonus(`💫 Tempting ${artist.name}`, "#fbbf24");
+      setLastActionFor(pid, `is tempting ${artist.name}`);
       return true;
     }
     setAgentPlacements(prev => ({ ...prev, [pid]: { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber } }));
@@ -1641,6 +1765,7 @@ export default function Headliners() {
     if (tempts.length === 0) return false;
     const removed = tempts[tempts.length - 1];
     setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(0, -1) }));
+    // No logFameGain here — undoing is a refund, not a celebration.
     setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 1 🔥 Fame refunded`);
@@ -1724,6 +1849,8 @@ export default function Headliners() {
     // Mark microtrend claimed; end-of-turn replacement will swap in the forecast.
     setMicrotrends(prev => prev.map(mt => mt === active ? { ...mt, claimedBy: pid } : mt));
     // Apply rewards: +1 Fame, +1 VP, increment count.
+    logTicketGain(pid, 1, "Microtrend claim (agent)");
+    logFameGain(pid, 1, "Matching a Microtrend");
     setPlayerData(p => ({ ...p, [pid]: {
       ...p[pid],
       baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
@@ -1771,6 +1898,7 @@ export default function Headliners() {
       }
     });
     if (agentFameGain > 0) {
+      logFameGain(pid, agentFameGain, `Agent effect: ${artist.name}`);
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + agentFameGain) } }));
       addLog("🕵️ Agent", `${pName}: +${agentFameGain} 🔥 Fame from successful agent action (Council reward)`);
       showFloatingBonus(`+${agentFameGain} 🔥 Fame!`, "#fbbf24");
@@ -1839,6 +1967,7 @@ export default function Headliners() {
       if (poolIdx < 0) {
         // Artist no longer in pool — refund the fame this tempt cost and drop the placement.
         setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
+        // No logFameGain — refunds shouldn't feel like celebrations.
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
         addLog("💫 Tempt", `${placement.artistName} no longer available — 1 🔥 Fame refunded`);
         return null;
@@ -1968,7 +2097,13 @@ export default function Headliners() {
       ? (openStages.length > 0 && canBookArtistAnywhere(artist, winPd))
       : (openStages.length > 0);
     if (canPlayNow) {
-      bookArtistToStage(artist, openStages[0], winnerId, true);
+      // v132: prefer a genre-match-eligible headliner stage when one exists, so the
+      // artist's genreMatchEffect fires on contested-winner bookings just like it does
+      // on normal ones. Falls back to the first open stage if none apply.
+      const genreStage = openStages.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
+      const chosenStage = genreStage != null ? genreStage : openStages[0];
+      const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
+      bookArtistToStage(artist, chosenStage, winnerId, true, viaGenre);
     } else {
       setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...p[winnerId].hand, artist] } }));
       if (isTempt) {
@@ -1980,6 +2115,7 @@ export default function Headliners() {
       exhaustAgent(winnerId);
       contestantData.filter(c => c.pid !== winnerId).forEach(c => returnAgent(c.pid));
       // Buzz reward: +1 Fame to every contestant (winner and losers alike).
+      contestantData.forEach(c => logFameGain(c.pid, 1, "Industry buzz (contest)"));
       setPlayerData(p => {
         const next = { ...p };
         contestantData.forEach(c => {
@@ -2000,6 +2136,7 @@ export default function Headliners() {
         });
         return next;
       });
+      // Refund only — no popup (refunds aren't celebrations).
       setPlayerData(p => {
         const next = { ...p };
         contestantData.forEach(c => {
@@ -2024,6 +2161,7 @@ export default function Headliners() {
     if (amenityType !== "security") return;
     const pd = playerData[pid];
     if (pd && pd.vpPerSecurity > 0) {
+      logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus");
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + p[pid].vpPerSecurity } }));
       addLog("Effect", `+${pd.vpPerSecurity} 🎟️ tickets from security placement!`);
       showFloatingBonus(`+${pd.vpPerSecurity} ⭐ (security)`, "#c4b5fd");
@@ -2344,8 +2482,9 @@ export default function Headliners() {
           next[oi] = { ...next[oi], claimed1st: pid };
           return next;
         });
+        logTicketGain(pid, 5, "Lineup objective (1st place)");
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
-        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +5 VP!`);
+        addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +5 tickets!`);
         showFloatingBonus("🎯 +5 🎟️!", "#fbbf24"); sfx.headliner();
       } else if (lo.claimed2nd === null && lo.claimed1st !== pid) {
         setLineupObjectives(prev => {
@@ -2353,8 +2492,9 @@ export default function Headliners() {
           next[oi] = { ...next[oi], claimed2nd: pid };
           return next;
         });
+        logTicketGain(pid, 5, "Lineup objective (1st place)");
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 3 } }));
-        addLog("🎯 LINEUP OBJECTIVE", `${pName} SECOND to match ${lo.genres.join("+")} → +3 VP!`);
+        addLog("🎯 LINEUP OBJECTIVE", `${pName} SECOND to match ${lo.genres.join("+")} → +3 tickets!`);
         showFloatingBonus("🎯 +3 🎟️!", "#c4b5fd"); sfx.headliner();
       }
       return; // only match one objective per lineup
@@ -2423,6 +2563,7 @@ export default function Headliners() {
       const { delta, times } = insteadCases[artist.name];
       const bonus = delta * times;
       if (bonus > 0) {
+        logTicketGain(pid, bonus, `Genre-match: ${artist.name}`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + bonus } }));
         addLog("🎸 Genre-Match Bonus", `${festival}: net +${bonus} 🎟️ from ${artist.name}'s replacement effect`);
       }
@@ -2443,6 +2584,7 @@ export default function Headliners() {
     const fameMatch = gl.match(/\+(\d+)\s*fame/);
     if (fameMatch) {
       const amount = parseInt(fameMatch[1]);
+      logFameGain(pid, amount, `Genre-match: ${artist.name}`);
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
     }
     // +N ticket sales (plain flat; only match if not "per ..." — those get their own handler)
@@ -2454,9 +2596,11 @@ export default function Headliners() {
       // "Fame gained this year" — approximate with current baseFame (v1 approximation).
       const fameFactor = gl.includes("gained") ? (pd.baseFame || 0) : (pd.fame || 0);
       const bonus = per * fameFactor;
+      logTicketGain(pid, bonus, `Genre-match: ${artist.name} (per Fame)`);
       if (bonus > 0) setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + bonus } }));
     } else if (flatTix) {
       const amount = parseInt(flatTix[1]);
+      logTicketGain(pid, bonus, `Genre-match: ${artist.name} (per Fame)`);
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
     }
     // Place an amenity of your choice — auto-pick best amenity via AI heuristic
@@ -2507,6 +2651,7 @@ export default function Headliners() {
           addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🎟️ tickets queued for Year End (agent booking)`);
           showFloatingBonus(`+${amount} ⭐ at Year End!`, "#c4b5fd");
         } else {
+          logTicketGain(pid, amount, `Agent: ${artist.name}`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
           addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🎟️ tickets (agent booking)`);
           showFloatingBonus(`+${amount} ⭐ Agent!`, "#c4b5fd");
@@ -2516,6 +2661,7 @@ export default function Headliners() {
       const fameMatch = ae.match(/\+(\d+)\s*Fame/i);
       if (fameMatch) {
         const amount = parseInt(fameMatch[1]);
+        logFameGain(pid, amount, `Genre-match: ${artist.name}`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
         addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🔥 Fame (agent booking)`);
         showFloatingBonus(`+${amount} 🔥 Agent!`, "#f97316");
@@ -2572,6 +2718,7 @@ export default function Headliners() {
     for (let t = 0; t < times; t++) {
       // === Fame effects ===
       if (el.includes("+fame") || (el.includes("+1 fame") && !el.includes("fame if"))) {
+        logFameGain(pid, 1, "Effect");
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
         addLog("Effect", `${artist.name}: +1 Fame`);
         showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
@@ -2584,6 +2731,7 @@ export default function Headliners() {
           const pd = playerData[pid];
           const count = (pd.stageArtists || []).flat().filter(a => getGenres(a.genre).includes(targetGenre)).length;
           if (count >= 2) {
+            logFameGain(pid, 1, `${artist.name} effect`);
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
             addLog("Effect", `${artist.name}: +1 Fame (2+ ${targetGenre} artists!)`);
             showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
@@ -2594,11 +2742,13 @@ export default function Headliners() {
       }
       // === VP effects ===
       if ((el.includes("+1 vp") || el.includes("+1vp")) && !el.includes("vp /") && !el.includes("vp per") && !el.includes("vp if")) {
+        logTicketGain(pid, 0  /* TODO: fill in amount */, "Effect (uncategorized)");
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
         addLog("Effect", `${artist.name}: +1 🎟️ ticket`); showFloatingBonus("+1 ⭐", "#c4b5fd");
       }
       if (el.includes("gain 1vp per existing campsite")) {
         const camps = (playerData[pid]?.amenities?.campsite) || 0;
+        logTicketGain(pid, camps, `${artist.name} effect (per campsite)`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + camps } }));
         addLog("Effect", `${artist.name}: +${camps} 🎟️ tickets (1 per campsite)`);
       }
@@ -2610,6 +2760,7 @@ export default function Headliners() {
           const stageArtists = (playerData[pid]?.stageArtists || [])[stageIdx] || [];
           const otherCount = stageArtists.filter(a => a.name !== artist.name && getGenres(a.genre).includes(targetGenre)).length;
           if (otherCount > 0) {
+            logTicketGain(pid, otherCount, `${artist.name} effect (genre synergy)`);
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + otherCount } }));
             addLog("Effect", `${artist.name}: +${otherCount} 🎟️ tickets (${otherCount} other ${targetGenre} on stage)`);
             showFloatingBonus(`+${otherCount} ⭐`, "#c4b5fd");
@@ -2620,6 +2771,7 @@ export default function Headliners() {
       if (el.includes("vp per other artist on all")) {
         const totalOthers = (playerData[pid]?.stageArtists || []).flat().filter(a => a.name !== artist.name).length;
         if (totalOthers > 0) {
+          logTicketGain(pid, totalOthers, `${artist.name} effect (per other artist)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + totalOthers } }));
           addLog("Effect", `${artist.name}: +${totalOthers} 🎟️ tickets (${totalOthers} other artists on stages)`);
           showFloatingBonus(`+${totalOthers} ⭐`, "#c4b5fd");
@@ -2658,7 +2810,7 @@ export default function Headliners() {
       if (el.includes("roll all amenity dice") && el.includes("gain 1 fame if a fame shows")) {
         triggerDiceRoll(5, pid, artist.name,
           (results) => { const hasFame = results.some(d => d === "fame"); return hasFame ? "🔥 Fame shown! +1 Fame" : "No fame shown"; },
-          (results) => { if (results.some(d => d === "fame")) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+          (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
       // "-2 VP. Draw an artist objective" (Missy Elliott) — append to player's objectives list
@@ -2684,6 +2836,7 @@ export default function Headliners() {
         const vpLossMatch = eff.match(/-(\d+)\s*(?:VP|tickets?)/i);
         if (vpLossMatch) {
           const vpLoss = parseInt(vpLossMatch[1]);
+          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) - vpLoss) } }));
           addLog("Effect", `${artist.name}: -${vpLoss} 🎟️ tickets`);
           showFloatingBonus(`-${vpLoss} ⭐`, "#ef4444");
@@ -2694,6 +2847,7 @@ export default function Headliners() {
         const sellMatch = eff.match(/[Ss]ell\s+(\d+)\s+tickets?/i);
         if (sellMatch) {
           const tix = parseInt(sellMatch[1]);
+          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
           addLog("Effect", `${artist.name}: +${tix} ticket sales`);
           showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
@@ -2705,6 +2859,7 @@ export default function Headliners() {
         const amCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
         const tix = Math.floor(amCount / 2);
         if (tix > 0) {
+          logTicketGain(pid, tix, `${artist.name} effect (per 2 amenities)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
           addLog("Effect", `${artist.name}: +${tix} tickets (1 per 2 amenities)`);
           showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
@@ -2718,6 +2873,7 @@ export default function Headliners() {
           const booked = (pd.stageArtists || []).flat();
           const count = booked.filter(a => getGenres(a.genre).includes(genreMatch[1]) || getGenres(a.genre).includes(genreMatch[2])).length;
           if (count >= 2) {
+            logFameGain(pid, 1, `${artist.name} effect`);
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
             addLog("Effect", `${artist.name}: +1 Fame (2+ ${genreMatch[1]}/${genreMatch[2]} artists!)`);
             showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
@@ -2731,6 +2887,7 @@ export default function Headliners() {
         const forFameMatch = eff.match(/for (\d+) Fame/i);
         if (forFameMatch && el.includes("-") && el.includes("vp")) {
           const fameGain = parseInt(forFameMatch[1]);
+          logFameGain(pid, 1, "Effect");
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain) } }));
           addLog("Effect", `${artist.name}: +${fameGain} Fame`);
           showFloatingBonus(`+${fameGain} 🔥`, "#f97316"); sfx.gainFame();
@@ -2739,30 +2896,52 @@ export default function Headliners() {
       // "Roll 1 amenity dice and gain 1 Fame for each Fame shown" (Loyle Carner)
       if (el.includes("roll 1 amenity dice") || el.includes("roll 1 amenity die")) {
         triggerDiceRoll(1, pid, artist.name, "+1 Fame per Fame shown",
-          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logFameGain(pid, fameCount, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
       // === Ticket effects ===
       if (el.includes("+4 ticket sales")) {
+        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
         addLog("Effect", `${artist.name}: +4 ticket sales`); showFloatingBonus("+4 🎟️", "#fbbf24");
       }
       if (el.includes("+5 ticket sales")) {
+        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
         addLog("Effect", `${artist.name}: +5 ticket sales`); showFloatingBonus("+5 🎟️", "#fbbf24");
       }
       // "+1 ticket sale for all players"
       if (el.includes("ticket sale for all players") || el.includes("ticket sales for all players")) {
         players.forEach(p => {
+          logTicketGain(p.id, 1, `${artist.name} effect (all players)`);
           setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: (prev[p.id].bonusTickets || 0) + 1 } }));
         });
         addLog("Effect", `${artist.name}: +1 ticket for ALL players!`);
         showFloatingBonus("+1 🎟️ all!", "#fbbf24");
       }
+      // "Gain an artist from the pool who's Fame cost is lower than this artist"
+      // (Sly & The Family Stone, Teena Marie). Auto-picks the highest-value eligible artist
+      // — pool card gets moved to the player's hand. No effect if pool has no eligible artists.
+      if (el.includes("artist from the pool who") || el.includes("pool who's fame cost is lower") || el.includes("pool whose fame cost is lower")) {
+        const eligible = artistPool
+          .filter(a => (a.fame || 0) < (artist.fame || 0))
+          .map(a => ({ a, score: (a.tickets || 0) + (a.vp || 0) }))
+          .sort((x, y) => y.score - x.score);
+        if (eligible.length > 0) {
+          const chosen = eligible[0].a;
+          setArtistPool(prev => { const np = [...prev]; const idx = np.findIndex(a => a.name === chosen.name); if (idx >= 0) np.splice(idx, 1); return np; });
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
+          addLog("Effect", `${artist.name}: gained ${chosen.name} from the pool (lower Fame)`);
+          showFloatingBonus(`🎁 ${chosen.name} to hand`, "#c4b5fd");
+        } else {
+          addLog("Effect", `${artist.name}: no eligible lower-Fame artist in pool`);
+        }
+      }
       // "+1 ticket sale / Current Fame Level"
       if (el.includes("ticket sale / current fame") || el.includes("ticket / current fame")) {
         const fame = playerData[pid]?.fame || 0;
         if (fame > 0) {
+          logTicketGain(pid, fame, `${artist.name} effect (per Fame Level)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + fame } }));
           addLog("Effect", `${artist.name}: +${fame} tickets (1 per Fame level)`);
           showFloatingBonus(`+${fame} 🎟️`, "#fbbf24");
@@ -2772,6 +2951,7 @@ export default function Headliners() {
       if (el.includes("ticket / negative event this year") || el.includes("ticket / negative event") || el.includes("ticket / negative star")) {
         const avoidedCount = negStarFacesAvoidedThisYear[pid] || 0;
         if (avoidedCount > 0) {
+          logTicketGain(pid, avoidedCount, `${artist.name} effect (avoided stars)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + avoidedCount } }));
           addLog("Effect", `${artist.name}: +${avoidedCount} tickets (1 per neg. star avoided)`);
           showFloatingBonus(`+${avoidedCount} 🎟️`, "#fbbf24");
@@ -2784,6 +2964,7 @@ export default function Headliners() {
         // Total amenities the player has built (no longer spatial — flat sum)
         const adjCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
         if (adjCount > 0) {
+          logTicketGain(pid, adjCount, `${artist.name} effect (per amenity)`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + adjCount } }));
           addLog("Effect", `${artist.name}: +${adjCount} tickets (per amenity)`);
           showFloatingBonus(`+${adjCount} 🎟️`, "#fbbf24");
@@ -2874,22 +3055,22 @@ export default function Headliners() {
         if (el.includes("each fame") && el.includes("ticket")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const fameCount = results.filter(d => d === "fame").length; return `🔥 ${fameCount} Fame dice = +${fameCount * 2} tickets`; },
-            (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + fameCount * 2 } })); showFloatingBonus(`+${fameCount * 2} 🎟️`, "#fbbf24"); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logTicketGain(pid, fameCount * 2, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + fameCount * 2 } })); showFloatingBonus(`+${fameCount * 2} 🎟️`, "#fbbf24"); } setTimeout(() => recalcTickets(), 50); }
           );
         } else if (el.includes("most common") || el.includes("best streak")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); return `Best streak: ${best} = +${best} VP`; },
-            (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); if (best > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + best } })); showFloatingBonus(`+${best} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); if (best > 0) { logTicketGain(pid, best, `${artist.name} dice roll (streak)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + best } })); showFloatingBonus(`+${best} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
           );
         } else if (el.includes("unique") && el.includes("ticket")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const unique = new Set(results).size; return `${unique} unique results = +${unique} tickets`; },
-            (results) => { const unique = new Set(results).size; if (unique > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + unique } })); showFloatingBonus(`+${unique} 🎟️`, "#fbbf24"); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const unique = new Set(results).size; if (unique > 0) { logTicketGain(pid, unique, `${artist.name} dice roll (unique)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + unique } })); showFloatingBonus(`+${unique} 🎟️`, "#fbbf24"); } setTimeout(() => recalcTickets(), 50); }
           );
         } else if (el.includes("unique") && el.includes("vp")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const unique = new Set(results).size; return `${unique} unique results = +${unique} VP`; },
-            (results) => { const unique = new Set(results).size; if (unique > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + unique } })); showFloatingBonus(`+${unique} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const unique = new Set(results).size; if (unique > 0) { logTicketGain(pid, unique, `${artist.name} dice roll (unique)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + unique } })); showFloatingBonus(`+${unique} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
           );
         } else {
           // Generic roll — just show results
@@ -2948,7 +3129,12 @@ export default function Headliners() {
         showFloatingBonus("+5 🎟️ First Lineup!", "#4ade80");
       }
       if (isFullLineup) {
-        addLog("🎤 Full Lineup", `${players.find(p => p.id === pid)?.festivalName} completed a lineup!`);
+        // Restored: completing a 3-artist lineup grants +1 Fame. Documented behavior in the
+        // How-To-Play was intact but the mechanic itself had been lost in a refactor, meaning
+        // players couldn't reach the Fame threshold to open a second stage as intended.
+        pd.baseFame = Math.min(FAME_MAX, (pd.baseFame || 0) + 1);
+        addLog("🎤 Full Lineup", `${players.find(p => p.id === pid)?.festivalName} completed a lineup! +1 🔥 Fame`);
+        setTimeout(() => showFloatingBonus("+1 🔥 Full Lineup!", "#f97316"), 100);
       }
       return { ...prev, [pid]: pd };
     });
@@ -2984,11 +3170,28 @@ export default function Headliners() {
       setTimeout(() => applyGenreMatchEffect(artist, pid), 300);
     }
 
+    // v134: drawOnPlay council trigger — "When you play an artist, draw an artist."
+    // Fires once per qualifying council (up to 3 possible: Official Partner, Liquid Lunches,
+    // Number One Fans). Draws from the deck; artists go straight to the player's hand.
+    (() => {
+      const currentPd = playerDataRef.current?.[pid] || playerData[pid] || {};
+      const y = yearRef.current || year || 1;
+      const fields = currentPd.fields || [];
+      const qualifying = (currentPd.councils || []).filter((c, i) => c?.reward?.type === "drawOnPlay" && councilQualifies(c, fields[i], y));
+      if (qualifying.length === 0) return;
+      const drawn = drawFromDeck(qualifying.length);
+      if (drawn.length === 0) return;
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
+      drawn.forEach(a => addLog("📋 Council Bonus", `${festival}: drew ${a.name} (Draw-on-Play)`));
+      showFloatingBonus(`📋 +${drawn.length} artist${drawn.length > 1 ? "s" : ""} drawn`, "#4ade80");
+    })();
+
     // Floating bonuses for VP and tickets
     // VP tallied at year end — show ticket bonus only
     if (artist.tickets > 0) { showFloatingBonus(`+${artist.tickets} 🎟️`, "#fbbf24"); sfx.gainTickets(); }
 
     addLog(festival, `booked ${artist.name} to ${sName}${isHeadliner ? " as HEADLINER!" : ""}`);
+    setLastActionFor(pid, `played ${artist.name}${isHeadliner ? " ★" : ""} in ${sName}`);
 
     // Check artist objectives and lineup objective on lineup completion
     if (isHeadliner) {
@@ -3034,6 +3237,8 @@ export default function Headliners() {
         const isTempt = temptModeRef.current;
         const fameGain = isTempt ? 2 : 1;
         const ticketGain = isTempt ? 0 : 1;
+        logTicketGain(pid, ticketGain, `${pe.artistName} effect (discard)`);
+        logFameGain(pid, 1, "Matching a Microtrend");
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
           baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
@@ -3184,6 +3389,7 @@ export default function Headliners() {
             arr[idx] = { ...arr[idx], completed: true, vpAwarded: true };
             return { ...prev, [p.id]: arr };
           });
+          logTicketGain(p.id, 3, "Personal objective");
           setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: (prev[p.id].bonusTickets || 0) + 3 } }));
           addLog(p.festivalName, `🎯 Completed "${entry.obj.name}" → +3 🎟️ tickets!`);
         }
@@ -3433,6 +3639,7 @@ export default function Headliners() {
       // Award VP
       const vpGain = updated.filter(e => e.completed && !objs.find(o => o.obj.id === e.obj.id && o.completed)).length * 3;
       if (vpGain > 0) {
+        logTicketGain(pid, 0  /* TODO: fill in amount */, "Effect (uncategorized)");
         setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + vpGain } }));
         addLog(players.find(p => p.id === pid)?.festivalName || "", `🎯 Completed objective! +${vpGain} 🎟️ tickets`);
         showFloatingBonus(`+${vpGain} 🎟️ 🎯`, "#c4b5fd");
@@ -3552,6 +3759,7 @@ export default function Headliners() {
       if (pe.type === "placeSpecific" || (pe.type === "placeAmenity" && pe.chosenType)) {
         const aType = pe.amenityType || pe.chosenType;
         const fieldIdx = aiPickFieldForAmenity(pd, aType, year || 1);
+        logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus");
         setPlayerData(p => {
           const cur = p[pid];
           let updated = mutateAmenity(cur, fieldIdx, aType, +1);
@@ -3876,6 +4084,7 @@ export default function Headliners() {
             const pk = aiPickDie(cd2, pd, null);
             const nd2 = [...cd2]; nd2.splice(pk.idx, 1); setDice(nd2);
             if (pk.type === "fame") {
+              logFameGain(currentPlayerId, 1, "Effect");
               setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
             } else {
               const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1);
@@ -3945,6 +4154,7 @@ export default function Headliners() {
       if (dieVal === "fame" || pick.type === "fame") {
         // Fame die
         const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
+        logFameGain(currentPlayerId, 1, "Fame die");
         setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
         addLog("🤖 AI", `Rolled 🔥 Fame!`);
         trackGoalProgress(currentPlayerId, "fameDieRolls");
@@ -4022,6 +4232,8 @@ export default function Headliners() {
       const isTempt = temptModeRef.current;
       const fameGain = isTempt ? 2 : 1;
       const ticketGain = isTempt ? 0 : 1;
+      logTicketGain(pid, ticketGain, "Microtrend claim (amenity)");
+      logFameGain(pid, 1, "Matching a Microtrend");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
         baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
@@ -4039,6 +4251,7 @@ export default function Headliners() {
   const placeAmenityCounter = (amenityType, fieldIdx = 0) => {
     recalcAfterUpdate(currentPlayerId, pd => mutateAmenity(pd, fieldIdx, amenityType, +1));
     addLog(currentPlayer.festivalName, `built ${AMENITY_LABELS[amenityType]}`);
+    setLastActionFor(currentPlayerId, `built ${AMENITY_LABELS[amenityType]} ${AMENITY_ICONS[amenityType] || ""}`);
     checkSecurityVPBonus(currentPlayerId, amenityType);
     claimAmenityMicrotrend(currentPlayerId, amenityType);
     sfx.placeAmenity();
@@ -4052,6 +4265,7 @@ export default function Headliners() {
     if (dv === "fame") {
       // Fame die: gain +1 Fame this round, use turn, no placement
       const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
+      logFameGain(currentPlayerId, 1, `${artist.name} effect`);
       setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
       addLog(currentPlayer.festivalName, `rolled 🔥 Fame! +1 Fame this year`);
       trackGoalProgress(currentPlayerId, "fameDieRolls");
@@ -4526,6 +4740,14 @@ export default function Headliners() {
 
   /** Check if player can afford the special guest (ignoring fame requirement) */
   function canAffordSpecialGuest(artist, pd) {
+    // v134: Good For Business / VIPee / Plenty For Everyone grant persistent "free special
+    // guests" — waive the amenity requirement entirely while any of those councils qualifies.
+    // Effect application is also skipped at placement time to match the card text.
+    const y = yearRef.current || year || 1;
+    const councils = pd.councils || [];
+    const fields = pd.fields || [];
+    const hasFreeSG = councils.some((c, i) => c?.reward?.type === "freeSpecialGuests" && councilQualifies(c, fields[i], y));
+    if (hasFreeSG) return true;
     const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
     return counts.campsite >= (artist.campCost || 0) &&
       counts.security >= (artist.securityCost || 0) &&
@@ -4766,11 +4988,13 @@ export default function Headliners() {
 
       // Apply the result
       if (effect.type === "autoVP" || effect.type === "fameVP") {
+        logTicketGain(pid, (effect.autoVP || 0), `Year End: ${effect.artist?.name || "?"}`);
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) + (effect.autoVP || 0)) } }));
         addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${effect.autoVP} 🎟️ tickets`);
       } else if (effect.type === "autoVPTix") {
         // v126: autoVPTix used to add separate VP + tickets amounts. With the unified score
         // both go into bonusTickets in one merged addition.
+        logTicketGain(pid, ((effect.autoVP || 0) + (effect.autoTix || 0)), `Year End: ${effect.artist?.name || "?"}`);
         setPlayerData(p => ({
           ...p, [pid]: {
             ...p[pid],
@@ -4780,6 +5004,7 @@ export default function Headliners() {
         addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → ${effect.desc}`);
       } else if (effect.type === "rollUnique" || effect.type === "rollCommon") {
         if (result?.vp) {
+          logTicketGain(pid, result.vp, `Year End: ${effect.artist?.name || "?"}`);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + result.vp } }));
           addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${result.vp} 🎟️ tickets`);
         }
@@ -5125,6 +5350,7 @@ export default function Headliners() {
           updated = mutateAmenity(updated, fIdx, d.amenity, -1);
         }
       });
+      logTicketGain(pid, vpFromStars, "Star dice roll");
       return { ...p, [pid]: {
         ...updated,
         bonusTickets: (updated.bonusTickets || 0) + vpFromStars,
@@ -6113,6 +6339,7 @@ export default function Headliners() {
 
         const placeBonusAmenity = (aType, fieldIdx) => {
           if (!aType || fieldIdx == null) return;
+          logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus");
           setPlayerData(p => {
             const cur = p[pid];
             let updated = mutateAmenity(cur, fieldIdx, aType, +1);
@@ -6371,6 +6598,7 @@ export default function Headliners() {
               <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 12 }}>Click an artist from your hand to discard:</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {handCards.map((a, i) => <ArtistCard key={i} artist={a} small onClick={() => {
+                  logTicketGain(pid, pe.ticketReward, `${pe.artistName} effect (discard for tickets)`);
                   setPlayerData(p => { const nh = [...p[pid].hand]; nh.splice(i, 1); return { ...p, [pid]: { ...p[pid], hand: nh, bonusTickets: (p[pid].bonusTickets || 0) + pe.ticketReward } }; });
                   setDiscardPile(prev => [...prev, a]);
                   addLog("Effect", `Discarded ${a.name} → +${pe.ticketReward} tickets`);
@@ -6408,6 +6636,7 @@ export default function Headliners() {
                     const nh = [...p[pid].hand];
                     // Remove from end first to avoid index shift
                     selected.sort((a, b) => b - a).forEach(x => nh.splice(x, 1));
+                    logTicketGain(pid, ticketGain, `${pe.artistName} effect (discard)`);
                     return { ...p, [pid]: { ...p[pid], hand: nh, bonusTickets: (p[pid].bonusTickets || 0) + ticketGain } };
                   });
                   setDiscardPile(prev => [...prev, ...toDiscard]);
@@ -6441,6 +6670,7 @@ export default function Headliners() {
                         if (c > bestCount) { bestCount = c; bestIdx = f; }
                       }
                       const updated = bestCount > 0 ? mutateAmenity(cur, bestIdx, t, -1) : cur;
+                      logTicketGain(pid, pe.ticketReward, `${pe.artistName} effect (discard for tickets)`);
                       return { ...p, [pid]: { ...updated, bonusTickets: (cur.bonusTickets || 0) + pe.ticketReward } };
                     });
                     addLog("Effect", `Discarded ${AMENITY_LABELS[t]} → +${pe.ticketReward} tickets`);
@@ -6681,13 +6911,28 @@ export default function Headliners() {
                 <span>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
                 {!ic && <span style={{ fontSize: 9, color: isViewing ? "#fbbf24" : "#64748b" }}>{isViewing ? "👁️" : "👁️"}</span>}
               </div>
+              {/* v133: tickets are the score — promoted to hero display in every stat row.
+                  The other stats are supporting context underneath. */}
+              <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ display: "block", marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "6px 10px", borderRadius: 8, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)" }}>
+                  <span style={{ fontSize: 18 }}>🎟️</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: "#60a5fa", letterSpacing: -0.5 }}>{pd.tickets || 0}</span>
+                  <span style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginLeft: "auto" }}>tickets</span>
+                </div>
+              </TicketBreakdown>
               <div style={{ fontSize: 11, color: "#94a3b8", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-                <span>🎟️ {pd.tickets || 0}</span><span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
+                <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
                 <span>🔄 {turnsLeft[p.id] || 0} turns</span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
               <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>🎤 {(pd.stageArtists || []).flat().length} artists • 🃏 {(pd.hand || []).length} in hand</div>
+              {/* v132: pending-tempt notification (real-time, so other players can consider contesting) */}
+              {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 6, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 10, color: "#fbbf24", fontWeight: 600 }}>
+                💫 {p.festivalName} is tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}
+              </div>}
+              {/* v132: last-action line for spectator awareness */}
+              {lastAction[p.id] && !ic && <div style={{ marginTop: 4, fontSize: 10, color: "#8b5cf6", fontStyle: "italic" }}>Last: {p.festivalName} {lastAction[p.id]}</div>}
             </div>); })}
           <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
@@ -6707,11 +6952,11 @@ export default function Headliners() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 10 }}>
                   <div style={{ padding: "3px 6px", borderRadius: 6, background: lo.claimed1st !== null ? "rgba(34,197,94,0.15)" : "rgba(251,191,36,0.15)", textAlign: "center" }}>
-                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 VP</div>
+                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 tickets</div>
                     {lo.claimed1st !== null && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed1st)?.festivalName}</div>}
                   </div>
                   <div style={{ padding: "3px 6px", borderRadius: 6, background: lo.claimed2nd !== null ? "rgba(34,197,94,0.15)" : "rgba(196,181,253,0.15)", textAlign: "center" }}>
-                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 VP</div>
+                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 tickets</div>
                     {lo.claimed2nd !== null && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed2nd)?.festivalName}</div>}
                   </div>
                 </div>
@@ -6798,9 +7043,18 @@ export default function Headliners() {
                 cursor: "pointer", whiteSpace: "nowrap", minWidth: 120,
               }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</div>
-                <div style={{ fontSize: 12, color: "#94a3b8", display: "flex", gap: 8 }}>
-                  <span>🎟️{pd.tickets||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
+                <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ display: "block", marginTop: 4, marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 4, padding: "4px 8px", borderRadius: 6, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)" }}>
+                    <span style={{ fontSize: 14 }}>🎟️</span>
+                    <span style={{ fontSize: 18, fontWeight: 900, color: "#60a5fa", letterSpacing: -0.5 }}>{pd.tickets || 0}</span>
+                    <span style={{ fontSize: 9, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginLeft: 3 }}>tix</span>
+                  </div>
+                </TicketBreakdown>
+                <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
+                {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 3, padding: "2px 5px", borderRadius: 5, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>💫 tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}</div>}
+                {lastAction[p.id] && !ic && <div style={{ marginTop: 3, fontSize: 9, color: "#8b5cf6", fontStyle: "italic" }}>Last: {lastAction[p.id]}</div>}
               </div>); })}
           </div>
         </div>}
@@ -6819,11 +7073,11 @@ export default function Headliners() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 11 }}>
                   <div style={{ padding: "4px 8px", borderRadius: 6, background: lo.claimed1st !== null ? "rgba(34,197,94,0.15)" : "rgba(251,191,36,0.15)", textAlign: "center" }}>
-                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 VP</div>
+                    <div style={{ fontWeight: 800, color: lo.claimed1st !== null ? "#4ade80" : "#fbbf24" }}>{lo.claimed1st !== null ? "✓" : ""} 1st +5 tickets</div>
                     {lo.claimed1st !== null && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed1st)?.festivalName}</div>}
                   </div>
                   <div style={{ padding: "4px 8px", borderRadius: 6, background: lo.claimed2nd !== null ? "rgba(34,197,94,0.15)" : "rgba(196,181,253,0.15)", textAlign: "center" }}>
-                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 VP</div>
+                    <div style={{ fontWeight: 800, color: lo.claimed2nd !== null ? "#4ade80" : "#c4b5fd" }}>{lo.claimed2nd !== null ? "✓" : ""} 2nd +3 tickets</div>
                     {lo.claimed2nd !== null && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{players.find(p => p.id === lo.claimed2nd)?.festivalName}</div>}
                   </div>
                 </div>
@@ -7125,6 +7379,27 @@ export default function Headliners() {
             </div>}
 
             {/* Pending agent artist booking (uncontested) */}
+            {/* v133: fame-gain popup — click-through celebration whenever the current
+                player gains Fame. Queue-based so multiple gains chain sequentially. Only
+                shows when the front-of-queue entry is for THIS player and their turn is
+                the active one. Higher z-index than other modals so it sits above them. */}
+            {fameGainQueue.length > 0 && fameGainQueue[0].pid === currentPlayerId && (() => {
+              const fg = fameGainQueue[0];
+              return <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 980, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.35s" }}>
+                <div style={{ padding: "32px 28px", borderRadius: 16, background: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(249,115,22,0.08))", border: "2px solid #f97316", boxShadow: "0 0 50px rgba(249,115,22,0.4)", textAlign: "center", maxWidth: 460, width: "100%" }}>
+                  <div style={{ fontSize: 56, marginBottom: 6, animation: "fameFlicker 0.9s ease-in-out infinite" }}>🔥</div>
+                  <h2 style={{ color: "#fb923c", fontSize: 22, margin: "0 0 10px", fontWeight: 800, letterSpacing: -0.3 }}>Your festival is becoming more famous.</h2>
+                  <p style={{ color: "#e2e8f0", fontSize: 15, margin: "0 0 8px", lineHeight: 1.45 }}>
+                    <span style={{ color: "#fbbf24", fontWeight: 700 }}>{fg.source}</span> has provided
+                    <span style={{ color: "#fb923c", fontWeight: 900, fontSize: 22, margin: "0 6px" }}>+{fg.amount}</span>
+                    Fame
+                  </p>
+                  {fameGainQueue.length > 1 && <p style={{ color: "#94a3b8", fontSize: 11, margin: "8px 0 0", fontStyle: "italic" }}>{fameGainQueue.length - 1} more fame gain{fameGainQueue.length - 1 === 1 ? "" : "s"} queued</p>}
+                  <button onClick={() => setFameGainQueue(prev => prev.slice(1))} style={{ ...bp, marginTop: 20, background: "linear-gradient(135deg, #f97316, #ef4444)", border: "none", padding: "10px 28px", fontSize: 14, fontWeight: 700 }}>Continue →</button>
+                </div>
+              </div>;
+            })()}
+
             {pendingAgentArtist && (() => {
               const pa = pendingAgentArtist;
               const pd = playerData[pa.pid];
@@ -7149,9 +7424,14 @@ export default function Headliners() {
                       // Remove from pool
                       const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
                       if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-                      bookArtistToStage(pa.artist, si, pa.pid, true);
+                      // v132: detect genre-match booking for tempted artists so the
+                      // genreMatchEffect bonus fires. If the stage is headliner-eligible via
+                      // the genre-match rule AND the player can't afford the artist normally
+                      // (which is often the case since they tempted it), treat as genre-path.
+                      const viaGenreMatch = canBookHeadlinerViaGenre(pa.artist, pd || {}, si) && !canAffordArtist(pa.artist, pd || {});
+                      bookArtistToStage(pa.artist, si, pa.pid, true, viaGenreMatch);
                       if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
-                      addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Booked ${pa.artist.name} (uncontested ${isTempt ? "tempt" : "agent"} claim)`);
+                      addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Booked ${pa.artist.name} (uncontested ${isTempt ? "tempt" : "agent"} claim)${viaGenreMatch ? " via Genre Match" : ""}`);
                       setPendingAgentArtist(null);
                       setTimeout(() => recalcTickets(), 50);
                       if (isTempt) checkNextTempt(pa.pid);
@@ -7451,13 +7731,25 @@ export default function Headliners() {
             })}
           </div>
           <p style={{ color: "#94a3b8", fontSize: 10, fontStyle: "italic" }}>Affordability is checked against amenities only — fame doesn't matter for special guests.</p>
-        </div> : sgArtist ? <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
+        </div> : sgArtist ? (() => {
+          // v134: detect whether the current player has a free-special-guests council qualifying.
+          // If so, the affordability copy shifts — guests are always free, but their effects
+          // don't fire (unchanged behavior — placeSpecialGuest never routes through applyEffect).
+          const y = year || 1;
+          const councils = (sgPd?.councils) || [];
+          const fields = (sgPd?.fields) || [];
+          const hasFreeSG = councils.some((c, i) => c?.reward?.type === "freeSpecialGuests" && councilQualifies(c, fields[i], y));
+          return <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 24, marginBottom: 4 }}>🌟 Special Guest — Year {year}</h2>
           <h3 style={{ color: "#c4b5fd", fontSize: 18, marginBottom: 16 }}>{sgPlayer?.festivalName}</h3>
-          <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>A special guest wants to headline! Fame level is ignored — you just need the amenities.</p>
+          <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>
+            {hasFreeSG
+              ? <>📋 <strong style={{ color: "#4ade80" }}>Council bonus:</strong> guest is FREE — no amenities required, but their effect won't fire. Ticket sales are still counted.</>
+              : <>A special guest wants to headline! Fame level is ignored — you just need the amenities.</>}
+          </p>
           <div style={{ display: "inline-block", marginBottom: 16 }}><ArtistCard artist={sgArtist} showCost /></div>
           {affordable ? <>
-            <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>✅ You can afford this guest!</p>
+            <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{hasFreeSG ? "✅ Free to place!" : "✅ You can afford this guest!"}</p>
             <p style={{ color: "#c4b5fd", fontSize: 12, marginBottom: 8 }}>Choose a stage (must have exactly 2 artists):</p>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
               {specialGuestEligible.map(si => {
@@ -7472,7 +7764,8 @@ export default function Headliners() {
             </div>
           </> : <p style={{ color: "#f87171", fontSize: 14, fontWeight: 600, marginBottom: 16 }}>❌ You can't afford this guest's amenity requirements.</p>}
           <button onClick={declineSpecialGuest} style={{ ...bs, fontSize: 13 }}>{affordable ? "Decline Guest" : "Continue →"}</button>
-        </div> : <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
+        </div>;
+        })() : <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
           <h2 style={{ color: "#fbbf24", fontSize: 24 }}>🌟 Special Guests</h2>
           <p style={{ color: "#8b5cf6", marginTop: 8 }}>Checking for eligible festivals...</p>
         </div>}
