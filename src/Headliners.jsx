@@ -1048,6 +1048,14 @@ export default function Headliners() {
   //   they're booked via an agent. OFF — those artists still exist with their base effects
   //   only (the agent-conditional bonuses don't fire even when an agent books them).
   //   Either way the cost numbers on every artist are the same.
+  // temptMode (v130): major mode toggle. When ON: agents are replaced by "Tempt" —
+  //   players spend 1 Fame per artist to court them from the pool (up to 2 per turn).
+  //   Contests trigger when a second player also tempts the same artist. Both players
+  //   need ≥1 Fame to contest; on resolution BOTH get their Fame back and the dice roll
+  //   decides who lands the artist. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket.
+  //   Hand capped at 8. This trades one entire subsystem (agents) for a lighter, more
+  //   interactive one where Fame is a genuinely spendable resource. Off preserves the
+  //   traditional agent economy for backward compat.
   // totalYears: how many rounds the game lasts. 4 is standard; 3 is a shorter format.
   const [stageOpenFameBonus, setStageOpenFameBonus] = useState(true);
   const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
@@ -1062,6 +1070,7 @@ export default function Headliners() {
   // at least 2 catering + 1 security (total 3 amenities) for "Muscle Food" to fire.
   // Default OFF preserves the cheap-to-qualify version where "1 > 0" works.
   const [strictComparativeMode, setStrictComparativeMode] = useState(false);
+  const [temptMode, setTemptMode] = useState(false);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
@@ -1070,6 +1079,7 @@ export default function Headliners() {
   const agentEffectsEnabledRef = useRef(true);
   const agentMicrotrendClaimRef = useRef(true);
   const strictComparativeModeRef = useRef(false);
+  const temptModeRef = useRef(false);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
@@ -1077,6 +1087,7 @@ export default function Headliners() {
   useEffect(() => { agentEffectsEnabledRef.current = agentEffectsEnabled; }, [agentEffectsEnabled]);
   useEffect(() => { agentMicrotrendClaimRef.current = agentMicrotrendClaim; }, [agentMicrotrendClaim]);
   useEffect(() => { strictComparativeModeRef.current = strictComparativeMode; setStrictCouncilMode(strictComparativeMode); }, [strictComparativeMode]);
+  useEffect(() => { temptModeRef.current = temptMode; }, [temptMode]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -1130,6 +1141,11 @@ export default function Headliners() {
   // Agent system: each player has 1 agent they can deploy for free
   // agentPlacements: { pid: { type: "dice"|"pool", amenityType?: string, poolIdx?: number, artistName?: string, placedTurn?: number } | null }
   const [agentPlacements, setAgentPlacements] = useState({});
+  // v131: under tempt mode, players may hold up to 2 pending pool-artist tempts at once.
+  // temptPlacements is a per-player ARRAY of pending placements. agentPlacements is unused
+  // under tempt mode — this array is authoritative. Standard mode ignores this state.
+  //   Shape: { pid: Array<{ type: "pool", poolIdx, artistName, placedTurn }> }
+  const [temptPlacements, setTemptPlacements] = useState({});
   // Tracks which players have successfully used their agent this year (exhausted until next year)
   const [agentExhausted, setAgentExhausted] = useState({});
   // Tracks how many bonus agent uses each player has consumed this year (granted by "+N Agents" councils).
@@ -1161,9 +1177,13 @@ export default function Headliners() {
     if (agentContestAutoFiredRef.current) return;
     agentContestAutoFiredRef.current = true;
     const t = setTimeout(() => {
+      const currentPid = agentContest.contestantData?.find(c => c.pid === currentPlayerId)?.pid;
       commitAgentContest(agentContest);
       setAgentContest(null);
       setTimeout(() => recalcTickets(), 50);
+      // v131: after auto-resolved contests under tempt mode, check whether the current
+      // player still has another pending tempt to resolve.
+      if (temptModeRef.current && currentPid != null) checkNextTempt(currentPid);
     }, 2400);
     return () => clearTimeout(t);
   }, [agentContest]);
@@ -1542,18 +1562,29 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   // AGENT SYSTEM
   // ═══════════════════════════════════════════════════════════
-  const hasAgent = (pid) => !agentPlacements[pid] && !agentExhausted[pid]; // available if not deployed AND not exhausted this year
+  // v131: under tempt mode this becomes "can the player tempt another artist?" — available if
+  // they have at least 1 Fame AND fewer than 2 pending tempts. Any pool artist may be tempted
+  // regardless of the player's current fame vs. artist.fame — the fame cost only gates PLAYING
+  // the artist on the next turn (unplayable tempts land in hand instead).
+  const hasAgent = (pid) => {
+    if (temptModeRef.current) {
+      const pd = playerData[pid] || {};
+      const tempts = (temptPlacements[pid] || []);
+      return (pd.fame || 0) >= 1 && tempts.length < 2;
+    }
+    return !agentPlacements[pid] && !agentExhausted[pid];
+  };
   const getAgentPlacement = (pid) => agentPlacements[pid] || null;
 
-  // Total agent actions a player has remaining this year. Accounts for:
-  //   - 1 base agent action per year
-  //   - +N from qualifying "agents"-reward councils (council.reward.perYear[yIdx])
-  //   - Minus actions already consumed: agentBonusUsesUsed[pid] counts non-exhausting
-  //     uses; agentExhausted[pid] adds the final use that took the agent out.
-  // Returns 0 when the agent is exhausted. Includes any currently-deployed action
-  // (since its consumption hasn't been recorded yet) — so the counter goes from 2 → 1
-  // only when the deployed agent actually resolves.
+  // Total agent actions a player has remaining this year (or this turn, under tempt).
+  // v131: under tempt, returns how many MORE tempts the player can do this turn — bounded by
+  // both the 2-per-turn cap and their current fame. Displayed in stat rows as the "🕵️ N" counter.
   const getAgentActionsLeft = (pid) => {
+    if (temptModeRef.current) {
+      const pd = playerData[pid] || {};
+      const tempts = (temptPlacements[pid] || []);
+      return Math.max(0, Math.min(2 - tempts.length, pd.fame || 0));
+    }
     const pd = playerData[pid] || {};
     const y = year || 1;
     const yIdx = Math.max(0, Math.min(3, y - 1));
@@ -1568,14 +1599,76 @@ export default function Headliners() {
     return Math.max(0, totalCharges - used);
   };
   
-  // Place agent on pool artist — start 2-step booking claim
+  // Place agent on pool artist — start 2-step booking claim.
+  // v130/v131: under tempt mode, deducts 1 Fame and appends to temptPlacements[pid] (up to 2).
+  // A player may tempt ANY pool artist regardless of the artist's fame cost. The gate is at
+  // resolution time: on the tempting player's next turn, artists they can play go to a stage;
+  // artists they can't (fame or amenities short) go to their hand.
   const placeAgentOnArtist = (pid, poolIdx) => {
     const artist = artistPool[poolIdx];
     if (!artist) return false;
+    if (temptModeRef.current) {
+      const pd = playerData[pid] || {};
+      const tempts = (temptPlacements[pid] || []);
+      if ((pd.fame || 0) < 1) {
+        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Not enough Fame to tempt ${artist.name}`);
+        return false;
+      }
+      if (tempts.length >= 2) {
+        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Already tempting 2 artists this turn`);
+        return false;
+      }
+      // Deduct 1 Fame (from baseFame — the reversible portion of the fame stack).
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 1) } }));
+      setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber }] }));
+      setTimeout(() => recalcTickets(), 30);
+      const pName = players.find(p => p.id === pid)?.festivalName || "?";
+      addLog("💫 Tempt", `${pName} spent 1 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
+      showFloatingBonus(`💫 Tempting ${artist.name}`, "#fbbf24");
+      return true;
+    }
     setAgentPlacements(prev => ({ ...prev, [pid]: { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber } }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("🕵️ Agent", `${pName} deployed agent to claim ${artist.name}`);
     return true;
+  };
+
+  // v131: undo the most recent tempt for a player — refund 1 Fame, pop the last placement.
+  // Callable before the player ends their turn. Safe to no-op if there's nothing to undo.
+  const undoLastTempt = (pid) => {
+    if (!temptModeRef.current) return false;
+    const tempts = (temptPlacements[pid] || []);
+    if (tempts.length === 0) return false;
+    const removed = tempts[tempts.length - 1];
+    setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(0, -1) }));
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 1 🔥 Fame refunded`);
+    showFloatingBonus(`↩️ ${removed.artistName} withdrawn`, "#94a3b8");
+    setTimeout(() => recalcTickets(), 30);
+    return true;
+  };
+
+  // v131: after a tempt placement resolves (via pending-artist modal or contest), check
+  // whether the current player still has another pending tempt to resolve. If so, kick off
+  // the same resolution flow (contest UI or pending-artist modal). Called from every code
+  // path that finalizes one tempt.
+  const checkNextTempt = (pid) => {
+    if (!temptModeRef.current) return;
+    // Small delay so upstream state (temptPlacements pop, playerData updates) settles first.
+    setTimeout(() => {
+      const remaining = (temptPlacements[pid] || []);
+      if (remaining.length === 0) return;
+      const resolution = resolvePoolAgents(pid);
+      if (!resolution) return;
+      if (resolution.type === "uncontested") {
+        setPendingAgentArtist({ pid: resolution.pid, artist: resolution.artist });
+      } else if (resolution.type === "contested") {
+        const contest = resolveAgentContestRoll(resolution.contestants, resolution.artist, resolution.poolIdx);
+        const humanInvolved = contest.contestantData.some(c => !players.find(p => p.id === c.pid)?.isAI);
+        setAgentContest({ ...contest, isAuto: !humanInvolved });
+      }
+    }, 120);
   };
 
   // ─── Microtrend bag (shuffled deck) ───
@@ -1623,6 +1716,7 @@ export default function Headliners() {
   // stuck-at-zero-fame problem when no one can organically match the active trend.
   const placeAgentOnMicrotrend = (pid) => {
     if (!agentMicrotrendClaimRef.current) return false;
+    if (temptModeRef.current) return false; // v130: microtrends only claimable via booking/amenity under tempt mode
     const active = microtrends.find(mt => mt.claimedBy === null);
     if (!active) return false; // nothing claimable
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
@@ -1657,6 +1751,13 @@ export default function Headliners() {
   //   - "agentFame": each qualifying council grants +1 Fame when this agent succeeds
   //   - "agents":    each qualifying council grants perYear[yIdx] additional uses before exhaustion
   const exhaustAgent = (pid) => {
+    // v130: under tempt mode there's no "agent" to exhaust and no agent-related council
+    // bonuses (agentFame, agents bonus charges). Just clear the placement slot so the
+    // player can tempt again next turn.
+    if (temptModeRef.current) {
+      setAgentPlacements(prev => { const n = { ...prev }; delete n[pid]; return n; });
+      return;
+    }
     const pd = playerDataRef.current?.[pid] || playerData[pid];
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     const y = yearRef.current || year || 1;
@@ -1704,8 +1805,58 @@ export default function Headliners() {
   // Track turn number for agent ordering
   const [turnNumber, setTurnNumber] = useState(0);
   
-  // Resolve pool artist agents at start of a player's turn
+  // v131: under tempt mode reads across all players' temptPlacements arrays; under standard
+  // mode reads agentPlacements. Returns [{ pid, placement }] for anyone with a placement on
+  // the named artist. Used for pool-card badges and dupe/contest checks.
+  const getPlacementsOnArtist = (artistName) => {
+    if (temptModeRef.current) {
+      const result = [];
+      Object.entries(temptPlacements).forEach(([pid, list]) => {
+        (list || []).forEach(p => {
+          if (p.type === "pool" && p.artistName === artistName) {
+            result.push({ pid: parseInt(pid), placement: p });
+          }
+        });
+      });
+      return result;
+    }
+    return Object.entries(agentPlacements)
+      .filter(([_, p]) => p && p.type === "pool" && p.artistName === artistName)
+      .map(([pid, p]) => ({ pid: parseInt(pid), placement: p }));
+  };
+
+  // Resolve pool artist agents at start of a player's turn.
+  // v131: under tempt mode, players may have 0-2 pending placements. We resolve one at a
+  // time (the first in the array). Once handled, the caller re-invokes this to pick up any
+  // remaining placement. Each placement is independently checked for contests.
   const resolvePoolAgents = (pid) => {
+    if (temptModeRef.current) {
+      const tempts = (temptPlacements[pid] || []);
+      if (tempts.length === 0) return null;
+      const placement = tempts[0]; // Resolve the earliest tempt first.
+      // Find the artist in the pool by name (index may have shifted)
+      const poolIdx = artistPool.findIndex(a => a.name === placement.artistName);
+      if (poolIdx < 0) {
+        // Artist no longer in pool — refund the fame this tempt cost and drop the placement.
+        setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+        addLog("💫 Tempt", `${placement.artistName} no longer available — 1 🔥 Fame refunded`);
+        return null;
+      }
+      const artist = artistPool[poolIdx];
+      // Contestants = every player who has a tempt on the same artist.
+      const contestants = [];
+      Object.entries(temptPlacements).forEach(([oPid, list]) => {
+        (list || []).forEach(p => {
+          if (p.type === "pool" && p.artistName === placement.artistName) {
+            contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn });
+          }
+        });
+      });
+      if (contestants.length === 1) return { type: "uncontested", artist, poolIdx, pid };
+      return { type: "contested", artist, poolIdx, contestants };
+    }
+
     const placement = agentPlacements[pid];
     if (!placement || placement.type !== "pool") return null;
     
@@ -1797,34 +1948,76 @@ export default function Headliners() {
   // gets you the artist + the fame, losing gets you just the fame. This makes contests
   // a positive-sum interaction and removes the risk-aversion that previously kept contests rare.
   // Used by both the human modal "Continue" handler and the AI dispatcher.
+  // v130: under tempt mode this refunds 1 Fame to every contestant (both winner and losers),
+  // since each contest entry cost 1 Fame to place. The dice-roll winner still lands the
+  // artist. No "+1 industry buzz" fame is added under tempt (the refund IS the payoff for
+  // contesting; the industry-buzz reward would double-dip). Under standard agent mode the
+  // buzz reward still fires as before.
   const commitAgentContest = (contest) => {
     const { artist, contestantData, winnerId } = contest;
+    const isTempt = temptModeRef.current;
     const newPool = [...artistPool];
     const idx = newPool.findIndex(a => a.name === artist.name);
     if (idx >= 0) newPool.splice(idx, 1);
     setArtistPool(newPool);
     const winPd = playerDataRef.current?.[winnerId] || playerData[winnerId] || {};
     const openStages = (winPd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-    if (openStages.length > 0) {
+    // v131: under tempt mode, also verify the winner can actually PLAY the artist right now.
+    // If not (fame or amenities short, no genre-match slot), the artist goes to hand.
+    const canPlayNow = isTempt
+      ? (openStages.length > 0 && canBookArtistAnywhere(artist, winPd))
+      : (openStages.length > 0);
+    if (canPlayNow) {
       bookArtistToStage(artist, openStages[0], winnerId, true);
     } else {
       setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...p[winnerId].hand, artist] } }));
+      if (isTempt) {
+        addLog("💫 Tempt", `${players.find(p => p.id === winnerId)?.festivalName} can't play ${artist.name} yet — added to hand`);
+      }
     }
-    exhaustAgent(winnerId);
-    contestantData.filter(c => c.pid !== winnerId).forEach(c => returnAgent(c.pid));
-    // Buzz reward: +1 Fame to every contestant (winner and losers alike).
-    setPlayerData(p => {
-      const next = { ...p };
-      contestantData.forEach(c => {
-        const opd = next[c.pid] || {};
-        next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+    if (!isTempt) {
+      // Standard agent mode: winner exhausts their agent, losers get theirs returned.
+      exhaustAgent(winnerId);
+      contestantData.filter(c => c.pid !== winnerId).forEach(c => returnAgent(c.pid));
+      // Buzz reward: +1 Fame to every contestant (winner and losers alike).
+      setPlayerData(p => {
+        const next = { ...p };
+        contestantData.forEach(c => {
+          const opd = next[c.pid] || {};
+          next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+        });
+        return next;
       });
-      return next;
-    });
+    } else {
+      // Tempt mode: refund the 1 Fame each contestant paid, and remove ONLY the placement
+      // on this specific artist from each contestant's array (they may still have another
+      // pending tempt on a different artist that resolves separately).
+      setTemptPlacements(prev => {
+        const next = { ...prev };
+        contestantData.forEach(c => {
+          const list = next[c.pid] || [];
+          next[c.pid] = list.filter(p => !(p.type === "pool" && p.artistName === artist.name));
+        });
+        return next;
+      });
+      setPlayerData(p => {
+        const next = { ...p };
+        contestantData.forEach(c => {
+          const opd = next[c.pid] || {};
+          next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+        });
+        return next;
+      });
+    }
     const winnerName = players.find(p => p.id === winnerId)?.festivalName;
     const faceLabel = getContestFaceLabel(contest.rolledFace);
     const winnerValue = contestantData.find(c => c.pid === winnerId).value;
-    addLog("🕵️ Agent Contest", `${winnerName} won ${artist.name} on the ${faceLabel.label} roll (${winnerValue}). All contestants gained +1 🔥 Fame (industry buzz).`);
+    if (isTempt) {
+      addLog("💫 Tempt Contest", `${winnerName} won ${artist.name} on the ${faceLabel.label} roll (${winnerValue}). Every contestant got their 1 🔥 Fame refunded.`);
+    } else {
+      addLog("🕵️ Agent Contest", `${winnerName} won ${artist.name} on the ${faceLabel.label} roll (${winnerValue}). All contestants gained +1 🔥 Fame (industry buzz).`);
+    }
+    setTimeout(() => recalcTickets(), 50);
   };
 
   function checkSecurityVPBonus(pid, amenityType) {
@@ -1868,7 +2061,7 @@ export default function Headliners() {
     }
 
     // Will contest if the artist is very valuable (fame 4-5), otherwise only claim unclaimed
-    const alreadyClaimed = Object.values(agentPlacements).some(p => p && p.type === "pool" && p.artistName === bestPool.name);
+    const alreadyClaimed = getPlacementsOnArtist(bestPool.name).length > 0;
     const worthContesting = (bestPool.vp * 2 + bestPool.tickets) > 14;
     if (!alreadyClaimed || worthContesting) {
       const poolIdx = artistPool.indexOf(bestPool);
@@ -1961,13 +2154,29 @@ export default function Headliners() {
   function getAgentProtectedNames() {
     const names = new Set();
     Object.values(agentPlacements).forEach(p => { if (p && p.type === "pool" && p.artistName) names.add(p.artistName); });
+    // v131: under tempt mode, also protect artists that any player has a tempt on.
+    if (temptModeRef.current) {
+      Object.values(temptPlacements).forEach(list => {
+        (list || []).forEach(p => {
+          if (p.type === "pool" && p.artistName) names.add(p.artistName);
+        });
+      });
+    }
     return names;
   }
 
   // True iff artist `name` has at least one agent on it placed by a player OTHER than `byPid`.
   // Used to gate human pool-pickup paths so you can't snatch an artist another player's agent has reserved.
   // Note: doesn't block your OWN agent — you may still book your own claim through the normal agent flow.
+  // v131: also checks temptPlacements under tempt mode.
   function isAgentClaimedByOther(name, byPid) {
+    if (temptModeRef.current) {
+      for (const [pid, list] of Object.entries(temptPlacements)) {
+        if (parseInt(pid) === byPid) continue;
+        if ((list || []).some(p => p.type === "pool" && p.artistName === name)) return true;
+      }
+      // Also check agentPlacements defensively (shouldn't have entries under tempt but safe)
+    }
     return Object.entries(agentPlacements).some(([pid, p]) => p && p.type === "pool" && p.artistName === name && parseInt(pid) !== byPid);
   }
 
@@ -2817,19 +3026,21 @@ export default function Headliners() {
     }
     // Check microtrends — first player to book matching genre claims a genre-kind microtrend.
     // Amenity-kind microtrends are claimed via amenity placement (handled separately).
+    // v130: under tempt mode the claim payout is +2 Fame and 0 tickets; standard mode is +1 Fame + 1 ticket.
     setMicrotrends(prev => prev.map(mt => {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "genre") return mt;
       if (getGenres(artist.genre).includes(mt.genre)) {
-        // Microtrend claim payout: +1 Fame and +1 VP (the VP is the new microtrend-completion bonus).
-        // Also increment the tracking count for the leaderboard display.
+        const isTempt = temptModeRef.current;
+        const fameGain = isTempt ? 2 : 1;
+        const ticketGain = isTempt ? 0 : 1;
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
-          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-          bonusTickets: (p[pid].bonusTickets || 0) + 1,
+          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+          bonusTickets: (p[pid].bonusTickets || 0) + ticketGain,
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
-        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame, +1 🎟️ ticket!`);
+        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame${ticketGain ? `, +${ticketGain} 🎟️ ticket` : ""}!`);
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
         // updates land first; the bonus draw appears as a follow-up log line.
@@ -3807,14 +4018,17 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "amenity") return mt;
       if (mt.amenity !== amenityType) return mt;
-      // Microtrend claim payout: +1 Fame and +1 VP (microtrend-completion bonus).
+      // v130: tempt-mode payout is +2 Fame, 0 tickets; standard is +1 Fame + 1 ticket.
+      const isTempt = temptModeRef.current;
+      const fameGain = isTempt ? 2 : 1;
+      const ticketGain = isTempt ? 0 : 1;
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
-        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-        bonusTickets: (p[pid].bonusTickets || 0) + 1,
+        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+        bonusTickets: (p[pid].bonusTickets || 0) + ticketGain,
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
-      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame, +1 🎟️ ticket!`);
+      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +${fameGain} 🔥 Fame${ticketGain ? `, +${ticketGain} 🎟️ ticket` : ""}!`);
       showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -4208,7 +4422,27 @@ export default function Headliners() {
     setCurrentPlayerIdx(ni);
     const np = players.find(p => p.id === turnOrder[ni]);
     addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
-    
+
+    // v130: under tempt mode enforce hand cap of 8. If the incoming player has more than
+    // 8 cards, auto-discard the excess (lowest-value first) into the universal discard.
+    // The reshuffle-on-empty deck logic already handles putting the discard back into
+    // rotation when the deck runs out.
+    if (temptModeRef.current) {
+      const nextPid = turnOrder[ni];
+      const npd = playerDataRef.current?.[nextPid] || playerData[nextPid] || {};
+      const hand = npd.hand || [];
+      if (hand.length > 8) {
+        // Rank by (tickets + vp) ascending so we discard the cheapest first
+        const sorted = [...hand].map((a, i) => ({ a, i })).sort((x, y) => ((x.a.tickets || 0) + (x.a.vp || 0)) - ((y.a.tickets || 0) + (y.a.vp || 0)));
+        const toDiscard = sorted.slice(0, hand.length - 8).map(x => x.a);
+        const keepIdx = new Set(sorted.slice(hand.length - 8).map(x => x.i));
+        const kept = hand.filter((_, i) => keepIdx.has(i));
+        setPlayerData(p => ({ ...p, [nextPid]: { ...p[nextPid], hand: kept } }));
+        setDiscardPile(prev => [...(prev || []), ...toDiscard]);
+        addLog(np?.festivalName || "?", `Hand over 8 — auto-discarded ${toDiscard.length} artist${toDiscard.length === 1 ? "" : "s"}: ${toDiscard.map(a => a.name).join(", ")}`);
+      }
+    }
+
     setShowTurnStart(true);
   };
 
@@ -5541,6 +5775,13 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{strictComparativeMode ? "On — comparative councils (\"X > Y\") require the lesser amenity to also be present. Min 3 amenities in the field to qualify." : "Off — comparative councils qualify with just one amenity (e.g. 1 catering > 0 security). Easier to satisfy. Default."}</div>
             </div>
           </label>
+          <label onClick={() => setTemptMode(!temptMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: temptMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: temptMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${temptMode ? "#fbbf24" : "#4c1d95"}`, background: temptMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{temptMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: temptMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>💫 Implement tempt function</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "On — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 2/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket. Default."}</div>
+            </div>
+          </label>
         </div>
       </div>
       <div style={{ ...card, marginTop: 16, padding: 16 }}>
@@ -6714,7 +6955,7 @@ export default function Headliners() {
             <div style={{ fontSize: 12, fontWeight: 700, color: "#c4b5fd", marginBottom: 6 }}>Available Artists ({artistPool.length})</div>
             <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
               {artistPool.map((a, i) => {
-                const agentsOnThis = Object.entries(agentPlacements).filter(([pid, p]) => p && p.type === "pool" && p.artistName === a.name);
+                const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                 return <div key={i} style={{ position: "relative" }}>
                   <ArtistCard artist={a} showCost small
                     affordable={canBookArtistAnywhere(a, currentPD)}
@@ -6754,11 +6995,20 @@ export default function Headliners() {
 
           {/* Action bar */}
           <div style={{ ...card, width: "100%", maxWidth: 700, marginTop: 12, padding: 16, alignSelf: "center" }}>
+            {/* v131: pending-tempt undo — visible whenever the current player has any pending
+                tempts, regardless of whether they've taken their turn action. Refunds 1 Fame
+                per undo click, popping the most recent placement. Safe to use before ending turn. */}
+            {temptMode && (temptPlacements[currentPlayerId] || []).length > 0 && <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.35)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: "#fbbf24", fontWeight: 600 }}>
+                💫 Pending tempts: {(temptPlacements[currentPlayerId] || []).map(p => p.artistName).join(", ")}
+              </div>
+              <button onClick={() => undoLastTempt(currentPlayerId)} style={{ ...bs, fontSize: 11, padding: "4px 10px", color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.15)" }}>↩️ Undo Last Tempt</button>
+            </div>}
             {actionTaken && !noTurnsLeft && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
                 {undoSnapshot && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
-                {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free, {getAgentActionsLeft(currentPlayerId)} left)</button>}
+                {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
                 <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={bd}>End Turn →</button>
               </div>
             </div>}
@@ -6766,7 +7016,7 @@ export default function Headliners() {
             {!actionTaken && !turnAction && !noTurnsLeft && <div>
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                 <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
-                {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa", color: "#60a5fa" }}>🕵️ Deploy Agent (free, {getAgentActionsLeft(currentPlayerId)} left)</button>}
+                {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
               </div>
             </div>}
@@ -6798,31 +7048,33 @@ export default function Headliners() {
               <button onClick={cancelFieldPlacement} style={{ ...bs, marginTop: 8, fontSize: 11 }}>← Cancel</button>
             </div>}
 
-            {/* Deploy Agent — pool claim only */}
+            {/* Deploy Agent / Tempt — pool claim only */}
             {(turnAction === "deployAgent" || turnAction === "agentPool") && <div style={{ textAlign: "center" }}>
-              <p style={{ color: "#60a5fa", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>🕵️ Claim a Pool Artist</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties).</p>
+              <p style={{ color: temptMode ? "#fbbf24" : "#60a5fa", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{temptMode ? "💫 Tempt a Pool Artist" : "🕵️ Claim a Pool Artist"}</p>
+              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{temptMode ? "Spend 1 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage. If another player also tempts the same artist, dice roll decides — both players get their Fame refunded." : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties)."}</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {artistPool.map((a, i) => {
                   const canAfford = canAffordArtist(a, currentPD);
-                  const agentsOnIt = Object.entries(agentPlacements).filter(([pid, p]) => p && p.type === "pool" && p.artistName === a.name);
+                  const canTempt = temptMode ? ((currentPD.fame || 0) >= 1) : true;
+                  const clickable = temptMode ? canTempt : canAfford;
+                  const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                   return <div key={i} style={{ position: "relative" }}>
                     <ArtistCard artist={a} showCost small onClick={() => {
-                      if (!canAfford) return;
+                      if (!clickable) return;
                       placeAgentOnArtist(currentPlayerId, i);
                       setTurnAction(null);
                     }} />
-                    {!canAfford && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>Can't afford</div>}
+                    {!clickable && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>{temptMode ? "Need 1 🔥 Fame" : "Can't afford"}</div>}
                     {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                       {agentsOnIt.map(([pid], ai) => {
                         const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
-                        return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, border: "2px solid #1e1b4b" }} title={players.find(pl => pl.id === parseInt(pid))?.festivalName}>🕵️</div>;
+                        return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, border: "2px solid #1e1b4b" }} title={players.find(pl => pl.id === parseInt(pid))?.festivalName}>{temptMode ? "💫" : "🕵️"}</div>;
                       })}
                     </div>}
                   </div>;
                 })}
               </div>
-              {agentMicrotrendClaim && (() => {
+              {agentMicrotrendClaim && !temptMode && (() => {
                 // Always-visible microtrend block in the Deploy Agent UI. Previously this
                 // hid when no microtrend was unclaimed — which silently confused players
                 // who'd just claimed the active trend via a book/amenity on the same turn,
@@ -6877,30 +7129,42 @@ export default function Headliners() {
               const pa = pendingAgentArtist;
               const pd = playerData[pa.pid];
               const openStages = (pd?.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+              // v131: under tempt mode, verify the artist is actually playable given the
+              // player's current fame + amenities (or genre-match). If not, force to hand.
+              const isTempt = temptMode;
+              const playable = isTempt ? canBookArtistAnywhere(pa.artist, pd || {}) : (openStages.length > 0);
+              // Under tempt mode, ALSO pop the resolved placement from temptPlacements as
+              // part of any action that finalizes this modal.
+              const popTemptPlacement = () => {
+                if (!isTempt) return;
+                setTemptPlacements(prev => ({ ...prev, [pa.pid]: (prev[pa.pid] || []).filter(p => !(p.type === "pool" && p.artistName === pa.artist.name)) }));
+              };
               return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 950, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
-                  <h3 style={{ color: "#60a5fa", marginBottom: 12 }}>🕵️ Agent Secured {pa.artist.name}!</h3>
+                  <h3 style={{ color: isTempt ? "#fbbf24" : "#60a5fa", marginBottom: 12 }}>{isTempt ? "💫" : "🕵️"} {isTempt ? "Tempted" : "Agent Secured"} {pa.artist.name}!</h3>
                   <ArtistCard artist={pa.artist} showCost />
-                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>Uncontested! Select a stage:</p>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>{playable ? "Uncontested! Select a stage:" : (isTempt ? `You don't have the Fame or amenities to play ${pa.artist.name} right now — they'll go to your hand.` : "No open stages! Artist goes to hand.")}</p>
+                  {playable && <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                     {openStages.map(si => <button key={si} onClick={() => {
                       // Remove from pool
                       const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
                       if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
                       bookArtistToStage(pa.artist, si, pa.pid, true);
-                      exhaustAgent(pa.pid);
-                      addLog("🕵️ Agent", `Booked ${pa.artist.name} (uncontested agent claim)`);
+                      if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
+                      addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Booked ${pa.artist.name} (uncontested ${isTempt ? "tempt" : "agent"} claim)`);
                       setPendingAgentArtist(null);
                       setTimeout(() => recalcTickets(), 50);
+                      if (isTempt) checkNextTempt(pa.pid);
                     }} style={bp}>{(pd.stageNames || [])[si] || `Stage ${si + 1}`}</button>)}
-                  </div>
-                  {openStages.length === 0 && <><p style={{ color: "#f87171", fontSize: 12 }}>No open stages! Artist goes to hand.</p><button onClick={() => {
+                  </div>}
+                  {!playable && <button onClick={() => {
                     setPlayerData(p => ({ ...p, [pa.pid]: { ...p[pa.pid], hand: [...p[pa.pid].hand, pa.artist] } }));
                     const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
                     if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-                    exhaustAgent(pa.pid);
+                    if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
                     setPendingAgentArtist(null);
-                  }} style={{ ...bs, marginTop: 8 }}>Add to Hand</button></>}
+                    if (isTempt) checkNextTempt(pa.pid);
+                  }} style={{ ...bs, marginTop: 8 }}>Add to Hand</button>}
                 </div>
               </div>;
             })()}
@@ -6950,9 +7214,11 @@ export default function Headliners() {
               const tie = ac.contestantData.filter(c => c.value === winner.value).length > 1;
               const ticketTie = tie && ac.contestantData.filter(c => c.value === winner.value && c.tickets === winner.tickets).length > 1;
               const commitAndClose = () => {
+                const currentPid = ac.contestantData?.find(c => c.pid === currentPlayerId)?.pid;
                 commitAgentContest(ac);
                 setAgentContest(null);
                 setTimeout(() => recalcTickets(), 50);
+                if (temptMode && currentPid != null) checkNextTempt(currentPid);
               };
               return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s" }}>
                 <div style={{ ...card, textAlign: "center", maxWidth: 560, width: "100%", border: "2px solid rgba(251,191,36,0.5)", boxShadow: "0 0 30px rgba(251,191,36,0.15)" }}>
@@ -7026,7 +7292,7 @@ export default function Headliners() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pool & Deck — click to draw ({2 - draw2Picks.length} remaining)</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
-                    const agentsOnIt = Object.entries(agentPlacements).filter(([pid, p]) => p && p.type === "pool" && p.artistName === a.name);
+                    const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                     return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
                       <ArtistCard artist={a} showCost small onClick={() => { if (!claimedByOther && draw2Picks.length < 2) draw2PickFromPool(i); }} />
@@ -7121,7 +7387,7 @@ export default function Headliners() {
               <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 8 }}>Click a pool artist to discard and swap (🕵️ = agent claimed, can't swap):</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {artistPool.map((a, i) => {
-                  const hasAgentOn = Object.values(agentPlacements).some(p => p && p.type === "pool" && p.artistName === a.name);
+                  const hasAgentOn = getPlacementsOnArtist(a.name).length > 0;
                   return <div key={i} style={{ cursor: hasAgentOn ? "not-allowed" : "pointer", opacity: hasAgentOn ? 0.4 : 1, position: "relative" }} onClick={() => { if (!hasAgentOn) handleDeckSwapPool(i); }}>
                     <ArtistCard artist={a} small />
                     {hasAgentOn && <div style={{ position: "absolute", top: -4, right: -4, background: "#1d4ed8", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #60a5fa" }}>🕵️</div>}
