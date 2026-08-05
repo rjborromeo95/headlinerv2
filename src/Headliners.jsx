@@ -2,19 +2,19 @@
  * HEADLINERS — A Festival-Building Board Game Prototype
  * =====================================================
  * Build the biggest and best festival over 4 years (rounds).
- * 2–5 players compete to earn Victory Points through ticket sales,
- * amenity placement, artist booking, and fame.
+ * 2–5 players compete to sell the most tickets through artist bookings,
+ * amenity placement, lineup curation, and fame growth.
  *
  * Core mechanics:
  *  - Hex-grid festival board (13×13) with stage placement
  *  - 1 action per turn: Pick Amenity (dice), Move Amenity, or Book/Reserve Artist
- *  - Artists have costs (fame + amenities), genres, VP, tickets, and effects
+ *  - Artists have costs (fame + amenities), genres, and ticket-sales value
  *  - 3 artists per stage; the 3rd is the Headliner (effect triggers twice)
  *  - First full lineup bonus: +5 tickets
- *  - Campsites generate 5 tickets each
- *  - 10 tickets = 1 VP at year end
- *  - Fame level 5 unlocks new stage placement between rounds
- *  - After 4 years, highest VP wins (tiebreak: most tickets)
+ *  - Campsites generate 2 tickets each per year
+ *  - Fame level 3 unlocks new stage placement between rounds
+ *  - After 4 years, highest tickets sold wins (tiebreak: highest fame)
+ *  - Final tickets are shown ×100 for a festival-appropriate headline number
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
@@ -22,7 +22,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 // ═══════════════════════════════════════════════════════════
 // ARTIST DATA (75 artists from spreadsheet)
 // ═══════════════════════════════════════════════════════════
-const ALL_ARTISTS = [{"name": "Kara Okay", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "+1 Star Die"}, {"name": "Sadchild", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "+1 ticket sale for all players"}, {"name": "Mikerophone", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": ""}, {"name": "Rebecca Black", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": ""}, {"name": "Jamiroquai", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 2, "effect": "+1 Fame if you have played 2 Pop artists this year"}, {"name": "Jonas Brothers", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 2, "effect": "", "agentEffect": "+2 VP"}, {"name": "Remi Wolf", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": ""}, {"name": "Maroon 5", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "+1 VP per other pop act on this stage"}, {"name": "Dua Lipa", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": ""}, {"name": "Scissor Sisters", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 3, "effect": ""}, {"name": "Chappell Roan", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 3, "effect": ""}, {"name": "Clairo", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Indie", "tickets": 3, "effect": "+1 ticket sale / Current Fame Level"}, {"name": "RAYE", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": ""}, {"name": "Nelly", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Pop, Hip Hop", "tickets": 4, "effect": "-4 VP / +1 Fame"}, {"name": "Harry Styles", "fame": 3, "vp": 3, "campCost": 2, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "", "agentEffect": "+2 star die"}, {"name": "Billie Eilish", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 3, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "Sign 1 artist from the artist deck or the available artist pool."}, {"name": "Beyonce", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "+1 Fame if you have played 2 Pop artists this year"}, {"name": "Olivia Dean", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 4, "effect": ""}, {"name": "Coldplay", "fame": 5, "vp": 5, "campCost": 1, "securityCost": 3, "cateringCost": 2, "portalooCost": 1, "genre": "Pop, Rock", "tickets": 5, "effect": "Year End: '+1 VP / Fame gained this year"}, {"name": "Lady Gaga", "fame": 5, "vp": 5, "campCost": 2, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Pop, Electronic", "tickets": 5, "effect": "Year End: '+1 VP if you have the highest Fame. '+3 VP if you have the highest Fame AND the most tickets."}, {"name": "Sitting Ducks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "All players draw 1 artist from the artist deck"}, {"name": "Beababdoobee", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": ""}, {"name": "Limp Bizkit", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "", "agentEffect": "draw 3 artists from the deck"}, {"name": "No Doubt", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": ""}, {"name": "Vampire Weekend", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": ""}, {"name": "The Darkness", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": ""}, {"name": "Royal Blood", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": ""}, {"name": "Heart", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock, Indie", "tickets": 2, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown"}, {"name": "Wolf Alice", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock, Indie", "tickets": 3, "effect": ""}, {"name": "Wet Leg", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 3, "effect": "+1 VP per other Rock act on this stage"}, {"name": "Blondie", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 3, "effect": ""}, {"name": "Rage Against the Machine", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Rock, Funk", "tickets": 3, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown"}, {"name": "Beastie Boys", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Hip Hop", "tickets": 3, "effect": "", "agentEffect": "+1 Portaloo. Place it this turn"}, {"name": "David Bowie", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 4, "effect": "Roll all amenity dice and gain 1 Fame if a Fame shows."}, {"name": "Slipknot", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 2, "genre": "Rock", "tickets": 4, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown"}, {"name": "Olivia Rodrigo", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Pop", "tickets": 4, "effect": "+1 ticket sale / Current Fame Level"}, {"name": "Radiohead", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Electronic", "tickets": 4, "effect": ""}, {"name": "Arctic Monkeys", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 4, "effect": ""}, {"name": "Foo Fighters", "fame": 5, "vp": 5, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 5, "effect": "Year End: Roll all 5 Amenity Dice. +1VP for each unique amenity that shows"}, {"name": "Fleetwood Mac", "fame": 5, "vp": 5, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 5, "effect": "Year End: Roll all 5 dice. +1 VP per die showing the most common result"}, {"name": "Lil Angry", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": ""}, {"name": "Loosey Goosey", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop, Pop", "tickets": 2, "effect": ""}, {"name": "Knucks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": ""}, {"name": "Eve", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": "-1 VP. Sell 3 tickets."}, {"name": "KAYTRANADA", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop, Electronic", "tickets": 2, "effect": ""}, {"name": "Lil Dicky", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": "", "agentEffect": "+1 security. Place it this turn"}, {"name": "Salt-N-Pepa", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": ""}, {"name": "Ja Rule", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": ""}, {"name": "Ms Banks", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": ""}, {"name": "Doja Cat", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": ""}, {"name": "De La Soul", "fame": 2, "vp": 2, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 3, "effect": "+1 VP per other Hip Hop act on this stage"}, {"name": "Snoop Dogg", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Funk", "tickets": 3, "effect": ""}, {"name": "Loyle Carner", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Rock", "tickets": 3, "effect": "-2 VP for 1 Fame. Roll 1 amenity dice and gain 1 Fame for each Fame shown."}, {"name": "Little Simz", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop, Indie", "tickets": 3, "effect": ""}, {"name": "Dave", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "-3 VP. Gain 1 Fame."}, {"name": "Missy Elliott", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 4, "effect": "-2 VP. +1 Star Die"}, {"name": "Lauryn Hill", "fame": 4, "vp": 4, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 4, "effect": ""}, {"name": "Nas", "fame": 4, "vp": 4, "campCost": 2, "securityCost": 3, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 4, "effect": ""}, {"name": "Kendrick Lamar", "fame": 5, "vp": 5, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 5, "effect": "Year End: -3 VP. Sell 15 tickets", "agentEffect": "+8 VP at Year End"}, {"name": "Eminem", "fame": 5, "vp": 5, "campCost": 3, "securityCost": 3, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 5, "effect": "Year End: +1 VP / Hip Hop artist you've played this Year"}, {"name": "CRUEL MISTRESS", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 ticket sale for all players"}, {"name": "808 DYLAN", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 Star Die"}, {"name": "Horsegiirl", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": ""}, {"name": "Grimes", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 2, "effect": ""}, {"name": "FISHER", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "", "agentEffect": "+1 campsite. Place this turn"}, {"name": "Romy", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": ""}, {"name": "The Chainsmokers", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 ticket / amenity"}, {"name": "CHVRCHES", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 ticket / amenity adjacent to this artists stage"}, {"name": "Jamie xx", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Indie", "tickets": 3, "effect": ""}, {"name": "Pink Pantheress", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic, Pop", "tickets": 3, "effect": "+1 VP per other Electronic artist on this stage"}, {"name": "Flume", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Hip Hop", "tickets": 3, "effect": "-1 VP. Gain +2 tickets / amenity"}, {"name": "Opolopo", "fame": 2, "vp": 2, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 3, "effect": ""}, {"name": "Peggy Gou", "fame": 2, "vp": 2, "campCost": 2, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "+1 ticket / amenity adjacent to this artists stage"}, {"name": "Chase & Status", "fame": 2, "vp": 2, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "+1 VP per other Electronic artist on this stage"}, {"name": "Charli XCX", "fame": 3, "vp": 3, "campCost": 2, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Electronic, Pop", "tickets": 3, "effect": "+1 Fame if you have played 2 artists of either Electronic or Pop."}, {"name": "The Chemical Brothers", "fame": 3, "vp": 3, "campCost": 2, "securityCost": 2, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "Draw two artists from either the available artist pool or deck. Sign one."}, {"name": "Linkin Park", "fame": 3, "vp": 3, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic, Rock", "tickets": 3, "effect": "+1 Fame"}, {"name": "Skrillex", "fame": 3, "vp": 3, "campCost": 3, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 3, "effect": ""}, {"name": "Daft Punk", "fame": 5, "vp": 5, "campCost": 3, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Electronic", "tickets": 5, "effect": "Year End: '+1 VP / 2 Amenities"}, {"name": "Fatboy Slim", "fame": 5, "vp": 5, "campCost": 3, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic", "tickets": 5, "effect": "Year End: '+2 VP / Council Objective that is currently giving you a benefit"}, {"name": "Bruised Brothers", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": ""}, {"name": "Ayle", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Indie, Hip Hop", "tickets": 2, "effect": "Sign one artist. You may refresh the available artists before or after you draw."}, {"name": "Mickey Raven", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "+1 Star Die"}, {"name": "Djo", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Indie", "tickets": 2, "effect": ""}, {"name": "Two Door Cinema Club", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Indie", "tickets": 2, "effect": ""}, {"name": "Boygenius", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": ""}, {"name": "The Kooks", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": ""}, {"name": "Christine & The Queens", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 3, "effect": ""}, {"name": "Angine de Poitrine", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": ""}, {"name": "Suki Waterhouse", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": "+1 VP per other Indie artist on this stage"}, {"name": "Mitski", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": ""}, {"name": "CMAT", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie, Pop", "tickets": 3, "effect": "+1 Star Die"}, {"name": "Florence & The Machine", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": "+5 ticket sales"}, {"name": "Lana Del Rey", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 3, "effect": "+1 Fame", "agentEffect": "+1 Fame"}, {"name": "Hozier", "fame": 3, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 3, "effect": "+1 VP"}, {"name": "Joy Division", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Indie", "tickets": 4, "effect": ""}, {"name": "Tame Impala", "fame": 4, "vp": 4, "campCost": 2, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Indie, Electronic", "tickets": 4, "effect": "+1 Amenity"}, {"name": "The Strokes", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 3, "genre": "Indie", "tickets": 4, "effect": ""}, {"name": "Gorillaz", "fame": 5, "vp": 5, "campCost": 1, "securityCost": 2, "cateringCost": 2, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "Gain 2 VP per existing campsite in your festival."}, {"name": "The Cure", "fame": 5, "vp": 5, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 3, "genre": "Indie, Rock", "tickets": 5, "effect": "Immediately book another Indie or Rock artist."}, {"name": "Bella Labelle", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "All players draw 1 artist from the artist deck."}, {"name": "Redcar", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "All players draw 1 artist from the artist deck"}, {"name": "Backseat", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": ""}, {"name": "Teena Marie", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "Discard one artist from your hand to gain 3 tickets."}, {"name": "Commodores", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": ""}, {"name": "Rick James", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Funk", "tickets": 2, "effect": "Discard two artists from your hand to gain the ticket cost of one of them."}, {"name": "Vulfpeck", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 2, "effect": ""}, {"name": "War", "fame": 1, "vp": 1, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 3, "effect": ""}, {"name": "Parliament", "fame": 1, "vp": 1, "campCost": 0, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 3, "effect": ""}, {"name": "Evelyn \"Champagne\" King:", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 3, "effect": "+1 VP per other Funk artist on this stage"}, {"name": "Cameo", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Funk", "tickets": 3, "effect": ""}, {"name": "Khruangbin", "fame": 2, "vp": 2, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Funk, Electronic", "tickets": 3, "effect": "Draw two artists from either the available artist pool or deck. Sign one."}, {"name": "Sly & The Family Stone", "fame": 2, "vp": 2, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Funk", "tickets": 3, "effect": "+1 VP"}, {"name": "Betty Davis", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Funk, Rock", "tickets": 4, "effect": "Discard one amenity, gain 5 tickets"}, {"name": "Thundercat", "fame": 3, "vp": 3, "campCost": 1, "securityCost": 1, "cateringCost": 3, "portalooCost": 0, "genre": "Funk", "tickets": 4, "effect": "+4 ticket sales"}, {"name": "Earth, Wind & Fire", "fame": 4, "vp": 4, "campCost": 0, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Funk", "tickets": 4, "effect": ""}, {"name": "Chaka Khan", "fame": 4, "vp": 4, "campCost": 2, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 4, "effect": "+1 Star Die"}, {"name": "Nile Rogers & Chic", "fame": 4, "vp": 4, "campCost": 1, "securityCost": 1, "cateringCost": 3, "portalooCost": 0, "genre": "Funk", "tickets": 4, "effect": "+1 Fame"}, {"name": "Silk Sonic", "fame": 5, "vp": 5, "campCost": 2, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Funk, Pop", "tickets": 5, "effect": "Discard two artists from your hand, then draw the top artist from the deck and play it for free."}, {"name": "Prince", "fame": 5, "vp": 5, "campCost": 1, "securityCost": 2, "cateringCost": 3, "portalooCost": 1, "genre": "Funk", "tickets": 5, "effect": "+1 VP per other artist on all of your stages."}];
+const ALL_ARTISTS = [{"name": "Kara Okay", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "+1 Star Die", "genreMatchEffect": ""}, {"name": "Sadchild", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 2, "effect": "+1 ticket sale for all players", "genreMatchEffect": ""}, {"name": "Mikerophone", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Rebecca Black", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Jamiroquai", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 3, "effect": "+1 Fame if you have played 2 Pop artists this year", "genreMatchEffect": "+3 ticket sales also."}, {"name": "Jonas Brothers", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 3, "effect": "", "genreMatchEffect": "", "agentEffect": "+2 ticket sales"}, {"name": "Remi Wolf", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Maroon 5", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "+1 ticket sale per other pop act on this stage", "genreMatchEffect": "+1 Fame"}, {"name": "Dua Lipa", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Scissor Sisters", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Chappell Roan", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Clairo", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Indie", "tickets": 4, "effect": "+1 ticket sale / Current Fame Level", "genreMatchEffect": "+1 ticket sale / fame level"}, {"name": "RAYE", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Nelly", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Pop, Hip Hop", "tickets": 5, "effect": "-2 ticket sales / +1 Fame", "genreMatchEffect": ""}, {"name": "Harry Styles", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 5, "effect": "", "genreMatchEffect": "+1 Fame", "agentEffect": "+2 star die"}, {"name": "Billie Eilish", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 6, "effect": "Sign 1 artist from the artist deck or the available artist pool.", "genreMatchEffect": ""}, {"name": "Beyonce", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 6, "effect": "+1 Fame if you have played 2 Pop artists this year", "genreMatchEffect": ""}, {"name": "Olivia Dean", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Coldplay", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 2, "portalooCost": 1, "genre": "Pop, Rock", "tickets": 7, "effect": "Year End: '+3 ticket sales / Fame gained this year", "genreMatchEffect": "+2 ticket sales / Fame gained this year"}, {"name": "Lady Gaga", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Pop, Electronic", "tickets": 7, "effect": "Year End: '+4 ticket sales if you have the most tickets.", "genreMatchEffect": "+12 ticket sales if you have the highest Fame."}, {"name": "Sitting Ducks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "All players draw 1 artist from the artist deck", "genreMatchEffect": ""}, {"name": "Beababdoobee", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Limp Bizkit", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "No Doubt", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Vampire Weekend", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "The Darkness", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Royal Blood", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 3, "effect": "", "genreMatchEffect": "", "agentEffect": "draw 3 artists from the deck"}, {"name": "Heart", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock, Indie", "tickets": 3, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown", "genreMatchEffect": "Roll 5 Amenity dice instead of 3"}, {"name": "Wolf Alice", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock, Indie", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Wet Leg", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "+1 ticket sale per other Rock act on this stage", "genreMatchEffect": ""}, {"name": "Blondie", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Rage Against the Machine", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Rock, Funk", "tickets": 4, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown", "genreMatchEffect": ""}, {"name": "Beastie Boys", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Hip Hop", "tickets": 5, "effect": "", "genreMatchEffect": "", "agentEffect": "+1 Portaloo. Place it this turn"}, {"name": "David Bowie", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 5, "effect": "Roll all amenity dice and gain 1 Fame if a Fame shows.", "genreMatchEffect": ""}, {"name": "Slipknot", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 2, "genre": "Rock", "tickets": 5, "effect": "Roll 3 Amenity dice and then gain 2 tickets / Each Fame shown", "genreMatchEffect": ""}, {"name": "Olivia Rodrigo", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Pop", "tickets": 5, "effect": "+1 ticket sale / Current Fame Level", "genreMatchEffect": "+1 Fame"}, {"name": "Radiohead", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Electronic", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Arctic Monkeys", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Foo Fighters", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 2, "genre": "Rock", "tickets": 7, "effect": "Year End: Roll all 5 Amenity Dice. +3 ticket sales for each unique amenity that shows", "genreMatchEffect": "+5 ticket sales"}, {"name": "Fleetwood Mac", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 7, "effect": "Year End: Roll all 5 dice. +3 ticket sales per die showing the most common result", "genreMatchEffect": "+5 ticket sales instead of +3 per die."}, {"name": "Lil Angry", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Loosey Goosey", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop, Pop", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Knucks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Eve", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "-1 ticket sale. Sell 3 tickets.", "genreMatchEffect": ""}, {"name": "KAYTRANADA", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop, Electronic", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Lil Dicky", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "", "genreMatchEffect": "+1 Fame", "agentEffect": "+1 security. Place it this turn"}, {"name": "Salt-N-Pepa", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Ja Rule", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Ms Banks", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Doja Cat", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "De La Soul", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 4, "effect": "+1 ticket sale per other Hip Hop act on this stage", "genreMatchEffect": ""}, {"name": "Snoop Dogg", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Funk", "tickets": 4, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "Loyle Carner", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Rock", "tickets": 4, "effect": "-2 ticket sale for 1 Fame. Roll 1 amenity dice and gain 1 Fame for each Fame shown.", "genreMatchEffect": ""}, {"name": "Little Simz", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop, Indie", "tickets": 5, "effect": "", "genreMatchEffect": ""}, {"name": "Dave", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 5, "effect": "-3 ticket sale. Gain 1 Fame.", "genreMatchEffect": "+1 Fame"}, {"name": "Missy Elliott", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 6, "effect": "-2 ticket sale. Draw an artist from the deck.", "genreMatchEffect": ""}, {"name": "Lauryn Hill", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Nas", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Kendrick Lamar", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 7, "effect": "Year End: Sell 15 tickets.", "genreMatchEffect": "+5 ticket sales"}, {"name": "Eminem", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 3, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 7, "effect": "Year End: +3 ticket sales / Hip Hop artist you've played this Year", "genreMatchEffect": "+6 ticket sales instead of +3"}, {"name": "CRUEL MISTRESS", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 ticket sale for all players", "genreMatchEffect": ""}, {"name": "808 DYLAN", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "+1 Star Die", "genreMatchEffect": ""}, {"name": "Horsegiirl", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Grimes", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "FISHER", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "+1 Fame", "genreMatchEffect": ""}, {"name": "Romy", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "The Chainsmokers", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "+1 ticket / amenity adjacent to this artists stage", "genreMatchEffect": "Place 1 Amenity of your choice."}, {"name": "CHVRCHES", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "+1 ticket / amenity adjacent to this artists stage", "genreMatchEffect": ""}, {"name": "Jamie xx", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Indie", "tickets": 4, "effect": "", "genreMatchEffect": "", "agentEffect": "+1 campsite. Place this turn"}, {"name": "Pink Pantheress", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic, Pop", "tickets": 4, "effect": "+1 ticket sale per other Electronic artist on this stage", "genreMatchEffect": ""}, {"name": "Flume", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Hip Hop", "tickets": 4, "effect": "-2 ticket sales. Gain +1 ticket / 2 amenities.", "genreMatchEffect": "+1 Fame"}, {"name": "Opolopo", "fame": 2, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Peggy Gou", "fame": 2, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Electronic", "tickets": 4, "effect": "+1 ticket / amenity adjacent to this artists stage", "genreMatchEffect": ""}, {"name": "Chase & Status", "fame": 2, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 4, "effect": "+1 ticket sale per other Electronic artist on this stage", "genreMatchEffect": "Place 1 Amenity of your choice."}, {"name": "Charli XCX", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Electronic, Pop", "tickets": 5, "effect": "+1 Fame if you have played 2 artists of either Electronic or Pop.", "genreMatchEffect": ""}, {"name": "The Chemical Brothers", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 5, "effect": "Draw two artists from either the available artist pool or deck. Sign one.", "genreMatchEffect": ""}, {"name": "Linkin Park", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic, Rock", "tickets": 5, "effect": "+1 Fame", "genreMatchEffect": ""}, {"name": "Skrillex", "fame": 3, "vp": 0, "campCost": 3, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 5, "effect": "", "genreMatchEffect": ""}, {"name": "Daft Punk", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Electronic", "tickets": 7, "effect": "Year End: '+6 ticket sales / 3 Amenities", "genreMatchEffect": "+9 ticket sales instead of +6"}, {"name": "Fatboy Slim", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic", "tickets": 7, "effect": "Year End: '+4 ticket sales / Council Objective that is currently giving you a benefit", "genreMatchEffect": "+7 ticket sales instead of '+4"}, {"name": "Bruised Brothers", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Ayle", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie, Hip Hop", "tickets": 2, "effect": "Sign one artist. You may refresh the available artists before or after you draw.", "genreMatchEffect": ""}, {"name": "Mickey Raven", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "+1 Star Die", "genreMatchEffect": ""}, {"name": "Djo", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Indie", "tickets": 2, "effect": "", "genreMatchEffect": "Choose an indie artist from the artist pool, if there is one."}, {"name": "Two Door Cinema Club", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Indie", "tickets": 2, "effect": "Choose an indie artist from the artist pool, if there is one.", "genreMatchEffect": ""}, {"name": "Boygenius", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "The Kooks", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": "Choose an indie artist from the artist pool, if there is one.", "genreMatchEffect": ""}, {"name": "Christine & The Queens", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 3, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "Angine de Poitrine", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Suki Waterhouse", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "+1 ticket sale per other Indie artist on this stage", "genreMatchEffect": "Choose an indie artist from the artist pool, if there is one."}, {"name": "Mitski", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "CMAT", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie, Pop", "tickets": 4, "effect": "+1 Star Die", "genreMatchEffect": "+1 Fame"}, {"name": "Florence & The Machine", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "+2 ticket sales", "genreMatchEffect": ""}, {"name": "Lana Del Rey", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "+1 Fame", "genreMatchEffect": ""}, {"name": "Hozier", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 4, "effect": "+2 ticket sales", "genreMatchEffect": ""}, {"name": "Joy Division", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Indie", "tickets": 6, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "Tame Impala", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Indie, Electronic", "tickets": 6, "effect": "+1 Amenity", "genreMatchEffect": ""}, {"name": "The Strokes", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 3, "genre": "Indie", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Gorillaz", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 2, "portalooCost": 2, "genre": "Indie", "tickets": 7, "effect": "Gain 4 ticket sales per existing campsite in your festival.", "genreMatchEffect": "+9 ticket sales instead"}, {"name": "The Cure", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 3, "genre": "Indie, Rock", "tickets": 7, "effect": "Immediately book another Indie or Rock artist.", "genreMatchEffect": "+12 ticket sales"}, {"name": "Bella Labelle", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "All players draw 1 artist from the artist deck.", "genreMatchEffect": ""}, {"name": "Redcar", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "All players draw 1 artist from the artist deck", "genreMatchEffect": ""}, {"name": "Backseat", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "", "genreMatchEffect": ""}, {"name": "Teena Marie", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "Gain an artist from the pool who's Fame cost is lower than this artist.", "genreMatchEffect": ""}, {"name": "Commodores", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 2, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "Rick James", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Funk", "tickets": 2, "effect": "Discard two artists from your hand to gain the ticket cost of one of them.", "genreMatchEffect": ""}, {"name": "Vulfpeck", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "War", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 3, "effect": "", "genreMatchEffect": "+1 Fame"}, {"name": "Parliament", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 3, "effect": "", "genreMatchEffect": ""}, {"name": "Evelyn \"Champagne\" King:", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk", "tickets": 4, "effect": "+1 ticket sale per other Funk artist on this stage", "genreMatchEffect": ""}, {"name": "Cameo", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Funk", "tickets": 4, "effect": "", "genreMatchEffect": ""}, {"name": "Khruangbin", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 0, "genre": "Funk, Electronic", "tickets": 4, "effect": "Draw 3 artists from the deck. Keep all artists that have lower fame than this artist.", "genreMatchEffect": "+1 Fame"}, {"name": "Sly & The Family Stone", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Funk", "tickets": 4, "effect": "Gain an artist from the pool who's Fame cost is lower than this artist.", "genreMatchEffect": ""}, {"name": "Betty Davis", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Funk, Rock", "tickets": 5, "effect": "Discard one amenity, gain 5 tickets", "genreMatchEffect": "You do not need to discard the amenity."}, {"name": "Thundercat", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 3, "portalooCost": 0, "genre": "Funk", "tickets": 5, "effect": "Draw 3 artists from the deck. Keep all artists that have lower fame than this artist.", "genreMatchEffect": ""}, {"name": "Earth, Wind & Fire", "fame": 4, "vp": 0, "campCost": 0, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Funk", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Chaka Khan", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Funk", "tickets": 6, "effect": "+1 Star Die", "genreMatchEffect": ""}, {"name": "Nile Rogers & Chic", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 3, "portalooCost": 0, "genre": "Funk", "tickets": 6, "effect": "+1 Fame", "genreMatchEffect": ""}, {"name": "Silk Sonic", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Funk, Pop", "tickets": 7, "effect": "Discard two artists from your hand, then draw the top artist from the deck and play it for free.", "genreMatchEffect": "Draw 2 artists instead. You choose which you play."}, {"name": "Prince", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 3, "portalooCost": 1, "genre": "Funk", "tickets": 7, "effect": "+1 ticket sale per other artist on all of your stages.", "genreMatchEffect": "+4 ticket sales per other artist on all of your stages instead"}];
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
@@ -218,26 +218,26 @@ const RANDOM_NAMES = [
 const AI_NAMES = ["RoboFest","AutoStage","ByteBeats","CyberGrove","NeuralNights"];
 
 const ALL_OBJECTIVES = [
-  { id: "local_talent", name: "Local Talent", req: "Play a 0-1 Fame artist as a headliner", reward: "+3 VP" },
-  { id: "popstars", name: "Popstars", req: "Feature a full Pop lineup", reward: "+3 VP" },
-  { id: "rock_on", name: "Rock On", req: "Feature a full Rock lineup", reward: "+3 VP" },
-  { id: "disc_jockeys", name: "Disc Jockeys", req: "Feature a full Electronic lineup", reward: "+3 VP" },
-  { id: "fire_verses", name: "Fire Verses", req: "Feature a full Hip Hop lineup", reward: "+3 VP" },
-  { id: "indiependent", name: "Indiependent", req: "Feature a full Indie lineup", reward: "+3 VP" },
-  { id: "funky_town", name: "Funky Town", req: "Feature a full Funk lineup", reward: "+3 VP" },
-  { id: "eclectic", name: "Eclectic", req: "Lineups with at least 3 different genres", reward: "+3 VP" },
-  { id: "friends_special", name: "Friends in Special Places", req: "Finish a lineup with a special guest", reward: "+3 VP" },
-  { id: "leading_example", name: "Leading by Example", req: "2nd and 3rd artists on a stage have lower Fame cost than the 1st", reward: "+3 VP" },
-  { id: "switching_up", name: "Switching it Up", req: "Feature a balanced lineup of 2 genres (e.g. 1 pop, 1 rock, 1 pop-rock)", reward: "+3 VP" },
-  { id: "music_speaks", name: "Music that Speaks for Itself", req: "Feature a lineup with no effects", reward: "+3 VP" },
-  { id: "high_profile", name: "High Profile", req: "Feature a lineup with at least 5 security in combined cost", reward: "+3 VP" },
-  { id: "foodies", name: "Foodies", req: "Feature a lineup with at least 5 catering in combined cost", reward: "+3 VP" },
-  { id: "pampered", name: "Pampered", req: "Feature a lineup with at least 5 portaloos in combined cost", reward: "+3 VP" },
-  { id: "price_fame", name: "The Price of Fame", req: "Feature a lineup with a total cost of 20 amenities", reward: "+3 VP" },
-  { id: "industry_friends", name: "Industry Friends", req: "Feature two lineups with a headliner in the same genre", reward: "+3 VP" },
-  { id: "same_song_sheet", name: "Singing From The Same Song Sheet", req: "Feature a lineup where each artist has the same exact amenity requirements", reward: "+3 VP" },
-  { id: "experimental", name: "Experimental", req: "Feature a lineup where each artist is a mix of two genres", reward: "+3 VP" },
-  { id: "fair_share", name: "Fair Share", req: "Feature a lineup where each artist requires the same number of amenities", reward: "+3 VP" },
+  { id: "local_talent", name: "Local Talent", req: "Play a 0-1 Fame artist as a headliner", reward: "+3 tickets" },
+  { id: "popstars", name: "Popstars", req: "Feature a full Pop lineup", reward: "+3 tickets" },
+  { id: "rock_on", name: "Rock On", req: "Feature a full Rock lineup", reward: "+3 tickets" },
+  { id: "disc_jockeys", name: "Disc Jockeys", req: "Feature a full Electronic lineup", reward: "+3 tickets" },
+  { id: "fire_verses", name: "Fire Verses", req: "Feature a full Hip Hop lineup", reward: "+3 tickets" },
+  { id: "indiependent", name: "Indiependent", req: "Feature a full Indie lineup", reward: "+3 tickets" },
+  { id: "funky_town", name: "Funky Town", req: "Feature a full Funk lineup", reward: "+3 tickets" },
+  { id: "eclectic", name: "Eclectic", req: "Lineups with at least 3 different genres", reward: "+3 tickets" },
+  { id: "friends_special", name: "Friends in Special Places", req: "Finish a lineup with a special guest", reward: "+3 tickets" },
+  { id: "leading_example", name: "Leading by Example", req: "2nd and 3rd artists on a stage have lower Fame cost than the 1st", reward: "+3 tickets" },
+  { id: "switching_up", name: "Switching it Up", req: "Feature a balanced lineup of 2 genres (e.g. 1 pop, 1 rock, 1 pop-rock)", reward: "+3 tickets" },
+  { id: "music_speaks", name: "Music that Speaks for Itself", req: "Feature a lineup with no effects", reward: "+3 tickets" },
+  { id: "high_profile", name: "High Profile", req: "Feature a lineup with at least 5 security in combined cost", reward: "+3 tickets" },
+  { id: "foodies", name: "Foodies", req: "Feature a lineup with at least 5 catering in combined cost", reward: "+3 tickets" },
+  { id: "pampered", name: "Pampered", req: "Feature a lineup with at least 5 portaloos in combined cost", reward: "+3 tickets" },
+  { id: "price_fame", name: "The Price of Fame", req: "Feature a lineup with a total cost of 20 amenities", reward: "+3 tickets" },
+  { id: "industry_friends", name: "Industry Friends", req: "Feature two lineups with a headliner in the same genre", reward: "+3 tickets" },
+  { id: "same_song_sheet", name: "Singing From The Same Song Sheet", req: "Feature a lineup where each artist has the same exact amenity requirements", reward: "+3 tickets" },
+  { id: "experimental", name: "Experimental", req: "Feature a lineup where each artist is a mix of two genres", reward: "+3 tickets" },
+  { id: "fair_share", name: "Fair Share", req: "Feature a lineup where each artist requires the same number of amenities", reward: "+3 tickets" },
 ];
 
 const FAME_VP = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
@@ -333,6 +333,17 @@ function canBookHeadlinerViaGenre(artist, pd, stageIdx) {
   return sa.every(a => getGenres(a.genre).some(g => headlinerGenres.has(g)));
 }
 
+// v126+: is this artist eligible for the genre-match headliner BONUS effect on any stage?
+// Returns true if (a) the artist has a non-empty genreMatchEffect defined AND (b) at least
+// one stage would allow the genre-match booking path. Used to glow the card in the UI so
+// players can spot the bonus opportunity at a glance.
+function hasGenreMatchBonusAvailable(artist, pd) {
+  if (!artist || !pd) return false;
+  if (!artist.genreMatchEffect || !artist.genreMatchEffect.trim()) return false;
+  const stages = pd.stageArtists || [];
+  return stages.some((_, i) => canBookHeadlinerViaGenre(artist, pd, i));
+}
+
 // Is booking this artist onto this specific stage legal? Combines fame check + open-slot
 // check + (amenities OR genre-match).
 function canBookArtistOnStage(artist, pd, stageIdx) {
@@ -361,7 +372,7 @@ function getAvailableStages(pd) {
 // ═══════════════════════════════════════════════════════════
 // COMPONENTS
 // ═══════════════════════════════════════════════════════════
-function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable }) {
+function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable, genreMatchGlow }) {
   const gs = getGenres(artist.genre);
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
   const grad = gs.length > 1 ? `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)` : undefined;
@@ -370,19 +381,28 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
     ? (mob ? { width: 140, minHeight: 100, padding: "8px 10px", fontSize: 12 } : { width: 110, minHeight: 90, padding: "6px 8px", fontSize: 10 })
     : (mob ? { width: 170, minHeight: 140, padding: "10px 12px", fontSize: 13 } : { width: 150, minHeight: 130, padding: "8px 10px", fontSize: 11 });
   const fs = mob ? { name: small?12:14, meta: small?10:11, cost: 11, effect: small?9:10 } : { name: small?10:12, meta: small?8:9, cost: 10, effect: small?7:8 };
+  // v126+: genre-match glow. When a headliner-eligible artist has a genreMatchEffect AND
+  // there's a stage in the player's festival with 2 matching-genre artists ready to accept
+  // them as headliner, the card gains a gold aura. This signals "there's a bonus available
+  // on this artist right now" — the amenity-free booking + the extra effect layered on top.
+  const glowBorder = genreMatchGlow ? "2px solid #fbbf24" : (selected ? "2px solid #fbbf24" : affordable ? "2px solid rgba(251,191,36,0.5)" : "2px solid rgba(255,255,255,0.15)");
+  const glowShadow = genreMatchGlow
+    ? "0 0 16px rgba(251,191,36,0.85), 0 0 32px rgba(251,191,36,0.45)"
+    : (selected ? "0 0 12px rgba(251,191,36,0.4)" : "0 2px 8px rgba(0,0,0,0.3)");
   return (
     <div onClick={disabled ? undefined : onClick} style={{
-      ...sz, borderRadius: mob?12:10, border: selected ? "2px solid #fbbf24" : affordable ? "2px solid rgba(251,191,36,0.5)" : "2px solid rgba(255,255,255,0.15)",
+      ...sz, borderRadius: mob?12:10, border: glowBorder,
       background: grad || bg, color: "#fff", cursor: disabled ? "default" : "pointer",
       opacity: disabled ? 0.4 : 1, display: "flex", flexDirection: "column", gap: mob?3:2,
       position: "relative", overflow: "hidden", transition: "all 0.15s", flexShrink: 0,
-      boxShadow: selected ? "0 0 12px rgba(251,191,36,0.4)" : "0 2px 8px rgba(0,0,0,0.3)",
-      animation: affordable && !disabled && !selected ? "affordPulse 2s ease-in-out infinite" : "none",
+      boxShadow: glowShadow,
+      animation: genreMatchGlow ? "genreMatchGlow 1.6s ease-in-out infinite" : (affordable && !disabled && !selected ? "affordPulse 2s ease-in-out infinite" : "none"),
     }}>
+      {genreMatchGlow && <div style={{ position: "absolute", top: 4, right: 4, background: "rgba(251,191,36,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 900, padding: "2px 5px", borderRadius: 5, letterSpacing: 0.5, boxShadow: "0 0 6px rgba(251,191,36,0.8)" }}>🎸</div>}
       <div style={{ fontWeight: 800, fontSize: fs.name, lineHeight: 1.2, textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}>{artist.name}</div>
       <div style={{ fontSize: fs.meta, opacity: 0.9 }}>🔥{artist.fame} • {artist.genre}</div>
       <div style={{ fontSize: fs.meta, display: "flex", gap: mob?6:4, flexWrap: "wrap" }}>
-        <span>🎟️{artist.tickets}</span><span>⭐{artist.vp}VP</span>
+        <span>🎟️{(artist.tickets || 0) + (artist.vp || 0)}</span>
       </div>
       {showCost && <div style={{ fontSize: fs.cost, opacity: 0.85, marginTop: 2 }}>
         {artist.campCost > 0 && <span>⛺{artist.campCost} </span>}
@@ -391,7 +411,8 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
         {artist.portalooCost > 0 && <span>🚽{artist.portalooCost}</span>}
       </div>}
       {artist.effect && <div style={{ fontSize: fs.effect, fontStyle: "italic", opacity: 0.9, marginTop: "auto", textShadow: "0 1px 2px rgba(0,0,0,0.5)" }}>✨ {artist.effect}</div>}
-      {artist.agentEffect && <div style={{ fontSize: fs.effect, fontStyle: "italic", opacity: 0.95, marginTop: artist.effect ? 2 : "auto", color: "#fbbf24", textShadow: "0 1px 2px rgba(0,0,0,0.5)" }}>🕵️ Via agent: {artist.agentEffect}</div>}
+      {artist.genreMatchEffect && genreMatchGlow && <div style={{ fontSize: fs.effect, fontStyle: "italic", opacity: 0.98, marginTop: artist.effect ? 2 : "auto", color: "#fde68a", textShadow: "0 1px 2px rgba(0,0,0,0.7)", fontWeight: 700 }}>🎸 Genre bonus: {artist.genreMatchEffect}</div>}
+      {artist.agentEffect && <div style={{ fontSize: fs.effect, fontStyle: "italic", opacity: 0.95, marginTop: (artist.effect || artist.genreMatchEffect) ? 2 : "auto", color: "#fbbf24", textShadow: "0 1px 2px rgba(0,0,0,0.5)" }}>🕵️ Via agent: {artist.agentEffect}</div>}
     </div>
   );
 }
@@ -1462,7 +1483,11 @@ export default function Headliners() {
     const fields = pd.fields || emptyFields();
     const am = sumFields(fields);
     let t = (am.campsite || 0) * 2;
-    (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += a.tickets; }));
+    // v126: artists contribute BOTH their base tickets AND their VP to the unified score.
+    // Previously these were separate accounting; now both simply count as "tickets sold" from
+    // that artist's presence in the lineup. Amenity effects, agent effects, and bonuses still
+    // flow through bonusTickets.
+    (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += (a.tickets || 0) + (a.vp || 0); }));
     t += pd.bonusTickets || 0;
     // Council ticket bonuses (year-scaled, applies if field qualifies in current year)
     const councils = pd.councils || [];
@@ -1478,8 +1503,11 @@ export default function Headliners() {
       if (c.reward?.type === "fame") councilFame += c.reward.perYear[yIdx] || 0;
     }
     t += councilTickets;
+    // v126: fame is now driven purely by explicit fame-gaining events (baseFame accumulator
+    // + council fame rewards). The old `floor(tickets/10)` bridge is gone — tickets are now
+    // the score itself (see the v126 unification: VP → tickets merged into a single number),
+    // so double-counting them as fame would compound the same quantity twice.
     let fame = pd.baseFame || 0;
-    fame += Math.floor(t / 10);
     fame += councilFame;
     fame = Math.min(FAME_MAX, fame);
     return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame, councilTicketsThisYear: councilTickets, councilFameThisYear: councilFame };
@@ -1605,10 +1633,10 @@ export default function Headliners() {
     setPlayerData(p => ({ ...p, [pid]: {
       ...p[pid],
       baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-      vp: (p[pid].vp || 0) + 1,
+      bonusTickets: (p[pid].bonusTickets || 0) + 1,
       microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
     } }));
-    addLog("🕵️ Agent", `${pName} placed agent on "${trendLabel}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+    addLog("🕵️ Agent", `${pName} placed agent on "${trendLabel}" microtrend → +1 🔥 Fame, +1 🎟️ ticket!`);
     showFloatingBonus(`🎵 ${trendLabel} (Agent)!`, active.kind === "amenity" ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24"));
     // Agent done — exhausts via the standard pipeline (which also handles agentFame council bonus).
     setAgentPlacements(prev => ({ ...prev, [pid]: { type: "microtrend", placedTurn: turnNumber } }));
@@ -1803,8 +1831,8 @@ export default function Headliners() {
     if (amenityType !== "security") return;
     const pd = playerData[pid];
     if (pd && pd.vpPerSecurity > 0) {
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + p[pid].vpPerSecurity } }));
-      addLog("Effect", `+${pd.vpPerSecurity} VP from security placement!`);
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + p[pid].vpPerSecurity } }));
+      addLog("Effect", `+${pd.vpPerSecurity} 🎟️ tickets from security placement!`);
       showFloatingBonus(`+${pd.vpPerSecurity} ⭐ (security)`, "#c4b5fd");
     }
   }
@@ -2107,18 +2135,18 @@ export default function Headliners() {
           next[oi] = { ...next[oi], claimed1st: pid };
           return next;
         });
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 5 } }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
         addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +5 VP!`);
-        showFloatingBonus("🎯 +5 VP!", "#fbbf24"); sfx.headliner();
+        showFloatingBonus("🎯 +5 🎟️!", "#fbbf24"); sfx.headliner();
       } else if (lo.claimed2nd === null && lo.claimed1st !== pid) {
         setLineupObjectives(prev => {
           const next = [...prev];
           next[oi] = { ...next[oi], claimed2nd: pid };
           return next;
         });
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 3 } }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 3 } }));
         addLog("🎯 LINEUP OBJECTIVE", `${pName} SECOND to match ${lo.genres.join("+")} → +3 VP!`);
-        showFloatingBonus("🎯 +3 VP!", "#c4b5fd"); sfx.headliner();
+        showFloatingBonus("🎯 +3 🎟️!", "#c4b5fd"); sfx.headliner();
       }
       return; // only match one objective per lineup
     }
@@ -2135,6 +2163,113 @@ export default function Headliners() {
   }
 
   // ─── Apply artist effects ───
+
+  // v126+: Genre-match headliner bonus effect. Fires when a headliner is booked via
+  // the genre-match path (both stage artists share a genre with the incoming). Two paths:
+  //  (A) Replacement effects — for artists whose bonus reads "+X instead of +Y", the base
+  //      effect has already fired for its +Y contribution, so we add (X - Y) * multiplier
+  //      here so the total lands exactly on the replacement value the card promises.
+  //  (B) Additive effects — for simpler "+1 Fame" or "+3 ticket sales" style bonuses,
+  //      just add the amount on top of whatever the base effect did.
+  function applyGenreMatchEffect(artist, pid) {
+    const gm = (artist.genreMatchEffect || "").trim();
+    if (!gm) return;
+    const gl = gm.toLowerCase();
+    const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    // Toast + log the raw effect text so players see the narrative
+    addLog("🎸 Genre-Match Bonus", `${artist.name}: ${gm}`);
+    showFloatingBonus(`🎸 ${gm}`, "#fbbf24");
+
+    // ── (A) Replacement handlers (per-artist, deterministic delta) ────────────────
+    // These artists have a base effect whose numeric coefficient is REPLACED (not added
+    // to) by the genre-match version. We compute (replacement - base) × multiplier and
+    // add that delta so the base's contribution plus this delta equals the replacement.
+    // Base value assumed to have already fired from applyEffect before we run.
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    const totalOtherArtists = Math.max(0, (pd.stageArtists || []).flat().length - 1);
+    const totalAmenities = Object.values(pd.amenities || {}).reduce((s, v) => s + v, 0);
+    const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], yearRef.current || year || 1)).length;
+    const hipHopCount = (pd.stageArtists || []).flat().filter(a => getGenres(a.genre).includes("Hip Hop")).length;
+    const campCount = (pd.amenities?.campsite) || 0;
+
+    const insteadCases = {
+      // multiplier-replacement artists (base fires with the SMALL coefficient; we add the delta)
+      "Gorillaz":       { delta: 5, times: campCount },         // 4 → 9 per campsite
+      "Prince":         { delta: 3, times: totalOtherArtists }, // 1 → 4 per other artist
+      "Eminem":         { delta: 3, times: hipHopCount },       // 3 → 6 per hip hop artist (fires at year end)
+      "Daft Punk":      { delta: 3, times: Math.floor(totalAmenities / 3) }, // 6 → 9 per 3 amenities (year end)
+      "Fatboy Slim":    { delta: 3, times: activeCouncils },    // 4 → 7 per qualifying council (year end)
+      // Fleetwood Mac (Year End): "+3 per die showing most common" → "+5 per die instead".
+      // Delta 2/die × expected 2 dice (with 5 dice rolled, expected most-common count ≈ 1.5-2).
+      // We add a flat +4 as the expected bonus — actual roll may vary slightly but this is close.
+      "Fleetwood Mac":  { delta: 4, times: 1, note: "expected value from 5-dice roll" },
+      // Heart: base rolls 3 dice → 2 tickets per Fame shown. Genre-match rolls 5 instead.
+      // Expected extra fame from 2 more dice = 2 × (1/6) fame prob × 2 tickets = ~+0.67. Round +1.
+      "Heart":          { delta: 1, times: 1, note: "expected value from extra 2 dice" },
+      // Betty Davis: base "Discard 1 amenity, gain 5 tickets" — with genre-match, no discard needed.
+      // Base effect isn't currently auto-resolving the "gain 5" either, so genre-match fires the +5 directly.
+      "Betty Davis":    { delta: 5, times: 1 },
+    };
+    if (insteadCases[artist.name]) {
+      const { delta, times } = insteadCases[artist.name];
+      const bonus = delta * times;
+      if (bonus > 0) {
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + bonus } }));
+        addLog("🎸 Genre-Match Bonus", `${festival}: net +${bonus} 🎟️ from ${artist.name}'s replacement effect`);
+      }
+      setTimeout(() => recalcTickets(), 50);
+      return;
+    }
+    // Silk Sonic — replacement modifies the base effect's mechanic (Draw-2-pick-1 instead
+    // of Discard-2-draw-top). The base effect is complex and Silk Sonic's mechanic isn't
+    // auto-resolved anyway, so we leave this one as a narrative log line only.
+    if (artist.name === "Silk Sonic") {
+      setTimeout(() => recalcTickets(), 50);
+      return;
+    }
+
+    // ── (B) Additive handlers (bonus adds on top of base) ────────────────────────
+
+    // +N Fame
+    const fameMatch = gl.match(/\+(\d+)\s*fame/);
+    if (fameMatch) {
+      const amount = parseInt(fameMatch[1]);
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
+    }
+    // +N ticket sales (plain flat; only match if not "per ..." — those get their own handler)
+    const flatTix = gl.match(/\+(\d+)\s*ticket(?:\s*sales?)?(?!\s*\/|\s*per)/);
+    // Per-fame-level ticket bonuses (Clairo: "+1 ticket sale / fame level", Coldplay: "+2 ticket sales / Fame gained")
+    const perFameTix = gl.match(/\+(\d+)\s*ticket(?:\s*sales?)?\s*\/\s*fame/);
+    if (perFameTix) {
+      const per = parseInt(perFameTix[1]);
+      // "Fame gained this year" — approximate with current baseFame (v1 approximation).
+      const fameFactor = gl.includes("gained") ? (pd.baseFame || 0) : (pd.fame || 0);
+      const bonus = per * fameFactor;
+      if (bonus > 0) setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + bonus } }));
+    } else if (flatTix) {
+      const amount = parseInt(flatTix[1]);
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
+    }
+    // Place an amenity of your choice — auto-pick best amenity via AI heuristic
+    if (gl.includes("place 1 amenity") || gl.includes("place an amenity")) {
+      const amt = aiPickAmenityType(pd);
+      const fIdx = aiPickFieldForAmenity(pd, amt, yearRef.current || year || 1);
+      setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, amt, +1) }));
+      addLog("🎸 Genre-Match", `${festival}: placed bonus ${AMENITY_LABELS[amt]} in F${fIdx + 1}`);
+    }
+    // "Choose an indie artist from the artist pool" — auto-take first Indie from pool
+    if (gl.includes("indie artist from the artist pool") || gl.includes("indie artist from the pool")) {
+      const idx = artistPool.findIndex(a => getGenres(a.genre).includes("Indie"));
+      if (idx >= 0) {
+        const chosen = artistPool[idx];
+        setArtistPool(prev => { const np = [...prev]; np.splice(idx, 1); return np; });
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
+        addLog("🎸 Genre-Match", `${festival}: took ${chosen.name} into hand`);
+      }
+    }
+    setTimeout(() => recalcTickets(), 50);
+  }
+
   function applyEffect(artist, pid, times = 1, stageIdx = -1, viaAgent = false) {
     const eff = (artist.effect || "").trim();
     // Agent-conditional effects: trigger ONLY when booked via an agent AND the lobby toggle
@@ -2150,7 +2285,7 @@ export default function Headliners() {
       // VP appears in the year-end summary alongside other year-end effects.
       const isYearEnd = /year\s*end/i.test(ae);
       // +N VP (year-end or immediate VP grant)
-      const vpMatch = ae.match(/\+(\d+)\s*VP/i);
+      const vpMatch = ae.match(/\+(\d+)\s*(?:VP|tickets?)/i);
       if (vpMatch) {
         const amount = parseInt(vpMatch[1]);
         if (isYearEnd) {
@@ -2160,11 +2295,11 @@ export default function Headliners() {
             const list = prev[pid] || [];
             return { ...prev, [pid]: [...list, artist.name] };
           });
-          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} VP queued for Year End (agent booking)`);
+          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🎟️ tickets queued for Year End (agent booking)`);
           showFloatingBonus(`+${amount} ⭐ at Year End!`, "#c4b5fd");
         } else {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + amount } }));
-          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} VP (agent booking)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
+          addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🎟️ tickets (agent booking)`);
           showFloatingBonus(`+${amount} ⭐ Agent!`, "#c4b5fd");
         }
       }
@@ -2250,13 +2385,13 @@ export default function Headliners() {
       }
       // === VP effects ===
       if ((el.includes("+1 vp") || el.includes("+1vp")) && !el.includes("vp /") && !el.includes("vp per") && !el.includes("vp if")) {
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + 1 } }));
-        addLog("Effect", `${artist.name}: +1 VP`); showFloatingBonus("+1 ⭐", "#c4b5fd");
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
+        addLog("Effect", `${artist.name}: +1 🎟️ ticket`); showFloatingBonus("+1 ⭐", "#c4b5fd");
       }
       if (el.includes("gain 1vp per existing campsite")) {
         const camps = (playerData[pid]?.amenities?.campsite) || 0;
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + camps } }));
-        addLog("Effect", `${artist.name}: +${camps} VP (1 per campsite)`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + camps } }));
+        addLog("Effect", `${artist.name}: +${camps} 🎟️ tickets (1 per campsite)`);
       }
       // "+1 VP per other [Genre] act on this stage" (genre synergy)
       {
@@ -2266,8 +2401,8 @@ export default function Headliners() {
           const stageArtists = (playerData[pid]?.stageArtists || [])[stageIdx] || [];
           const otherCount = stageArtists.filter(a => a.name !== artist.name && getGenres(a.genre).includes(targetGenre)).length;
           if (otherCount > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + otherCount } }));
-            addLog("Effect", `${artist.name}: +${otherCount} VP (${otherCount} other ${targetGenre} on stage)`);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + otherCount } }));
+            addLog("Effect", `${artist.name}: +${otherCount} 🎟️ tickets (${otherCount} other ${targetGenre} on stage)`);
             showFloatingBonus(`+${otherCount} ⭐`, "#c4b5fd");
           }
         }
@@ -2276,8 +2411,8 @@ export default function Headliners() {
       if (el.includes("vp per other artist on all")) {
         const totalOthers = (playerData[pid]?.stageArtists || []).flat().filter(a => a.name !== artist.name).length;
         if (totalOthers > 0) {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + totalOthers } }));
-          addLog("Effect", `${artist.name}: +${totalOthers} VP (${totalOthers} other artists on stages)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + totalOthers } }));
+          addLog("Effect", `${artist.name}: +${totalOthers} 🎟️ tickets (${totalOthers} other artists on stages)`);
           showFloatingBonus(`+${totalOthers} ⭐`, "#c4b5fd");
         }
       }
@@ -2337,11 +2472,11 @@ export default function Headliners() {
       // === -VP effects (Hip Hop risk/reward) ===
       // "-X VP" — generic VP loss patterns
       {
-        const vpLossMatch = eff.match(/-(\d+)\s*VP/i);
+        const vpLossMatch = eff.match(/-(\d+)\s*(?:VP|tickets?)/i);
         if (vpLossMatch) {
           const vpLoss = parseInt(vpLossMatch[1]);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: Math.max(0, (p[pid].vp || 0) - vpLoss) } }));
-          addLog("Effect", `${artist.name}: -${vpLoss} VP`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) - vpLoss) } }));
+          addLog("Effect", `${artist.name}: -${vpLoss} 🎟️ tickets`);
           showFloatingBonus(`-${vpLoss} ⭐`, "#ef4444");
         }
       }
@@ -2535,7 +2670,7 @@ export default function Headliners() {
         } else if (el.includes("most common") || el.includes("best streak")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); return `Best streak: ${best} = +${best} VP`; },
-            (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); if (best > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + best } })); showFloatingBonus(`+${best} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const counts = {}; results.forEach(d => { counts[d] = (counts[d] || 0) + 1; }); const best = Math.max(...Object.values(counts)); if (best > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + best } })); showFloatingBonus(`+${best} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
           );
         } else if (el.includes("unique") && el.includes("ticket")) {
           triggerDiceRoll(rollCount, pid, artist.name,
@@ -2545,7 +2680,7 @@ export default function Headliners() {
         } else if (el.includes("unique") && el.includes("vp")) {
           triggerDiceRoll(rollCount, pid, artist.name,
             (results) => { const unique = new Set(results).size; return `${unique} unique results = +${unique} VP`; },
-            (results) => { const unique = new Set(results).size; if (unique > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + unique } })); showFloatingBonus(`+${unique} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
+            (results) => { const unique = new Set(results).size; if (unique > 0) { setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + unique } })); showFloatingBonus(`+${unique} ⭐`, "#c4b5fd"); sfx.gainVP(); } setTimeout(() => recalcTickets(), 50); }
           );
         } else {
           // Generic roll — just show results
@@ -2560,7 +2695,7 @@ export default function Headliners() {
   }
 
   // ─── Book artist to stage ───
-  function bookArtistToStage(artist, stageIdx, pid, viaAgent = false) {
+  function bookArtistToStage(artist, stageIdx, pid, viaAgent = false, viaGenreMatch = false) {
     // SYNCHRONOUS dupe check (using ref-fresh state) before we call setPlayerData.
     // Previously this lived inside the setPlayerData updater with a `bookingSucceeded`
     // flag — but React 18 state updaters aren't guaranteed to run synchronously inside
@@ -2631,6 +2766,15 @@ export default function Headliners() {
       applyEffect(artist, pid, 1, stageIdx, viaAgent);
     }
 
+    // v126+: Genre-match headliner bonus. When an artist is booked into the headliner slot
+    // (3rd artist) via the genre-match rule (rather than paying amenities), any bonus effect
+    // in `artist.genreMatchEffect` fires in ADDITION to the normal effect. This creates an
+    // extra reward for the "curated lineup" strategy. Delay slightly so the base-effect
+    // popups land first, then the bonus.
+    if (isHeadliner && viaGenreMatch && artist.genreMatchEffect) {
+      setTimeout(() => applyGenreMatchEffect(artist, pid), 300);
+    }
+
     // Floating bonuses for VP and tickets
     // VP tallied at year end — show ticket bonus only
     if (artist.tickets > 0) { showFloatingBonus(`+${artist.tickets} 🎟️`, "#fbbf24"); sfx.gainTickets(); }
@@ -2661,11 +2805,11 @@ export default function Headliners() {
           });
           if (vpGain > 0) {
             setPlayerObjectives(prev => ({ ...prev, [pid]: updatedObjs }));
-            addLog(festival, `🎯 Completed objective! +${vpGain} VP`);
-            showFloatingBonus(`+${vpGain} VP 🎯`, "#c4b5fd");
+            addLog(festival, `🎯 Completed objective! +${vpGain} 🎟️ tickets`);
+            showFloatingBonus(`+${vpGain} 🎟️ 🎯`, "#c4b5fd");
             // Flag that this player needs a new objective choice
             setPendingObjectiveChoice(prev => prev || { playerId: pid, options: [], needsDraw: true });
-            return { ...latestPd, [pid]: { ...pd2, vp: (pd2.vp || 0) + vpGain } };
+            return { ...latestPd, [pid]: { ...pd2, bonusTickets: (pd2.bonusTickets || 0) + vpGain } };
           }
           return latestPd;
         });
@@ -2682,10 +2826,10 @@ export default function Headliners() {
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
           baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-          vp: (p[pid].vp || 0) + 1,
+          bonusTickets: (p[pid].bonusTickets || 0) + 1,
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
-        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +1 🔥 Fame, +1 🎟️ ticket!`);
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
         // updates land first; the bonus draw appears as a follow-up log line.
@@ -2829,8 +2973,8 @@ export default function Headliners() {
             arr[idx] = { ...arr[idx], completed: true, vpAwarded: true };
             return { ...prev, [p.id]: arr };
           });
-          setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], vp: (prev[p.id].vp || 0) + 3 } }));
-          addLog(p.festivalName, `🎯 Completed "${entry.obj.name}" → +3 VP!`);
+          setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: (prev[p.id].bonusTickets || 0) + 3 } }));
+          addLog(p.festivalName, `🎯 Completed "${entry.obj.name}" → +3 🎟️ tickets!`);
         }
       });
     });
@@ -3078,9 +3222,9 @@ export default function Headliners() {
       // Award VP
       const vpGain = updated.filter(e => e.completed && !objs.find(o => o.obj.id === e.obj.id && o.completed)).length * 3;
       if (vpGain > 0) {
-        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], vp: (prev[pid].vp || 0) + vpGain } }));
-        addLog(players.find(p => p.id === pid)?.festivalName || "", `🎯 Completed objective! +${vpGain} VP`);
-        showFloatingBonus(`+${vpGain} VP 🎯`, "#c4b5fd");
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + vpGain } }));
+        addLog(players.find(p => p.id === pid)?.festivalName || "", `🎯 Completed objective! +${vpGain} 🎟️ tickets`);
+        showFloatingBonus(`+${vpGain} 🎟️ 🎯`, "#c4b5fd");
       }
       return true; // signal: needs new objective choice
     }
@@ -3201,7 +3345,7 @@ export default function Headliners() {
           const cur = p[pid];
           let updated = mutateAmenity(cur, fieldIdx, aType, +1);
           if (aType === "security" && cur.vpPerSecurity > 0) {
-            updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
+            updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
           }
           return { ...p, [pid]: updated };
         });
@@ -3667,10 +3811,10 @@ export default function Headliners() {
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
         baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
-        vp: (p[pid].vp || 0) + 1,
+        bonusTickets: (p[pid].bonusTickets || 0) + 1,
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
-      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame, +1 ⭐ VP!`);
+      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +1 🔥 Fame, +1 🎟️ ticket!`);
       showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -3994,7 +4138,7 @@ export default function Headliners() {
       addLog(currentPlayer?.festivalName || "?", `🎸 Genre Match — ${artist.name} booked as headliner (no amenities required)`);
       showFloatingBonus("🎸 Genre Match!", "#fbbf24");
     }
-    bookArtistToStage(artist, stageIdx, currentPlayerId);
+    bookArtistToStage(artist, stageIdx, currentPlayerId, false, usedGenrePath);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null);
   };
 
@@ -4308,7 +4452,7 @@ export default function Headliners() {
         if (!a || !a.agentEffect) return;
         const ae = a.agentEffect;
         if (!/year\s*end/i.test(ae)) return;
-        const vpMatch = ae.match(/\+(\d+)\s*VP/i);
+        const vpMatch = ae.match(/\+(\d+)\s*(?:VP|tickets?)/i);
         if (vpMatch) {
           const vp = parseInt(vpMatch[1]);
           effects.push({ artist: a, type: "autoVP", desc: `🕵️ Agent claim: +${vp} VP`, autoVP: vp });
@@ -4347,7 +4491,7 @@ export default function Headliners() {
           if (hhCount > 0) effects.push({ artist: a, type: "autoVP", desc: `${hhCount} Hip Hop artist${hhCount>1?"s":""} = +${hhCount} VP`, autoVP: hhCount });
         } else {
           // Generic year-end: -VP / sell tickets
-          const vpLoss = rawEff.match(/Year End:.*-(\d+)\s*VP/i);
+          const vpLoss = rawEff.match(/Year End:.*-(\d+)\s*(?:VP|tickets?)/i);
           const sellTix = rawEff.match(/Year End:.*[Ss]ell\s+(\d+)\s+tickets?/i);
           if (vpLoss || sellTix) {
             const vp = vpLoss ? -parseInt(vpLoss[1]) : 0;
@@ -4388,21 +4532,22 @@ export default function Headliners() {
 
       // Apply the result
       if (effect.type === "autoVP" || effect.type === "fameVP") {
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: Math.max(0, (p[pid].vp || 0) + (effect.autoVP || 0)) } }));
-        addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${effect.autoVP} VP`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) + (effect.autoVP || 0)) } }));
+        addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${effect.autoVP} 🎟️ tickets`);
       } else if (effect.type === "autoVPTix") {
+        // v126: autoVPTix used to add separate VP + tickets amounts. With the unified score
+        // both go into bonusTickets in one merged addition.
         setPlayerData(p => ({
           ...p, [pid]: {
             ...p[pid],
-            vp: Math.max(0, (p[pid].vp || 0) + (effect.autoVP || 0)),
-            bonusTickets: (p[pid].bonusTickets || 0) + (effect.autoTix || 0)
+            bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) + (effect.autoVP || 0) + (effect.autoTix || 0)),
           }
         }));
         addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → ${effect.desc}`);
       } else if (effect.type === "rollUnique" || effect.type === "rollCommon") {
         if (result?.vp) {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], vp: (p[pid].vp || 0) + result.vp } }));
-          addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${result.vp} VP`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + result.vp } }));
+          addLog("🎸 Year End", `${players[yearEndEffectsPlayer]?.festivalName}: ${effect.artist?.name} → +${result.vp} 🎟️ tickets`);
         }
       }
 
@@ -4748,18 +4893,18 @@ export default function Headliners() {
       });
       return { ...p, [pid]: {
         ...updated,
-        vp: (updated.vp || 0) + vpFromStars,
+        bonusTickets: (updated.bonusTickets || 0) + vpFromStars,
         starDiceVPThisYear: (updated.starDiceVPThisYear || 0) + vpFromStars,
         heldDice: 0,
       } };
     });
     // Return dice to pool
     setDicePool(pool => pool + faces.length);
-    // Track avoided count for "+VP per neg star avoided" effects
+    // Track avoided count for "+tickets per neg star avoided" effects
     setNegStarFacesAvoidedThisYear(prev => ({ ...prev, [pid]: (prev[pid] || 0) + absorbed }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     const lostStr = lossesByField.map(d => `${AMENITY_LABELS[d.amenity]} (F${(d.lostFromField ?? 0) + 1})`).join(", ");
-    addLog(pName, `🎲 Rolled ${stars} stars (+${vpFromStars} VP)${absorbed ? `, absorbed ${absorbed}` : ""}${lostStr ? `, lost ${lostStr}` : ""}`);
+    addLog(pName, `🎲 Rolled ${stars} stars (+${vpFromStars} 🎟️ tickets)${absorbed ? `, absorbed ${absorbed}` : ""}${lostStr ? `, lost ${lostStr}` : ""}`);
     sfx.gainFame();
     // Advance to next player
     setStarRollResult(null);
@@ -4827,93 +4972,54 @@ export default function Headliners() {
       const pd = snap[p.id];
       if (!pd) continue;
       let t = ((pd.amenities?.campsite) || 0) * 2;
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += a.tickets || 0; }));
+      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += (a.tickets || 0) + (a.vp || 0); }));
       t += pd.bonusTickets || 0;
       playerTickets[p.id] = t;
     }
     
-    // Find player(s) with most tickets
+    // Find player(s) with most tickets (used for positional star-dice bonuses, which still fire)
     const maxTickets = Math.max(...Object.values(playerTickets));
     const ticketLeaders = players.filter(p => playerTickets[p.id] === maxTickets);
     
-    // PASS 2: Calculate VP
+    // v126: year-end scoring pass — under unified tickets, score IS pd.tickets. Refresh
+    // the derived fame + tickets fields (via a fresh computeTicketsForPlayer call) and
+    // populate a slim year-end record for the announcement UI (just tickets + fame).
     for (const p of players) {
       const pd = snap[p.id];
       if (!pd) continue;
-      let vpBonus = 0;
       const rawT = playerTickets[p.id];
-      
-      const computeFame = (pdata, tickets) => {
-        let f = pdata.baseFame || 0;
-        f += Math.floor((tickets || 0) / 10);
-        return Math.min(FAME_MAX, f);
-      };
-
-      const fame = computeFame(pd, rawT);
-      // Artist VP
-      let artistVP = 0;
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { artistVP += a.vp || 0; }));
-      vpBonus += artistVP;
-      const fameVP = FAME_VP[Math.min(5, fame)] || 0;
-      // Most-tickets no longer awards VP (still triggers positional Star Dice via grantPositionalDice)
-      const ticketVP = 0;
-      vpBonus += fameVP + ticketVP;
-      // Year-end artist effects
-      let effectVP = 0;
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => {
-        try {
-          const eff = (a.effect || "").toLowerCase();
-          // Reflavored from "neg event avoided" → "neg star face avoided" — 2 VP each
-          if (eff.includes("vp / negative event avoided") || eff.includes("vp / negative star")) {
-            effectVP += 2 * (negStarFacesAvoidedThisYear?.[p.id] || 0);
-          }
-          // Old "vp / negative event that hit" effect retired (no longer a thing)
-        } catch(err) { /* skip */ }
-      }));
-      vpBonus += effectVP;
+      // Fame under v126 = baseFame + councilFame (councilFame is calculated inside
+      // computeTicketsForPlayer but stashed on the player as councilFameThisYear).
+      const finalFame = Math.min(FAME_MAX, (pd.baseFame || 0) + (pd.councilFameThisYear || 0));
       if (!nat[p.id]) nat[p.id] = {};
-      // Recalculate after year-end effects
-      const finalFame = computeFame(pd, rawT);
-      const finalFameVP = FAME_VP[Math.min(5, finalFame)] || 0;
-      vpBonus += (finalFameVP - fameVP);
-      // Star dice VP was applied to pd.vp during the roll phase, before this scoring runs.
-      // For the year-end breakdown, we want to show "preYearVP" as the score going INTO this year,
-      // then add starDiceVP + other bonuses on top — so we subtract starDiceVP from the visible preYearVP
-      // and include it in totalYearVP. This keeps the equation preVP + totalYearVP = currentVP truthful.
-      const starDiceVP = pd.starDiceVPThisYear || 0;
-      const preYearVP = (pd.vp || 0) - starDiceVP;
-      // totalYearVP is for the breakdown display (shows everything earned this year, including
-      // the star-dice VP that was already added in applyStarRoll). yearEndDelta is the actual
-      // VP delta to ADD to cur.vp during the merge — it excludes starDiceVP because that's
-      // already part of cur.vp. Using totalYearVP in the merge would double-count star VP.
-      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: finalFameVP, ticketVP, artistVP, councilVP: 0, effectVP, starDiceVP, preYearVP, totalYearVP: vpBonus + starDiceVP, yearEndDelta: vpBonus };
-      logs.push({ type: "entry", who: p.festivalName, text: `🎟️ ${rawT} tickets${ticketVP ? " 👑+1VP" : ""} | 🔥${finalFame}→${finalFameVP}VP | Artists+${artistVP}VP` });
-      // Store computed values back into snap for use by subsequent players
-      snap[p.id] = { ...pd, tickets: rawT, rawTickets: rawT, fame: finalFame, vp: (pd.vp || 0) + vpBonus };
+      // Preserve the shape of the nat entry so other code paths that read raw/fame still work.
+      // The rich VP breakdown fields (fameVP, artistVP, ticketVP, effectVP, starDiceVP) are
+      // no longer meaningful under unified scoring — set them to 0.
+      nat[p.id][year] = { raw: rawT, fame: finalFame, fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0, starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0 };
+      logs.push({ type: "entry", who: p.festivalName, text: `🎟️ ${rawT} tickets | 🔥 Fame ${finalFame}` });
+      // Update snap with fresh tickets + fame so any subsequent same-year reads see current numbers.
+      snap[p.id] = { ...pd, tickets: rawT, rawTickets: rawT, fame: finalFame };
     }
     
     if (ticketLeaders.length === 1) {
-      logs.push({ type: "entry", who: "🎟️ Tickets", text: `${ticketLeaders[0].festivalName} sold the most tickets (${maxTickets}) → +1 VP!` });
+      logs.push({ type: "entry", who: "🎟️ Tickets", text: `${ticketLeaders[0].festivalName} sold the most tickets this year (${maxTickets})` });
     }
 
     // Merge year-end calc fields into current playerData via callback form.
-    // Important: do NOT overwrite the whole playerData with `snap`, because applyStarRoll's
-    // updates (heldDice=0, VP from stars, lost amenities) may not yet be reflected in the
-    // closure-captured `playerData` we used to build snap. Only update the recomputed fields,
-    // and ADD the year-end VP bonus to whatever cur.vp now is (which already includes star VP).
+    // v126: under unified tickets scoring, yearEndDelta is 0 (no separate VP bonus to add).
+    // We just refresh the derived tickets + fame fields from the year-end snapshot. Star-dice
+    // tickets were already applied to bonusTickets during the star roll phase.
     setPlayerData(prev => {
       const next = { ...prev };
       for (const p of players) {
         const cur = prev[p.id];
         const sn = snap[p.id];
         if (!cur || !sn) continue;
-        const bonus = nat[p.id]?.[year]?.yearEndDelta || 0;
         next[p.id] = {
           ...cur,
           tickets: sn.tickets,
           rawTickets: sn.rawTickets,
           fame: sn.fame,
-          vp: (cur.vp || 0) + bonus,
         };
       }
       return next;
@@ -5130,8 +5236,17 @@ export default function Headliners() {
 
   const winner = useMemo(() => {
     if (phase !== "gameOver") return null;
-    return [...players].sort((a, b) => { const vd = (playerData[b.id]?.vp || 0) - (playerData[a.id]?.vp || 0); if (vd !== 0) return vd; return Object.values(allTickets[b.id] || {}).reduce((s, v) => s + v, 0) - Object.values(allTickets[a.id] || {}).reduce((s, v) => s + v, 0); })[0];
-  }, [phase, players, playerData, allTickets]);
+    // v126: winner is highest tickets (the unified score). Fame tiebreaks, then acts played.
+    return [...players].sort((a, b) => {
+      const pdA = playerData[a.id] || {}, pdB = playerData[b.id] || {};
+      const td = (pdB.tickets || 0) - (pdA.tickets || 0);
+      if (td !== 0) return td;
+      const fd = (pdB.fame || 0) - (pdA.fame || 0);
+      if (fd !== 0) return fd;
+      const acts = (pd) => (pd.stageArtists || []).flat().length;
+      return acts(pdB) - acts(pdA);
+    })[0];
+  }, [phase, players, playerData]);
 
   // ═══════════════════════════════════════════════════════════
   // RESPONSIVE
@@ -5229,19 +5344,19 @@ export default function Headliners() {
   </div> : null;
   const leaderboardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowLeaderboard(true)} title="Leaderboard" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251,191,36,0.2)", color: "#fbbf24", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🏆</button> : null;
   const leaderboardModal = showLeaderboard ? (() => {
-    // Live leaderboard — sorted by VP, then tickets, then fame as tiebreakers
+    // v126: sorted by tickets (unified score). Fame tiebreaks.
     const ranked = [...players].map(p => {
       const pd = playerData[p.id] || {};
       const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
-      return { p, pd, vp: pd.vp || 0, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils, microtrends: pd.microtrendsCompletedCount || 0 };
-    }).sort((a, b) => (b.vp - a.vp) || (b.tickets - a.tickets) || (b.fame - a.fame));
+      return { p, pd, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils, microtrends: pd.microtrendsCompletedCount || 0 };
+    }).sort((a, b) => (b.tickets - a.tickets) || (b.fame - a.fame));
     return <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ color: "#fbbf24", fontSize: 22, margin: 0 }}>🏆 Leaderboard</h2>
           <button onClick={() => setShowLeaderboard(false)} style={{ ...bs, fontSize: 11, padding: "4px 10px" }}>Close ✕</button>
         </div>
-        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of {totalYears} — sorted by VP, ties broken by tickets then fame</p>
+        <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Year {year} of {totalYears} — sorted by tickets sold, ties broken by fame</p>
         {ranked.map((r, idx) => {
           const fame = r.fame; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
           const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
@@ -5256,16 +5371,15 @@ export default function Headliners() {
                 <span style={{ fontSize: 18, fontWeight: 800 }}>{medal}</span>
                 <span style={{ fontSize: 16, fontWeight: 700, color: onFire ? "#fde68a" : (yellowed ? "#fbbf24" : "#e9d5ff") }}>{onFire ? "🔥 " : ""}{r.p.festivalName}{r.p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
               </div>
-              <span style={{ fontSize: 22, fontWeight: 900, color: "#fbbf24" }}>⭐ {r.vp}</span>
+              <span style={{ fontSize: 22, fontWeight: 900, color: "#60a5fa" }}>🎟️ {(r.tickets * 100).toLocaleString()}</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, fontSize: 11, color: "#94a3b8" }}>
-              <div><span style={{ color: "#60a5fa" }}>🎟️</span> {r.tickets}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, fontSize: 11, color: "#94a3b8" }}>
               <div style={{ color: onFire ? "#fb923c" : "#94a3b8", animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥 {r.fame}</div>
               <div><span style={{ color: "#a78bfa" }}>🎲</span> {r.dice}</div>
               <div><span style={{ color: "#86efac" }}>📋</span> {r.activeCouncils}/3</div>
             </div>
             <div style={{ marginTop: 6, padding: "4px 8px", borderRadius: 6, background: "rgba(124,58,237,0.08)", fontSize: 10, color: "#e9d5ff" }}>
-              📢 {r.microtrends} microtrend{r.microtrends === 1 ? "" : "s"} completed <span style={{ color: "#94a3b8" }}>(+{r.microtrends} ⭐ included in VP)</span>
+              📢 {r.microtrends} microtrend{r.microtrends === 1 ? "" : "s"} completed
             </div>
           </div>;
         })}
@@ -5287,7 +5401,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } }`}</style>;
+  const anim = <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -5734,8 +5848,7 @@ export default function Headliners() {
                       <div style={{ fontSize: 11, opacity: 0.9, marginTop: 2 }}>{gs.map(g => <span key={g} style={{ marginRight: 6 }}>{g}</span>)} • 🔥 {a.fame}</div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>🎟️ {a.tickets}</div>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>⭐ {a.vp} VP</div>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>🎟️ {(a.tickets || 0) + (a.vp || 0)}</div>
                     </div>
                   </div>
                   {a.effect && <div style={{ fontSize: 11, marginTop: 8, padding: "5px 10px", borderRadius: 8, background: "rgba(0,0,0,0.3)", fontStyle: "italic" }}>✨ {a.effect}</div>}
@@ -5763,8 +5876,8 @@ export default function Headliners() {
             const cur = p[pid];
             let updated = mutateAmenity(cur, fieldIdx, aType, +1);
             if (aType === "security" && cur.vpPerSecurity > 0) {
-              updated = { ...updated, vp: (updated.vp || 0) + cur.vpPerSecurity };
-              addLog("Effect", `+${cur.vpPerSecurity} VP from security build!`);
+              updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
+              addLog("Effect", `+${cur.vpPerSecurity} 🎟️ tickets from security build!`);
             }
             return { ...p, [pid]: updated };
           });
@@ -6276,7 +6389,6 @@ export default function Headliners() {
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🎟️ {vpd.tickets || 0} tickets</span>
-              <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>⭐ {vpd.vp || 0} VP</span>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🔥 Fame {vpd.fame || 0}</span>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🃏 {(vpd.hand || []).length} in hand</span>
             </div>
@@ -6291,7 +6403,7 @@ export default function Headliners() {
                     <div style={{ fontSize: 11, fontWeight: 800, color: sColor, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: sColor, display: "inline-block" }} />{sName} {sa.length === 3 ? <span style={{ fontSize: 9, color: "#34d399" }}>✅</span> : <span style={{ fontSize: 9, color: "#94a3b8" }}>({sa.length}/3)</span>}
                     </div>
-                    {sa.map((a, ai) => <div key={ai} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, marginBottom: 2, background: genreGradient(a.genre), color: "#fff" }}>{ai === 2 ? "⭐ " : ""}{a.name} <span style={{ fontSize: 8, opacity: 0.7 }}>{a.vp}VP</span></div>)}
+                    {sa.map((a, ai) => <div key={ai} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, marginBottom: 2, background: genreGradient(a.genre), color: "#fff" }}>{ai === 2 ? "⭐ " : ""}{a.name} <span style={{ fontSize: 8, opacity: 0.7 }}>{(a.tickets || 0) + (a.vp || 0)}🎟️</span></div>)}
                     {sa.length === 0 && <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic" }}>Empty</div>}
                   </div>;
                 })}
@@ -6329,8 +6441,8 @@ export default function Headliners() {
                 {!ic && <span style={{ fontSize: 9, color: isViewing ? "#fbbf24" : "#64748b" }}>{isViewing ? "👁️" : "👁️"}</span>}
               </div>
               <div style={{ fontSize: 11, color: "#94a3b8", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-                <span>🎟️ {pd.tickets || 0}</span><span>⭐ {pd.vp || 0} VP</span>
-                <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span><span>🔄 {turnsLeft[p.id] || 0} turns</span>
+                <span>🎟️ {pd.tickets || 0}</span><span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
+                <span>🔄 {turnsLeft[p.id] || 0} turns</span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
@@ -6446,7 +6558,7 @@ export default function Headliners() {
               }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8", display: "flex", gap: 8 }}>
-                  <span>🎟️{pd.tickets||0}</span><span>⭐{pd.vp||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
+                  <span>🎟️{pd.tickets||0}</span><span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
               </div>); })}
           </div>
@@ -6606,6 +6718,7 @@ export default function Headliners() {
                 return <div key={i} style={{ position: "relative" }}>
                   <ArtistCard artist={a} showCost small
                     affordable={canBookArtistAnywhere(a, currentPD)}
+                    genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
                     disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
                     onClick={() => {
                       if (artistAction === null && !actionTaken) {
@@ -6632,6 +6745,7 @@ export default function Headliners() {
             {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
               {handCards.map((a, i) => <ArtistCard key={i} artist={a} showCost small
                 affordable={canBookArtistAnywhere(a, currentPD)}
+                genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
                 disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
                 onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
               />)}
@@ -6727,7 +6841,7 @@ export default function Headliners() {
                       <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{trendLabel}</div>
                     </div>
                     <div>
-                      <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 ⭐ VP)</button>
+                      <button onClick={() => { placeAgentOnMicrotrend(currentPlayerId); setTurnAction(null); }} style={{ ...bp, fontSize: 12, padding: "8px 14px" }}>🎵 Place on Microtrend (+1 🔥 Fame, +1 🎟️ tickets)</button>
                     </div>
                     <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>The trend advances to the forecast at end of turn.</p>
                   </div>;
@@ -6893,7 +7007,7 @@ export default function Headliners() {
                     // whose amenity costs weren't fully met — even when a stage on the board
                     // had two matching-genre artists ready to accept them.
                     const canBook = canAffordArtistOrFree(a, currentPD) || canBookArtistAnywhere(a, currentPD);
-                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
+                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
                   })}
                 </div>
               </div>}
@@ -7120,8 +7234,8 @@ export default function Headliners() {
             {/* Auto-resolve effects — just show result and continue button */}
             {(currentEffect.type === "autoVP" || currentEffect.type === "fameVP" || currentEffect.type === "autoVPTix") && <div>
               <div style={{ padding: 16, borderRadius: 12, background: "rgba(124,58,237,0.15)", marginBottom: 16 }}>
-                {currentEffect.autoVP > 0 && <p style={{ color: "#4ade80", fontSize: 20, fontWeight: 900 }}>+{currentEffect.autoVP} ⭐ VP</p>}
-                {currentEffect.autoVP < 0 && <p style={{ color: "#ef4444", fontSize: 20, fontWeight: 900 }}>{currentEffect.autoVP} ⭐ VP</p>}
+                {currentEffect.autoVP > 0 && <p style={{ color: "#4ade80", fontSize: 20, fontWeight: 900 }}>+{currentEffect.autoVP} 🎟️ tickets</p>}
+                {currentEffect.autoVP < 0 && <p style={{ color: "#ef4444", fontSize: 20, fontWeight: 900 }}>{currentEffect.autoVP} 🎟️ tickets</p>}
                 {currentEffect.autoTix > 0 && <p style={{ color: "#fbbf24", fontSize: 20, fontWeight: 900 }}>+{currentEffect.autoTix} 🎟️ Tickets</p>}
               </div>
               <button onClick={() => resolveYearEndEffect()} style={bp}>Continue →</button>
@@ -7159,7 +7273,7 @@ export default function Headliners() {
                   const c = {}; yearEndDiceRoll.results.forEach(d => { c[d]=(c[d]||0)+1; }); vpGain = Math.max(...Object.values(c));
                 }
                 return <div style={{ padding: 16, borderRadius: 12, background: "rgba(124,58,237,0.15)", marginBottom: 16 }}>
-                  <p style={{ color: "#4ade80", fontSize: 20, fontWeight: 900 }}>+{vpGain} ⭐ VP</p>
+                  <p style={{ color: "#4ade80", fontSize: 20, fontWeight: 900 }}>+{vpGain} 🎟️ tickets</p>
                   <p style={{ color: "#94a3b8", fontSize: 12 }}>{currentEffect.type === "rollUnique" ? `${vpGain} unique results` : `Best streak of ${vpGain}`}</p>
                 </div>;
               })()}
@@ -7254,7 +7368,7 @@ export default function Headliners() {
               {r.faces.map((f, i) => <div key={i} style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "#1a1a2e", border: "1px solid #2a2a4a" }}>{faceIcon(f)}</div>)}
             </div>
             <div style={{ display: "flex", justifyContent: "center", gap: 16, marginBottom: 14, fontSize: 14 }}>
-              <span style={{ color: "#fbbf24" }}>⭐ {r.stars} stars → <strong>+{vpFromStars} VP</strong></span>
+              <span style={{ color: "#fbbf24" }}>⭐ {r.stars} stars → <strong>+{vpFromStars} tickets</strong></span>
               {r.stars >= 5 && <span style={{ color: "#22c55e", fontWeight: 700 }}>🎉 MAX!</span>}
             </div>
 
@@ -7323,32 +7437,22 @@ export default function Headliners() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
         <div style={{ ...card, maxWidth: 650, width: "100%", textAlign: "center" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 28, marginBottom: 4 }}>🎉 Year {year} Complete!</h2>
-          <p style={{ color: "#8b5cf6", marginBottom: 20, fontSize: 14 }}>Results revealed lowest → highest tickets</p>
+          <p style={{ color: "#8b5cf6", marginBottom: 20, fontSize: 14 }}>Results revealed lowest → highest tickets sold</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
             {sortedPlayersForReveal.map((p, idx) => {
               const rev = idx <= revealIndex;
               const td = allTickets[p.id]?.[year] || {};
-              const preVP = td.preYearVP || 0;
+              const preTickets = td.preYearVP || 0; // legacy field name; now holds pre-year tickets
               const pd = playerData[p.id] || {};
               return <div key={p.id} style={{ padding: 14, borderRadius: 12, background: rev ? "rgba(124,58,237,0.12)" : "rgba(15,14,26,0.4)", border: rev ? "1px solid #7c3aed" : "1px solid #2a2a4a", opacity: rev ? 1 : 0.25, transition: "all 0.5s", textAlign: "left" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: rev ? 10 : 0 }}>
                   <span style={{ fontWeight: 700, fontSize: 15, color: rev ? "#e9d5ff" : "#4a4568" }}>{rev ? p.festivalName : "???"}{p.isAI ? " 🤖" : ""}</span>
-                  <span style={{ fontWeight: 800, fontSize: 18, color: rev ? "#fbbf24" : "#4a4568" }}>{rev ? `${pd.vp || 0} VP` : "?"}</span>
+                  <span style={{ fontWeight: 800, fontSize: 18, color: rev ? "#60a5fa" : "#4a4568" }}>{rev ? `🎟️ ${((pd.tickets || 0) * 100).toLocaleString()}` : "?"}</span>
                 </div>
                 {rev && <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
-                    🎟️ {td.raw || 0} tickets{td.ticketVP > 0 ? " 👑" : ""} • 🔥 Fame {td.fame || 0}
+                    🔥 Fame {td.fame || 0} • 📢 {pd.microtrendsCompletedCount || 0} microtrends completed
                   </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Starting: {preVP} VP</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {td.artistVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(236,72,153,0.15)", border: "1px solid #ec489940", color: "#f472b6", fontSize: 12, fontWeight: 600 }}>🎤 +{td.artistVP}</span>}
-                    {td.fameVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(251,191,36,0.15)", border: "1px solid #fbbf2440", color: "#fbbf24", fontSize: 12, fontWeight: 600 }}>🔥 +{td.fameVP}</span>}
-                    {td.councilVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e40", color: "#4ade80", fontSize: 12, fontWeight: 600 }}>📋 +{td.councilVP}</span>}
-                    {td.starDiceVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(168,85,247,0.15)", border: "1px solid #a855f740", color: "#c084fc", fontSize: 12, fontWeight: 600 }}>🎲 +{td.starDiceVP}</span>}
-                    {td.effectVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", border: "1px solid #7c3aed40", color: "#c4b5fd", fontSize: 12, fontWeight: 600 }}>✨ +{td.effectVP}</span>}
-                    {td.ticketVP > 0 && <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(96,165,250,0.15)", border: "1px solid #60a5fa40", color: "#60a5fa", fontSize: 12, fontWeight: 600 }}>👑 +{td.ticketVP}</span>}
-                  </div>
-                  <div style={{ marginTop: 6, fontSize: 11, color: "#8b5cf6" }}>= {preVP} + {td.totalYearVP || 0} = <strong style={{ color: "#fbbf24" }}>{pd.vp || 0} VP</strong></div>
                 </div>}
               </div>;
             })}
@@ -7473,13 +7577,13 @@ export default function Headliners() {
   const exportGameData = () => {
     const rows = [];
     rows.push(["HEADLINERS — Game Summary"]);
-    rows.push([`Winner: ${winner?.festivalName || "N/A"}`, `VP: ${winner ? playerData[winner.id]?.vp || 0 : 0}`]);
+    rows.push([`Winner: ${winner?.festivalName || "N/A"}`, `Tickets Sold: ${winner ? (playerData[winner.id]?.tickets || 0) * 100 : 0}`]);
     rows.push([]);
 
-    // Scoreboard
+    // Scoreboard — v126: tickets is the unified score
     const headers = ["Festival", "AI?"];
-    for (let y = 1; y <= 4; y++) headers.push(`Yr${y} Raw Tickets`, `Yr${y} Fame`, `Yr${y} Multiplier`, `Yr${y} Final Tickets`);
-    headers.push("Total VP");
+    for (let y = 1; y <= 4; y++) headers.push(`Yr${y} Tickets (raw)`, `Yr${y} Tickets (×100)`, `Yr${y} Fame`);
+    headers.push("Final Tickets (raw)", "Final Tickets (×100)");
     rows.push(headers);
 
     players.forEach(p => {
@@ -7487,10 +7591,10 @@ export default function Headliners() {
       const row = [p.festivalName, p.isAI ? "Yes" : "No"];
       for (let y = 1; y <= 4; y++) {
         const td = allTickets[p.id]?.[y];
-        if (td && typeof td === "object") { row.push(td.raw, td.fame, td.fameVP, td.ticketVP); }
-        else { row.push(td || 0, "?", "?", td || 0); }
+        if (td && typeof td === "object") { row.push(td.raw || 0, (td.raw || 0) * 100, td.fame || 0); }
+        else { row.push(td || 0, (td || 0) * 100, "?"); }
       }
-      row.push(pd.vp || 0);
+      row.push(pd.tickets || 0, (pd.tickets || 0) * 100);
       rows.push(row);
     });
 
@@ -7499,7 +7603,7 @@ export default function Headliners() {
     players.forEach(p => {
       const pd = playerData[p.id] || {};
       rows.push([`Festival: ${p.festivalName}`, p.isAI ? "(AI)" : ""]);
-      rows.push(["Final VP", pd.vp || 0, "Final Fame", pd.fame || 0, "Stages", (pd.stages || []).length]);
+      rows.push(["Final Tickets", (pd.tickets || 0) * 100, "Final Fame", pd.fame || 0, "Stages", (pd.stages || []).length]);
       rows.push([]);
       rows.push(["Amenity", "Count"]);
       AMENITY_TYPES.forEach(t => rows.push([AMENITY_LABELS[t], (pd.amenities?.[t]) || 0]));
@@ -7547,7 +7651,7 @@ export default function Headliners() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
         <div style={{ ...card, textAlign: "center", maxWidth: 600, width: "100%" }}>
           <h1 style={{ fontSize: 48, fontWeight: 900, margin: "0 0 8px", background: "linear-gradient(135deg, #fbbf24, #f472b6, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>🏆 GAME OVER</h1>
-          {winner && <div style={{ marginBottom: 24 }}><p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700 }}>{winner.festivalName} Wins!</p><p style={{ color: "#8b5cf6", fontSize: 14 }}>with {playerData[winner.id]?.vp || 0} VP</p></div>}
+          {winner && <div style={{ marginBottom: 24 }}><p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700 }}>{winner.festivalName} Wins!</p><p style={{ color: "#60a5fa", fontSize: 14 }}>🎟️ {((playerData[winner.id]?.tickets || 0) * 100).toLocaleString()} tickets sold</p></div>}
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={exportGameData} style={{ ...bs, padding: "12px 20px", fontSize: 14 }}>📊 Download Game Data</button>
             <button onClick={() => { setPhase("lobby"); setGameLog([]); setAllTickets({}); setYear(1); }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
