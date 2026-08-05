@@ -18,6 +18,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 
 // ═══════════════════════════════════════════════════════════
 // ARTIST DATA (75 artists from spreadsheet)
@@ -1369,6 +1370,11 @@ export default function Headliners() {
   // under tempt mode — this array is authoritative. Standard mode ignores this state.
   //   Shape: { pid: Array<{ type: "pool", poolIdx, artistName, placedTurn }> }
   const [temptPlacements, setTemptPlacements] = useState({});
+  // v139: ref-mirror so async callbacks (checkNextTempt setTimeout) read latest state
+  // instead of the closure snapshot at scheduling time — otherwise a just-resolved tempt
+  // still appears "live" and re-fires the pendingAgentArtist modal for the same artist.
+  const temptPlacementsRef = useRef({});
+  useEffect(() => { temptPlacementsRef.current = temptPlacements; }, [temptPlacements]);
   // v132: ledger of ticket-gain sources per player. Every time bonusTickets increases,
   // an entry is appended here for the hover breakdown UI. Losses (negative deltas) are
   // logged too so the sum reconciles with the actual bonusTickets value.
@@ -2132,8 +2138,10 @@ export default function Headliners() {
   const checkNextTempt = (pid) => {
     if (!temptModeRef.current) return;
     // Small delay so upstream state (temptPlacements pop, playerData updates) settles first.
+    // v139: read from refs, not closure — closure captures at scheduling time and misses
+    // the pop that just fired, causing the same artist to re-open the modal.
     setTimeout(() => {
-      const remaining = (temptPlacements[pid] || []);
+      const remaining = (temptPlacementsRef.current[pid] || []);
       if (remaining.length === 0) return;
       const resolution = resolvePoolAgents(pid);
       if (!resolution) return;
@@ -2310,11 +2318,16 @@ export default function Headliners() {
   // remaining placement. Each placement is independently checked for contests.
   const resolvePoolAgents = (pid) => {
     if (temptModeRef.current) {
-      const tempts = (temptPlacements[pid] || []);
+      // v139: read via ref, not closure — checkNextTempt reaches here via a setTimeout
+      // that snapshotted state at scheduling time. Reading from closure would see the
+      // just-resolved tempt as still live and re-open the modal for the same artist.
+      const currentTempts = temptPlacementsRef.current;
+      const currentPool = artistPoolRef.current;
+      const tempts = (currentTempts[pid] || []);
       if (tempts.length === 0) return null;
       const placement = tempts[0]; // Resolve the earliest tempt first.
       // Find the artist in the pool by name (index may have shifted)
-      const poolIdx = artistPool.findIndex(a => a.name === placement.artistName);
+      const poolIdx = currentPool.findIndex(a => a.name === placement.artistName);
       if (poolIdx < 0) {
         // Artist no longer in pool — refund the fame this tempt cost and drop the placement.
         setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
@@ -2323,10 +2336,10 @@ export default function Headliners() {
         addLog("💫 Tempt", `${placement.artistName} no longer available — 1 🔥 Fame refunded`);
         return null;
       }
-      const artist = artistPool[poolIdx];
+      const artist = currentPool[poolIdx];
       // Contestants = every player who has a tempt on the same artist.
       const contestants = [];
-      Object.entries(temptPlacements).forEach(([oPid, list]) => {
+      Object.entries(currentTempts).forEach(([oPid, list]) => {
         (list || []).forEach(p => {
           if (p.type === "pool" && p.artistName === placement.artistName) {
             contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn });
@@ -4065,34 +4078,8 @@ export default function Headliners() {
     microtrendHistoryRef.current = [];
     const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
     addLog("🎵 Microtrend", `${mt.map(describeMt).join(" • ")} (coming up: ${describeMt(forecast)})`);
-    // Offer first human player their objective choice, auto-assign AI
-    let firstHumanId = null;
-    const order0 = players.map(p => p.id);
-    for (const p of players) {
-      if (p.isAI) {
-        // Auto-assign: draw 2, pick random
-        const d = [...objectiveDeck];
-        if (d.length >= 2) {
-          const opt1 = d.pop(); const opt2 = d.pop();
-          const pick = Math.random() < 0.5 ? opt1 : opt2;
-          const reject = pick === opt1 ? opt2 : opt1;
-          setPlayerObjectives(prev => ({ ...prev, [p.id]: [{ obj: pick, completed: false, vpAwarded: false }] }));
-          setObjectiveDeck(shuffle([...d, reject]));
-          addLog(p.festivalName, `chose objective: ${pick.name}`);
-        }
-      } else if (!firstHumanId) {
-        firstHumanId = p.id;
-      }
-    }
-    if (firstHumanId !== null) {
-      offerObjectiveChoice(firstHumanId);
-      setPhase("objectiveChoice");
-    } else {
-      // All AI — skip to game
-      setPhase("game");
-    }
-    // v135: if Alternative Artist Objectives is on, deal starter objectives immediately.
-    // Each player picks 1 of 2. AI auto-picks; humans get a picker modal.
+    // v135: When Alternative Artist Objectives is on, the old +3-tickets objectives are
+    // replaced entirely — skip the old picker flow and only hand out alt-objective starters.
     if (altObjectivesModeRef.current) {
       let deckWorking = buildAltObjectiveDeck();
       players.forEach(p => {
@@ -4111,6 +4098,34 @@ export default function Headliners() {
         }
       });
       setAltObjectiveDeck(deckWorking);
+      // Go directly to game — the alt-objective picker modal will pop over top for humans.
+      setPhase("game");
+    } else {
+      // Standard mode: offer first human player their old-style objective choice, auto-assign AI.
+      let firstHumanId = null;
+      for (const p of players) {
+        if (p.isAI) {
+          // Auto-assign: draw 2, pick random
+          const d = [...objectiveDeck];
+          if (d.length >= 2) {
+            const opt1 = d.pop(); const opt2 = d.pop();
+            const pick = Math.random() < 0.5 ? opt1 : opt2;
+            const reject = pick === opt1 ? opt2 : opt1;
+            setPlayerObjectives(prev => ({ ...prev, [p.id]: [{ obj: pick, completed: false, vpAwarded: false }] }));
+            setObjectiveDeck(shuffle([...d, reject]));
+            addLog(p.festivalName, `chose objective: ${pick.name}`);
+          }
+        } else if (!firstHumanId) {
+          firstHumanId = p.id;
+        }
+      }
+      if (firstHumanId !== null) {
+        offerObjectiveChoice(firstHumanId);
+        setPhase("objectiveChoice");
+      } else {
+        // All AI — skip to game
+        setPhase("game");
+      }
     }
     setTimeout(() => recalcTickets(), 50); addLogH("Year 1 Begins", "year"); addLogH(`${players[0]?.festivalName}'s Turn`, "turn");
     setShowYearAnnouncement(true);
@@ -7386,14 +7401,16 @@ export default function Headliners() {
               </div>}
               {/* v132: last-action line for spectator awareness */}
               {lastAction[p.id] && !ic && <div style={{ marginTop: 4, fontSize: 10, color: "#8b5cf6", fontStyle: "italic" }}>Last: {p.festivalName} {lastAction[p.id]}</div>}
-              {/* v135: alt-objectives — live + completed objectives visible per player.
-                  Green rows = live (currently trying), grey = completed (already earned). */}
-              {altObjectivesMode && ((activeObjectives[p.id] || []).length > 0 || (completedObjectives[p.id] || []).length > 0) && <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎯 Objectives</div>
+              {/* v135: alt-objectives — objectives are HIDDEN info; only the current player
+                  sees their own. Opponents' objective panels stay hidden so nobody can
+                  reverse-engineer what they're trying for. v138: completed objectives are
+                  now bright green (was grey) to celebrate achievement. */}
+              {altObjectivesMode && p.id === currentPlayerId && ((activeObjectives[p.id] || []).length > 0 || (completedObjectives[p.id] || []).length > 0) && <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎯 Your Objectives</div>
                 {(activeObjectives[p.id] || []).map(e => {
                   const obj = getAltObjective(e.id);
                   if (!obj) return null;
-                  return <div key={e.id} style={{ fontSize: 9, color: "#e2e8f0", padding: "1px 0", display: "flex", justifyContent: "space-between", gap: 6 }} title={obj.req}>
+                  return <div key={e.id} style={{ fontSize: 9, color: "#e2e8f0", padding: "1px 0", display: "flex", justifyContent: "space-between", gap: 6, cursor: "help" }} title={obj.req}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>◇ {obj.name}</span>
                     <span style={{ color: obj.source === "failure" ? "#f97316" : obj.source === "progression" ? "#c4b5fd" : "#94a3b8", flexShrink: 0 }}>{obj.source === "failure" ? "fail" : obj.source === "progression" ? "Y2+" : "start"}</span>
                   </div>;
@@ -7401,7 +7418,7 @@ export default function Headliners() {
                 {(completedObjectives[p.id] || []).map(e => {
                   const obj = getAltObjective(e.id);
                   if (!obj) return null;
-                  return <div key={e.id} style={{ fontSize: 9, color: "#64748b", textDecoration: "line-through", padding: "1px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={obj.req}>✓ {obj.name}</div>;
+                  return <div key={e.id} style={{ fontSize: 9, color: "#4ade80", fontWeight: 700, padding: "1px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "help" }} title={obj.req}>✓ {obj.name}</div>;
                 })}
               </div>}
             </div>); })}
@@ -7526,10 +7543,10 @@ export default function Headliners() {
                 </div>
                 {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 3, padding: "2px 5px", borderRadius: 5, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>💫 tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}</div>}
                 {lastAction[p.id] && !ic && <div style={{ marginTop: 3, fontSize: 9, color: "#8b5cf6", fontStyle: "italic" }}>Last: {lastAction[p.id]}</div>}
-                {altObjectivesMode && ((activeObjectives[p.id] || []).length > 0 || (completedObjectives[p.id] || []).length > 0) && <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎯 Objectives</div>
-                  {(activeObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#e2e8f0" }} title={obj.req}>◇ {obj.name}</div> : null; })}
-                  {(completedObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#64748b", textDecoration: "line-through" }} title={obj.req}>✓ {obj.name}</div> : null; })}
+                {altObjectivesMode && p.id === currentPlayerId && ((activeObjectives[p.id] || []).length > 0 || (completedObjectives[p.id] || []).length > 0) && <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎯 Your Objectives</div>
+                  {(activeObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#e2e8f0", cursor: "help" }} title={obj.req}>◇ {obj.name}</div> : null; })}
+                  {(completedObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#4ade80", fontWeight: 700, cursor: "help" }} title={obj.req}>✓ {obj.name}</div> : null; })}
                 </div>}
               </div>); })}
           </div>
@@ -7859,23 +7876,24 @@ export default function Headliners() {
                 player gains Fame. Queue-based so multiple gains chain sequentially. Only
                 shows when the front-of-queue entry is for THIS player and their turn is
                 the active one. Higher z-index than other modals so it sits above them.
-                v137: anchored top-of-viewport (not centered) so it doesn't clip on mobile. */}
-            {fameGainQueue.length > 0 && fameGainQueue[0].pid === currentPlayerId && (() => {
+                v138: rendered via a portal to document.body so it escapes any transformed
+                ancestor that would clip it to the action-bar box. */}
+            {fameGainQueue.length > 0 && fameGainQueue[0].pid === currentPlayerId && typeof document !== "undefined" && createPortal((() => {
               const fg = fameGainQueue[0];
-              return <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 980, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "8vh 16px 16px", animation: "fadeSlideIn 0.35s", overflowY: "auto" }}>
-                <div style={{ padding: "20px 22px", borderRadius: 16, background: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(249,115,22,0.08))", border: "2px solid #f97316", boxShadow: "0 0 50px rgba(249,115,22,0.4)", textAlign: "center", maxWidth: 420, width: "100%" }}>
-                  <div style={{ fontSize: 44, marginBottom: 2, animation: "fameFlicker 0.9s ease-in-out infinite" }}>🔥</div>
-                  <h2 style={{ color: "#fb923c", fontSize: 19, margin: "0 0 8px", fontWeight: 800, letterSpacing: -0.3 }}>Your festival is becoming more famous.</h2>
+              return <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.35s", overflowY: "auto" }}>
+                <div style={{ padding: "24px 26px", borderRadius: 16, background: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(249,115,22,0.08))", border: "2px solid #f97316", boxShadow: "0 0 50px rgba(249,115,22,0.4)", textAlign: "center", maxWidth: 440, width: "100%", margin: "auto" }}>
+                  <div style={{ fontSize: 48, marginBottom: 4, animation: "fameFlicker 0.9s ease-in-out infinite" }}>🔥</div>
+                  <h2 style={{ color: "#fb923c", fontSize: 20, margin: "0 0 10px", fontWeight: 800, letterSpacing: -0.3 }}>Your festival is becoming more famous.</h2>
                   <p style={{ color: "#e2e8f0", fontSize: 14, margin: "0 0 4px", lineHeight: 1.4 }}>
                     <span style={{ color: "#fbbf24", fontWeight: 700 }}>{fg.source}</span> has provided
-                    <span style={{ color: "#fb923c", fontWeight: 900, fontSize: 20, margin: "0 6px" }}>+{fg.amount}</span>
+                    <span style={{ color: "#fb923c", fontWeight: 900, fontSize: 22, margin: "0 6px" }}>+{fg.amount}</span>
                     Fame
                   </p>
-                  {fameGainQueue.length > 1 && <p style={{ color: "#94a3b8", fontSize: 10, margin: "6px 0 0", fontStyle: "italic" }}>{fameGainQueue.length - 1} more fame gain{fameGainQueue.length - 1 === 1 ? "" : "s"} queued</p>}
-                  <button onClick={() => setFameGainQueue(prev => prev.slice(1))} style={{ ...bp, marginTop: 14, background: "linear-gradient(135deg, #f97316, #ef4444)", border: "none", padding: "8px 22px", fontSize: 13, fontWeight: 700 }}>Continue →</button>
+                  {fameGainQueue.length > 1 && <p style={{ color: "#94a3b8", fontSize: 11, margin: "8px 0 0", fontStyle: "italic" }}>{fameGainQueue.length - 1} more fame gain{fameGainQueue.length - 1 === 1 ? "" : "s"} queued</p>}
+                  <button onClick={() => setFameGainQueue(prev => prev.slice(1))} style={{ ...bp, marginTop: 18, background: "linear-gradient(135deg, #f97316, #ef4444)", border: "none", padding: "10px 26px", fontSize: 14, fontWeight: 700 }}>Continue →</button>
                 </div>
               </div>;
-            })()}
+            })(), document.body)}
 
             {/* v135: Alternative Artist Objectives picker — shown whenever a human has
                 an objective choice to make (game start / year 2+/failure). Player picks
