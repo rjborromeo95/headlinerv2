@@ -317,6 +317,43 @@ function canAffordArtist(artist, pd) {
   const a = pd.amenities || {};
   return (a.campsite||0) >= artist.campCost && (a.security||0) >= artist.securityCost && (a.catering||0) >= artist.cateringCost && (a.portaloo||0) >= artist.portalooCost;
 }
+
+// Genre-match headliner rule (v124): an artist can be booked into slot 3 (the headliner
+// slot) of a specific stage WITHOUT paying amenity costs — if both artists already on
+// that stage share at least one genre with the incoming headliner. The fame gate still
+// applies. This creates a second booking economy alongside amenities: build infrastructure
+// OR curate a coherent lineup. Multi-genre artists (Coldplay = Pop/Rock, The Cure = Indie/Rock,
+// etc.) get a natural boost since they qualify multiple ways.
+function canBookHeadlinerViaGenre(artist, pd, stageIdx) {
+  if (!artist || !pd) return false;
+  if ((pd.fame || 0) < (artist.fame || 0)) return false;
+  const sa = (pd.stageArtists || [])[stageIdx];
+  if (!sa || sa.length !== 2) return false;
+  const headlinerGenres = new Set(getGenres(artist.genre));
+  return sa.every(a => getGenres(a.genre).some(g => headlinerGenres.has(g)));
+}
+
+// Is booking this artist onto this specific stage legal? Combines fame check + open-slot
+// check + (amenities OR genre-match).
+function canBookArtistOnStage(artist, pd, stageIdx) {
+  if (!artist || !pd) return false;
+  if ((pd.fame || 0) < (artist.fame || 0)) return false;
+  const sa = (pd.stageArtists || [])[stageIdx];
+  if (!sa || sa.length >= 3) return false;
+  if (canAffordArtist(artist, pd)) return true;
+  return canBookHeadlinerViaGenre(artist, pd, stageIdx);
+}
+
+// Is there ANY stage where this artist could be booked (amenities or genre-match)?
+// Used to gate pre-select UI actions.
+function canBookArtistAnywhere(artist, pd) {
+  if (!artist || !pd) return false;
+  if ((pd.fame || 0) < (artist.fame || 0)) return false;
+  const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+  if (openStages.length === 0) return false;
+  if (canAffordArtist(artist, pd)) return true;
+  return openStages.some(si => canBookHeadlinerViaGenre(artist, pd, si));
+}
 function getAvailableStages(pd) {
   return pd.stages.filter((_, i) => (pd.stageArtists?.[i] || []).length < 3);
 }
@@ -499,7 +536,7 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages }) {
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -554,12 +591,17 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           const stageColor = sColors[si] || "#7c3aed";
           const isHL = highlightStageIdx === si;
           const isBookable = pickStageMode && sa.length < 3;
+          // v124: genre-match highlight. When the caller passes a genreMatchStages set,
+          // stages in it use a gold accent + "Genre Match" hint to distinguish from
+          // regular (amenity-paid) bookable stages.
+          const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
+          const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
           return <div key={si} onClick={() => onStageClick && onStageClick(si)} style={{
             ...stageBox,
-            borderColor: isBookable ? stageColor : (isHL ? stageColor : "#2a2a4a"),
+            borderColor: isBookable ? displayColor : (isHL ? stageColor : "#2a2a4a"),
             borderWidth: isBookable ? 2 : 1,
-            background: isBookable ? `${stageColor}15` : stageBox.background,
-            boxShadow: isBookable ? `0 0 12px ${stageColor}80` : (isHL ? `0 0 12px ${stageColor}80` : "none"),
+            background: isBookable ? `${displayColor}15` : stageBox.background,
+            boxShadow: isBookable ? `0 0 12px ${displayColor}80` : (isHL ? `0 0 12px ${stageColor}80` : "none"),
             animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -578,7 +620,8 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 </div>;
               })}
             </div>
-            {isBookable && <div style={{ fontSize: 9, color: "#fbbf24", fontStyle: "italic", marginTop: 4, textAlign: "center" }}>↑ Click to book here</div>}
+            {isBookable && !isGenreMatch && <div style={{ fontSize: 9, color: "#fbbf24", fontStyle: "italic", marginTop: 4, textAlign: "center" }}>↑ Click to book here</div>}
+            {isBookable && isGenreMatch && <div style={{ fontSize: 9, color: "#fbbf24", fontWeight: 700, marginTop: 4, textAlign: "center", background: "rgba(251,191,36,0.15)", padding: "2px 4px", borderRadius: 4 }}>🎸 Genre Match — no amenities needed!</div>}
           </div>;
         })}
       </div>}
@@ -857,7 +900,26 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
 
   // Only book from HAND (no direct pool booking)
   const bookedNames = new Set(sa.flat().map(a => a.name));
-  const bookableHand = (pd.hand || []).filter(a => !bookedNames.has(a.name) && fame >= a.fame && counts.campsite >= a.campCost && counts.security >= a.securityCost && counts.catering >= a.cateringCost && counts.portaloo >= a.portalooCost);
+  // v124: an artist counts as bookable if EITHER
+  //   (a) amenities cover the cost on any open stage (standard path), OR
+  //   (b) some stage has exactly 2 artists whose genres share ≥1 with the incoming artist
+  //       (genre-match headliner path — bypasses amenity cost, fame still required).
+  const artistGenreMatchStage = (a) => {
+    const headlinerGenres = new Set(getGenres(a.genre));
+    for (let si = 0; si < sa.length; si++) {
+      const stage = sa[si] || [];
+      if (stage.length !== 2) continue;
+      if (stage.every(x => getGenres(x.genre).some(g => headlinerGenres.has(g)))) return si;
+    }
+    return -1;
+  };
+  const bookableHand = (pd.hand || []).filter(a => {
+    if (bookedNames.has(a.name)) return false;
+    if (fame < a.fame) return false;
+    const amenitiesOk = counts.campsite >= a.campCost && counts.security >= a.securityCost && counts.catering >= a.cateringCost && counts.portaloo >= a.portalooCost;
+    if (amenitiesOk) return true;
+    return artistGenreMatchStage(a) >= 0;
+  });
   const hasOpenStage = openStages.length > 0;
 
   // PRIORITY 1: Book from hand if possible — score now includes lineup objective fit + council impact
@@ -873,12 +935,25 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
     });
     const pick = bookableHand[0];
     const idx = (pd.hand || []).indexOf(pick);
+    // Determine which stages are LEGAL for this artist. If the AI's amenities cover the
+    // pick's cost, any open stage is legal (amenity path). Otherwise only stages where
+    // the genre-match headliner rule fires are legal.
+    const amenitiesOk = counts.campsite >= pick.campCost && counts.security >= pick.securityCost && counts.catering >= pick.cateringCost && counts.portaloo >= pick.portalooCost;
+    const isStageLegal = (si) => {
+      const stage = sa[si] || [];
+      if (stage.length >= 3) return false;
+      if (amenitiesOk) return true;
+      // Genre-match: exactly 2 artists on stage, both sharing a genre with pick.
+      if (stage.length !== 2) return false;
+      const headlinerGenres = new Set(getGenres(pick.genre));
+      return stage.every(x => getGenres(x.genre).some(g => headlinerGenres.has(g)));
+    };
     // Smart stage pick: choose the stage where this artist would BEST progress a lineup objective
     // (prefer 2/3-full stages that complete an objective, then 1/3-full, then empty)
     let bestStage = -1, bestStageScore = -Infinity;
     for (let si = 0; si < sa.length; si++) {
+      if (!isStageLegal(si)) continue;
       const stage = sa[si] || [];
-      if (stage.length >= 3) continue;
       const hypothetical = [...stage, pick];
       // Score: completing a lineup at stage[2] is best, then proximity to lineup objective match
       let score = stage.length * 10; // prefer fuller stages (more proximate to completion)
@@ -894,8 +969,13 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
       }
       if (score > bestStageScore) { bestStageScore = score; bestStage = si; }
     }
-    if (bestStage < 0) bestStage = 0;
-    return { action: "book", source: "hand", artistIdx: idx, stageIdx: bestStage };
+    if (bestStage < 0) {
+      // No legal stage — fall through (shouldn't happen if bookableHand is correctly built,
+      // but defensive against corner cases). AI will try a different action next tick.
+      // Skip this booking by returning amenity/reserve fallback below.
+    } else {
+      return { action: "book", source: "hand", artistIdx: idx, stageIdx: bestStage };
+    }
   }
 
   // PRIORITY 2: Pick up from pool or draw from deck if hand is small
@@ -2427,9 +2507,15 @@ export default function Headliners() {
       }
     }
     if (el.includes("immediately book another")) {
-      setPendingEffect({ type: "signArtist", artistName: artist.name, canRefresh: false, signCount: times });
+      // "Immediately book another Indie or Rock artist" (The Cure). This is a bonus
+      // BOOKING (play to a stage), not a sign-to-hand. Parse the genre restriction and
+      // route to the bonusBookGenre pending effect, which lets the player pick an eligible
+      // artist (from hand or pool, matching genre + affordable) and then choose a stage.
+      const genres = [];
+      ALL_GENRES.forEach(g => { if (el.includes(g.toLowerCase())) genres.push(g); });
+      setPendingEffect({ type: "bonusBookGenre", artistName: artist.name, genres, bookCount: times, selectedBonus: null });
       setPendingEffectPid(pid);
-      addLog("Effect", `${artist.name}: Immediately book ${times > 1 ? times + " artists" : "another artist"}!`);
+      addLog("Effect", `${artist.name}: Immediately book another ${genres.length ? genres.join(" or ") + " " : ""}artist!`);
     }
     if (el.includes("year end")) {
       addLog("Effect", `${artist.name}: ${eff} (triggers at year end)`);
@@ -3160,6 +3246,28 @@ export default function Headliners() {
         }
         scheduleNext(400); return;
       }
+      if (pe.type === "bonusBookGenre") {
+        // AI: pick the best eligible (genre + affordable) artist from hand or pool and
+        // book it to the first open stage. If none eligible or no open stage, skip.
+        const genreOk = (a) => pe.genres.length === 0 || getGenres(a.genre).some(g => pe.genres.includes(g));
+        const bookedNames = new Set((pd.stageArtists || []).flat().map(a => a.name));
+        const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+        const handCands = (pd.hand || []).filter(a => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name)).map(a => ({ a, source: "hand" }));
+        const poolCands = artistPool.filter(a => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid)).map(a => ({ a, source: "pool" }));
+        const cands = [...handCands, ...poolCands].sort((x, y) => (y.a.vp + y.a.tickets) - (x.a.vp + x.a.tickets));
+        if (cands.length > 0 && openStages.length > 0) {
+          const { a, source } = cands[0];
+          if (source === "hand") {
+            setPlayerData(p => { const nh = [...(p[pid].hand || [])]; const hi = nh.findIndex(x => x.name === a.name); if (hi >= 0) nh.splice(hi, 1); return { ...p, [pid]: { ...p[pid], hand: nh } }; });
+          } else {
+            const np = [...artistPool]; const pi = np.findIndex(x => x.name === a.name); if (pi >= 0) np.splice(pi, 1); setArtistPool(np);
+          }
+          bookArtistToStage(a, openStages[0], pid);
+          addLog("🤖 AI", `Bonus-booked ${a.name} (${pe.artistName} effect)`);
+        }
+        setPendingEffect(null); setPendingEffectPid(null);
+        scheduleNext(400); return;
+      }
       if (pe.type === "pickFromDrawn" && pe.drawn?.length > 0) {
         const best = pe.drawn.sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0];
         const other = pe.drawn.filter(a => a !== best);
@@ -3677,14 +3785,17 @@ export default function Headliners() {
   // ─── Artist booking/reserving ───
   const handleBookFromPool = (idx) => {
     const artist = artistPool[idx];
-    if (!canAffordArtist(artist, currentPD)) return;
+    // Widened gate (v124): allow if amenities cover OR if any open stage supports the
+    // genre-match headliner path. Per-stage validation happens in handleStageSelect.
+    if (!canBookArtistAnywhere(artist, currentPD)) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "pool", poolIdx: idx }); setArtistAction("pickStage");
   };
   const handleBookFromHand = (idx) => {
     const artist = currentPD.hand[idx];
-    if (!canAffordArtistOrFree(artist, currentPD)) return;
+    // canAffordArtistOrFree handles pending-effect free bookings; widen for genre-match too.
+    if (!(canAffordArtistOrFree(artist, currentPD) || canBookArtistAnywhere(artist, currentPD))) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "hand", handIdx: idx }); setArtistAction("pickStage");
@@ -3692,7 +3803,7 @@ export default function Headliners() {
   const handleBookFromDiscard = () => {
     if (discardPile.length === 0) return;
     const artist = discardPile[discardPile.length - 1]; // top of discard
-    if (!canAffordArtist(artist, currentPD)) return;
+    if (!canBookArtistAnywhere(artist, currentPD)) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "discard", discardIdx: discardPile.length - 1 }); setArtistAction("pickStage");
@@ -3838,6 +3949,22 @@ export default function Headliners() {
   const handleStageSelect = (stageIdx) => {
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
+    // v124: per-stage legality check. The selected stage must satisfy EITHER the amenity
+    // path or the genre-match headliner path. If neither, refuse with a targeted log line.
+    const stageEligible = canBookArtistOnStage(artist, currentPD, stageIdx);
+    const pendingFreeAllowed = pendingEffect && pendingEffect.type === "signArtist" && pendingEffectPid === currentPlayerId;
+    if (!stageEligible && !pendingFreeAllowed) {
+      // Diagnose why for a helpful message
+      if (currentPD.fame < artist.fame) {
+        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — need Fame ${artist.fame} (you have ${currentPD.fame})`);
+      } else {
+        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} here — amenities short and stage doesn't have a genre-matching pair for headliner rule`);
+      }
+      showFloatingBonus(`Can't book on that stage`, "#ef4444");
+      return;
+    }
+    // Detect which path is being used (for logging only; booking treats them identically)
+    const usedGenrePath = !canAffordArtist(artist, currentPD) && canBookHeadlinerViaGenre(artist, currentPD, stageIdx);
     // Dupe-guard: before consuming the source (hand/pool/discard), check that no player —
     // including the current one — already has this artist on a stage. If we discover the dupe
     // only inside bookArtistToStage's setPlayerData updater, the splice has already happened
@@ -3861,6 +3988,11 @@ export default function Headliners() {
       // Pool does NOT auto-refresh anymore
     } else if (source === "hand") {
       setPlayerData(p => { const nh = [...p[currentPlayerId].hand]; nh.splice(handIdx, 1); return { ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: nh } }; });
+    }
+    if (usedGenrePath) {
+      // Player-visible confirmation of the alternative booking path.
+      addLog(currentPlayer?.festivalName || "?", `🎸 Genre Match — ${artist.name} booked as headliner (no amenities required)`);
+      showFloatingBonus("🎸 Genre Match!", "#fbbf24");
     }
     bookArtistToStage(artist, stageIdx, currentPlayerId);
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null);
@@ -5773,6 +5905,72 @@ export default function Headliners() {
           </div>;
         }
 
+        if (pe.type === "bonusBookGenre") {
+          // Bonus booking from The Cure-style effects. Two phases:
+          //  1) pick an eligible artist (matching genre + affordable) from hand or pool
+          //  2) pick an open stage to book it onto
+          // Booking is free (no turn cost) and goes through bookArtistToStage.
+          const pd = playerData[pid] || {};
+          const genreOk = (a) => pe.genres.length === 0 || getGenres(a.genre).some(g => pe.genres.includes(g));
+          const bookedNames = new Set((pd.stageArtists || []).flat().map(a => a.name));
+          // Phase 2: stage selection (an artist has been chosen)
+          if (pe.selectedBonus) {
+            const a = pe.selectedBonus.artist;
+            const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+            return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+              <div style={{ ...card, textAlign: "center", maxWidth: 460 }}>
+                <h3 style={{ color: "#4ade80", marginBottom: 8 }}>🎤 Book {a.name} — pick a stage</h3>
+                <ArtistCard artist={a} showCost />
+                <p style={{ color: "#94a3b8", fontSize: 12, margin: "10px 0" }}>Choose an open stage:</p>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                  {openStages.map(si => <button key={si} onClick={() => {
+                    // Remove from its source, then book.
+                    if (pe.selectedBonus.source === "hand") {
+                      setPlayerData(p => { const nh = [...(p[pid].hand || [])]; const hi = nh.findIndex(x => x.name === a.name); if (hi >= 0) nh.splice(hi, 1); return { ...p, [pid]: { ...p[pid], hand: nh } }; });
+                    } else if (pe.selectedBonus.source === "pool") {
+                      const newPool = [...artistPool]; const pi = newPool.findIndex(x => x.name === a.name); if (pi >= 0) newPool.splice(pi, 1); setArtistPool(newPool);
+                    }
+                    bookArtistToStage(a, si, pid);
+                    const remaining = (pe.bookCount || 1) - 1;
+                    if (remaining > 0) {
+                      setPendingEffect({ ...pe, selectedBonus: null, bookCount: remaining });
+                    } else {
+                      setPendingEffect(null); setPendingEffectPid(null);
+                    }
+                    setTimeout(() => recalcTickets(), 50);
+                  }} style={bp}>{(pd.stageNames || [])[si] || `Stage ${si + 1}`}</button>)}
+                </div>
+                {openStages.length === 0 && <p style={{ color: "#f87171", fontSize: 12, marginTop: 10 }}>No open stages available!</p>}
+                <div><button onClick={() => setPendingEffect({ ...pe, selectedBonus: null })} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Back to artists</button></div>
+                <div><button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bs, marginTop: 8, fontSize: 11, opacity: 0.7 }}>Skip bonus booking</button></div>
+              </div>
+            </div>;
+          }
+          // Phase 1: artist selection. Eligible = genre match + affordable + not already booked.
+          const handEligible = (pd.hand || []).map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name));
+          const poolEligible = artistPool.map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid));
+          const noneEligible = handEligible.length === 0 && poolEligible.length === 0;
+          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%" }}>
+              <h3 style={{ color: "#4ade80", marginBottom: 6 }}>🎤 {pe.artistName}: Book a bonus {pe.genres.join(" or ")} artist!</h3>
+              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Pick an eligible artist you can afford — you'll choose a stage next. Free booking, no turn cost.</p>
+              {noneEligible
+                ? <p style={{ color: "#f87171", fontSize: 13, margin: "16px 0" }}>No eligible {pe.genres.join(" or ")} artist you can afford right now (checks Fame + amenities).</p>
+                : <>
+                  {handEligible.length > 0 && <><p style={{ color: "#94a3b8", fontSize: 11, margin: "8px 0 4px" }}>From your hand:</p>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                      {handEligible.map(({ a, i }) => <ArtistCard key={`h${i}`} artist={a} showCost small onClick={() => setPendingEffect({ ...pe, selectedBonus: { artist: a, source: "hand" } })} />)}
+                    </div></>}
+                  {poolEligible.length > 0 && <><p style={{ color: "#94a3b8", fontSize: 11, margin: "12px 0 4px" }}>From the pool:</p>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                      {poolEligible.map(({ a, i }) => <ArtistCard key={`p${i}`} artist={a} showCost small onClick={() => setPendingEffect({ ...pe, selectedBonus: { artist: a, source: "pool" } })} />)}
+                    </div></>}
+                </>}
+              <div><button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bs, marginTop: 14, fontSize: 12 }}>{noneEligible ? "Continue" : "Skip bonus booking"}</button></div>
+            </div>
+          </div>;
+        }
+
         if (pe.type === "pickFromDrawn") {
           const keepCount = pe.keepCount || 1;
           const selected = pe.selected || [];
@@ -6373,6 +6571,21 @@ export default function Headliners() {
               pickFieldMode={pickingFieldFor != null}
               onFieldClick={handleFieldClickForPlacement}
               year={year}
+              genreMatchStages={(() => {
+                // v124: compute which stages allow the currently-selected artist via the
+                // genre-match headliner rule, so PlayerBoard can render them with the gold
+                // "Genre Match" accent. Only relevant when picking a stage.
+                if (artistAction !== "pickStage" || !selectedArtist) return null;
+                const set = new Set();
+                (currentPD.stageArtists || []).forEach((sa, si) => {
+                  // Amenity path takes precedence — if affordable, it's a "normal" bookable
+                  // stage, not a genre-match stage. This keeps the UI's colour intent clear:
+                  // gold means "you're getting a discount here."
+                  if (canAffordArtist(selectedArtist.artist, currentPD)) return;
+                  if (canBookHeadlinerViaGenre(selectedArtist.artist, currentPD, si)) set.add(si);
+                });
+                return set;
+              })()}
               onStageClick={(si) => {
                 const sa = (currentPD.stageArtists || [])[si] || [];
                 if (artistAction === "pickStage" && sa.length < 3) {
@@ -6392,7 +6605,7 @@ export default function Headliners() {
                 const agentsOnThis = Object.entries(agentPlacements).filter(([pid, p]) => p && p.type === "pool" && p.artistName === a.name);
                 return <div key={i} style={{ position: "relative" }}>
                   <ArtistCard artist={a} showCost small
-                    affordable={canAffordArtist(a, currentPD)}
+                    affordable={canBookArtistAnywhere(a, currentPD)}
                     disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
                     onClick={() => {
                       if (artistAction === null && !actionTaken) {
@@ -6418,7 +6631,7 @@ export default function Headliners() {
             </button>
             {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
               {handCards.map((a, i) => <ArtistCard key={i} artist={a} showCost small
-                affordable={canAffordArtist(a, currentPD)}
+                affordable={canBookArtistAnywhere(a, currentPD)}
                 disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
                 onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
               />)}
