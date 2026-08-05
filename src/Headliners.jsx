@@ -6885,7 +6885,16 @@ export default function Headliners() {
               {handCards.length > 0 && <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#ec4899", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Your Hand — click to book</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                  {handCards.map((a, i) => <ArtistCard key={i} artist={a} showCost small affordable={canAffordArtistOrFree(a, currentPD)} disabled={!canAffordArtistOrFree(a, currentPD)} onClick={() => handleBookFromHand(i)} />)}
+                  {handCards.map((a, i) => {
+                    // v124.1 hotfix: the actionable hand card needs to allow clicks when
+                    // the artist is bookable via EITHER amenities OR the genre-match headliner
+                    // rule. The earlier fix only touched the other hand display; this one was
+                    // still gating on canAffordArtistOrFree alone, greying out any headliner
+                    // whose amenity costs weren't fully met — even when a stage on the board
+                    // had two matching-genre artists ready to accept them.
+                    const canBook = canAffordArtistOrFree(a, currentPD) || canBookArtistAnywhere(a, currentPD);
+                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
+                  })}
                 </div>
               </div>}
               
