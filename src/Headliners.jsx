@@ -1552,6 +1552,13 @@ export default function Headliners() {
   const [identitiesMode, setIdentitiesMode] = useState(false);
   const identitiesModeRef = useRef(false);
   useEffect(() => { identitiesModeRef.current = identitiesMode; }, [identitiesMode]);
+  // v155: stage-opening mode. Default "trends" — 3 cumulative microtrend claims OR
+  // 1 trending lineup 1st-place claim → grants 1 stage-open credit. Credits are banked
+  // in playerData.stageOpenCredits and can be spent on the player's turn to open a new
+  // stage (max 3). Alternative "objectives" mode uses the legacy artist objectives system.
+  const [stageOpenMode, setStageOpenMode] = useState("trends");
+  const stageOpenModeRef = useRef("trends");
+  useEffect(() => { stageOpenModeRef.current = stageOpenMode; }, [stageOpenMode]);
   // Per-player: which identity did they pick? { pid: identityId }
   const [playerIdentities, setPlayerIdentities] = useState({});
   const playerIdentitiesRef = useRef({});
@@ -1714,6 +1721,71 @@ export default function Headliners() {
   // Convenience wrapper for negative fame — same ledger, no popup.
   const logFameLoss = (pid, amount, source, yearOverride) => logFameGain(pid, -Math.abs(amount), source, yearOverride);
 
+  // v155: award a stage-open credit when a player crosses the trend-based progression
+  // thresholds. Called after every microtrend claim (grants a credit every 3rd cumulative
+  // claim) and after every trending lineup 1st-place claim (grants a credit immediately).
+  // Credits accumulate in playerData.stageOpenCredits and are spent via the stage-open
+  // panel button on the player's own turn. Only fires when stageOpenMode === "trends".
+  const grantStageCredit = (pid, reason) => {
+    if (stageOpenModeRef.current !== "trends") return;
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    const currentStages = (pd.stages || []).length;
+    if (currentStages >= 3) return; // Already at max — no point banking more
+    setPlayerData(prev => ({
+      ...prev,
+      [pid]: { ...prev[pid], stageOpenCredits: ((prev[pid]?.stageOpenCredits) || 0) + 1 },
+    }));
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("🎪 Stage Credit", `${pName} earned a stage-open credit (${reason})`);
+    showFloatingBonus(`🎪 Stage Credit!`, "#4ade80");
+  };
+  // Called after every microtrend claim (both active + forecast paths). Reads the fresh
+  // microtrendsCompletedCount from playerDataRef and grants a credit if the new count
+  // is a multiple of 3 (i.e., they just claimed their 3rd/6th/9th trend).
+  const checkMicrotrendCredit = (pid) => {
+    if (stageOpenModeRef.current !== "trends") return;
+    // Read AFTER the setPlayerData that incremented microtrendsCompletedCount — the ref
+    // may not have flushed yet, so schedule this on the next tick.
+    setTimeout(() => {
+      const count = playerDataRef.current?.[pid]?.microtrendsCompletedCount || 0;
+      if (count > 0 && count % 3 === 0) grantStageCredit(pid, "3 microtrends claimed");
+    }, 60);
+  };
+
+  // v155: spend a stage-open credit. Grows the player's `stages` array by one, adds a
+  // fresh stage name from the STAGE_NAMES pool + color, decrements the credit counter.
+  // Grants +1 Fame next-year bonus (matching the old pre-round stage-open behavior)
+  // when the stageOpenFameBonus toggle is on.
+  const spendStageCredit = (pid) => {
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    if ((pd.stageOpenCredits || 0) < 1) return;
+    if ((pd.stages || []).length >= 3) return;
+    const stageCount = (pd.stages || []).length;
+    const usedNames = pd.stageNames || [];
+    const availNames = STAGE_NAMES.filter(n => !usedNames.includes(n));
+    const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage ${stageCount + 1}`;
+    const grantOpeningFame = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
+    setPlayerData(prev => {
+      const cur = prev[pid] || {};
+      return {
+        ...prev,
+        [pid]: {
+          ...cur,
+          stages: [...(cur.stages || []), { fameRequired: 0 }],
+          stageArtists: [...(cur.stageArtists || []), []],
+          stageNames: [...(cur.stageNames || []), sName],
+          stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageCount % STAGE_COLORS.length]],
+          stageOpenCredits: Math.max(0, (cur.stageOpenCredits || 0) - 1),
+          baseFame: grantOpeningFame ? Math.min(FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
+        },
+      };
+    });
+    if (grantOpeningFame) logFameGain(pid, 1, `Opened new stage: ${sName}`);
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("🎪 Stage Open", `${pName} spent a stage credit → opened "${sName}"${grantOpeningFame ? " (+1 🔥 Fame)" : ""}!`);
+    showFloatingBonus(`🎪 Opened ${sName}!`, "#4ade80");
+  };
+
   // v154: identity effect helpers. Every ticket/fame movement caused by a player's
   // identity flows through here so it gets logged to identityLog (for the panel + hover)
   // AND to ticketsLog/fameLog (so the existing hover-tooltip UI already shows it).
@@ -1821,7 +1893,7 @@ export default function Headliners() {
   // v135: Alternative Artist Objectives — lobby toggle. When ON, this system replaces the
   // fame-based stage-opening progression. Players draw objectives and complete them to earn
   // stage-open rewards.
-  const [altObjectivesMode, setAltObjectivesMode] = useState(true);
+  const [altObjectivesMode, setAltObjectivesMode] = useState(false);
   const altObjectivesModeRef = useRef(true);
   useEffect(() => { altObjectivesModeRef.current = altObjectivesMode; }, [altObjectivesMode]);
 
@@ -3536,6 +3608,8 @@ export default function Headliners() {
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
         addLog("🎯 LINEUP OBJECTIVE", `${pName} FIRST to match ${lo.genres.join("+")} → +5 tickets!`);
         showFloatingBonus("🎯 +5 🎟️!", "#fbbf24"); sfx.headliner();
+        // v155: trending lineup 1st-place claim grants a stage-open credit
+        grantStageCredit(pid, `1st place on ${lo.genres.join("+")} lineup`);
       } else if (lo.claimed2nd === null && lo.claimed1st !== pid) {
         setLineupObjectives(prev => {
           const next = [...prev];
@@ -4363,6 +4437,8 @@ export default function Headliners() {
         // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
         // updates land first; the bonus draw appears as a follow-up log line.
         setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+        // v155: check for stage-open credit (every 3 microtrends = 1 credit)
+        checkMicrotrendCredit(pid);
         return { ...mt, claimedBy: pid };
       }
       return mt;
@@ -4392,6 +4468,8 @@ export default function Headliners() {
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
         setTimeout(() => checkMidYearAchievements(pid), 80);
         setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+        // v155: check for stage-open credit (every 3 microtrends = 1 credit)
+        checkMicrotrendCredit(pid);
         // Rotate a fresh forecast in from the bag. Pass claimedTrend as avoidEntry so the
         // boundary guard prevents the same trend from popping back immediately.
         const fresh = popMicrotrendFromBag(claimedTrend);
@@ -6857,7 +6935,7 @@ export default function Headliners() {
   const currentPreRoundPlayer = preRoundPlayers[preRoundIndex];
   // v135: when Alternative Artist Objectives is on, stages open ONLY via objective
   // completion — the fame-3 gate is disabled here.
-  const canOpenStage = currentPreRoundPlayer && !altObjectivesModeRef.current && (playerData[currentPreRoundPlayer.id]?.fame || 0) >= 3 && (playerData[currentPreRoundPlayer.id]?.stages || []).length < 3;
+  const canOpenStage = currentPreRoundPlayer && !altObjectivesModeRef.current && stageOpenModeRef.current !== "trends" && (playerData[currentPreRoundPlayer.id]?.fame || 0) >= 3 && (playerData[currentPreRoundPlayer.id]?.stages || []).length < 3;
 
   const getPreRoundDrawCount = (pd) => {
     // Respect the lobby toggle. If pre-round draws are off, no free draws — even though
@@ -7309,6 +7387,19 @@ export default function Headliners() {
             <div style={{ flex: 1 }}>
               <div style={{ color: agentMicrotrendClaim ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🎵 Agents can claim microtrends</div>
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
+            </div>
+          </label>
+          <label onClick={() => {
+            const next = stageOpenMode === "trends" ? "objectives" : "trends";
+            setStageOpenMode(next);
+            // v155: keep altObjectivesMode in sync with stageOpenMode so the objectives
+            // picker phase and check logic fire only under "objectives" mode.
+            setAltObjectivesMode(next === "objectives");
+          }} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stageOpenMode === "trends" ? "2px solid #4ade80" : "1px solid #4c1d95", background: stageOpenMode === "trends" ? "rgba(74,222,128,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenMode === "trends" ? "#4ade80" : "#4c1d95"}`, background: stageOpenMode === "trends" ? "#4ade80" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenMode === "trends" ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: stageOpenMode === "trends" ? "#4ade80" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎪 Trend-based stage opening</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenMode === "trends" ? "Default (v155) — every 3 microtrends OR 1 trending lineup 1st claim earns a stage-open credit. Spend credits on your turn to open a new stage (max 3). Replaces artist objectives." : "Off — legacy artist-objective progression. Pick objectives, complete them to open stages."}</div>
             </div>
           </label>
           <label onClick={() => setIdentitiesMode(!identitiesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: identitiesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: identitiesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
@@ -8433,6 +8524,21 @@ export default function Headliners() {
                   </div>
                 </div>;
               })()}
+              {/* v155: Stage-open progress panel — shown for current player when in "trends" mode. */}
+              {stageOpenMode === "trends" && p.id === currentPlayerId && (() => {
+                const stages = (playerData[p.id]?.stages || []).length;
+                const credits = playerData[p.id]?.stageOpenCredits || 0;
+                const totalTrends = playerData[p.id]?.microtrendsCompletedCount || 0;
+                const progressToNext = totalTrends % 3;
+                if (stages >= 3 && credits === 0) return null;
+                return <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎪 Stage Progress</div>
+                  <div style={{ fontSize: 10, color: "#e2e8f0" }}>Stages: <strong style={{ color: "#86efac" }}>{stages}/3</strong></div>
+                  {stages < 3 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>Microtrends toward next credit: <strong style={{ color: "#c4b5fd" }}>{progressToNext}/3</strong></div>}
+                  {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 11, fontWeight: 700, cursor: "pointer", width: "100%" }}>🎪 Open a Stage ({credits} credit{credits === 1 ? "" : "s"})</button>}
+                  {credits > 0 && stages >= 3 && <div style={{ fontSize: 9, color: "#f87171", marginTop: 3 }}>{credits} credit{credits === 1 ? "" : "s"} banked (max stages reached)</div>}
+                </div>;
+              })()}
             </div>); })}
           <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
@@ -8584,6 +8690,18 @@ export default function Headliners() {
                       <span style={{ color: totalTickets >= 0 ? "#86efac" : "#f87171" }}>🎟️ {totalTickets >= 0 ? "+" : ""}{totalTickets}</span>
                       {totalFame !== 0 && <span style={{ color: totalFame >= 0 ? "#fb923c" : "#f87171" }}>🔥 {totalFame >= 0 ? "+" : ""}{totalFame}</span>}
                     </div>
+                  </div>;
+                })()}
+                {stageOpenMode === "trends" && p.id === currentPlayerId && (() => {
+                  const stages = (playerData[p.id]?.stages || []).length;
+                  const credits = playerData[p.id]?.stageOpenCredits || 0;
+                  const totalTrends = playerData[p.id]?.microtrendsCompletedCount || 0;
+                  const progressToNext = totalTrends % 3;
+                  if (stages >= 3 && credits === 0) return null;
+                  return <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
+                    <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎪 Stages: {stages}/3</div>
+                    {stages < 3 && <div style={{ fontSize: 8, color: "#94a3b8" }}>Microtrends: {progressToNext}/3 to next credit</div>}
+                    {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 4, padding: "4px 8px", borderRadius: 5, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 9, fontWeight: 700, cursor: "pointer", width: "100%" }}>Open Stage ({credits})</button>}
                   </div>;
                 })()}
               </div>); })}
