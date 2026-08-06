@@ -398,6 +398,105 @@ function buildAltObjectiveDeck() {
   return deck;
 }
 
+// v154: Festival Identities. Each player picks 1 of 3 dealt at game start (before
+// they see their artists). The identity's benefit/penalty fires throughout the game
+// via hooks in the play/tempt/special-guest/year-end paths. Every ticket/fame movement
+// caused by an identity is logged into `identityLog` so the player can hover to see
+// how their identity is scoring for them.
+//
+// Each identity has:
+//   id      — stable string key
+//   name    — display name
+//   flavor  — one-line thematic description
+//   goal    — what the player is trying to do
+//   benefit — plain-English benefit description (shown in picker + panel)
+//   penalty — plain-English penalty description
+// Effect resolution is centralized in `applyIdentityOnPlay` / `applyIdentityOnTempt` /
+// etc. below (see main component), not on the identity object, to avoid stale-closure
+// pain with player data. The `type` field routes to the correct hook.
+const ALL_IDENTITIES = [
+  {
+    id: "counter_culture", name: "Counter Culture", type: "counterCulture",
+    goal: "Tempt artists with 3 Fame or less",
+    benefit: "Gain 1 Fame every time you tempt these artists. +1 ticket every time you play an artist under 4 Fame.",
+    penalty: "-2 tickets when you play artists who cost 4 or more Fame",
+  },
+  {
+    id: "family_friendly", name: "Family Friendly", type: "genrePair",
+    inGenres: ["Pop", "Rock"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Pop or Rock artists",
+    benefit: "+2 tickets every time you play a Pop or Rock artist.",
+    penalty: "-1 ticket every time you play an artist who is not Pop or Rock.",
+  },
+  {
+    id: "rave_culture", name: "Rave Culture", type: "genrePair",
+    inGenres: ["Electronic", "Indie"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Electronic or Indie artists",
+    benefit: "+2 tickets every time you play an Electronic or Indie artist.",
+    penalty: "-1 ticket every time you play an artist who is not Electronic or Indie.",
+  },
+  {
+    id: "popularity_contest", name: "Popularity Contest", type: "genrePair",
+    inGenres: ["Pop", "Hip Hop"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Pop or Hip Hop artists",
+    benefit: "+2 tickets every time you play a Pop or Hip Hop artist.",
+    penalty: "-1 ticket every time you play an artist who is not Pop or Hip Hop.",
+  },
+  {
+    id: "band_together", name: "Band Together", type: "genrePair",
+    inGenres: ["Rock", "Indie"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Rock or Indie artists",
+    benefit: "+2 tickets every time you play a Rock or Indie artist.",
+    penalty: "-1 ticket every time you play an artist who is not Rock or Indie.",
+  },
+  {
+    id: "superbad", name: "Superbad", type: "genrePair",
+    inGenres: ["Hip Hop", "Funk"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Hip Hop or Funk artists",
+    benefit: "+2 tickets every time you play a Hip Hop or Funk artist.",
+    penalty: "-1 ticket every time you play an artist who is not Hip Hop or Funk.",
+  },
+  {
+    id: "groove_armada", name: "Groove Armada", type: "genrePair",
+    inGenres: ["Electronic", "Funk"], benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play Electronic or Funk artists",
+    benefit: "+2 tickets every time you play an Electronic or Funk artist.",
+    penalty: "-1 ticket every time you play an artist who is not Electronic or Funk.",
+  },
+  {
+    id: "full_of_surprises", name: "Full of Surprises", type: "fullOfSurprises",
+    goal: "Play a special guest",
+    benefit: "Each stage that is 2/3 full receives a special guest opportunity. +4 tickets every time you successfully play a special guest.",
+    penalty: "-3 tickets every time you fill the last slot of a stage by playing an artist normally.",
+  },
+  {
+    id: "curated", name: "Curated", type: "curated",
+    goal: "Play no more than 6 artists in a year",
+    benefit: "At year end, if you played ≤6 artists: +1 ticket per artist played.",
+    penalty: "At year end, -3 tickets per artist played above 6.",
+  },
+  {
+    id: "local_talent", name: "Local Talent", type: "localTalent",
+    goal: "Play only 0-2 Fame artists",
+    benefit: "+2 tickets every time you play an artist who costs 2 Fame or less.",
+    penalty: "-2 tickets for artists who cost 3 Fame or more.",
+  },
+  {
+    id: "confetti_cannons", name: "Confetti Cannons", type: "effectMatch",
+    hasEffect: true, benefitTickets: 2, penaltyTickets: -1,
+    goal: "Play artists with effects",
+    benefit: "+2 tickets every time you play an artist with an effect.",
+    penalty: "-1 ticket every time you play an artist without an effect.",
+  },
+  {
+    id: "keeping_it_simple", name: "Keeping it Simple", type: "keepingItSimple",
+    goal: "Play artists without effects",
+    benefit: "+4 tickets every time you play an artist without an effect.",
+    penalty: "Artists with effects provide no ticket sales (base tickets zeroed).",
+  },
+];
+const getIdentity = (id) => ALL_IDENTITIES.find(i => i.id === id);
+
 
 
 function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -1448,6 +1547,22 @@ export default function Headliners() {
   // helps prevent runaway leaders. Kicks in from Year 2 onwards (year 1 has no leader
   // established yet); ties = no leader (everyone gets the perk).
   const [antiLeadMechanics, setAntiLeadMechanics] = useState(true);
+  // v154: festival identities. Each player picks one of 3 dealt identities before setup.
+  // Toggle is off by default — it's a big flavor addition, opt-in per game.
+  const [identitiesMode, setIdentitiesMode] = useState(false);
+  const identitiesModeRef = useRef(false);
+  useEffect(() => { identitiesModeRef.current = identitiesMode; }, [identitiesMode]);
+  // Per-player: which identity did they pick? { pid: identityId }
+  const [playerIdentities, setPlayerIdentities] = useState({});
+  const playerIdentitiesRef = useRef({});
+  useEffect(() => { playerIdentitiesRef.current = playerIdentities; }, [playerIdentities]);
+  // Per-player log of every ticket/fame movement caused by their identity.
+  //   { pid: [{ source, amount, year, kind: "ticket"|"fame" }] }
+  // Feeds the identity panel + shows up in ticketsLog/fameLog aggregated hovers.
+  const [identityLog, setIdentityLog] = useState({});
+  // Identity picker state — during phase "identityChoice", each player picks 1 of 3.
+  const [identityDealt, setIdentityDealt] = useState({}); // { pid: [id, id, id] }
+  const [identityPickerIdx, setIdentityPickerIdx] = useState(0);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
@@ -1598,6 +1713,110 @@ export default function Headliners() {
   };
   // Convenience wrapper for negative fame — same ledger, no popup.
   const logFameLoss = (pid, amount, source, yearOverride) => logFameGain(pid, -Math.abs(amount), source, yearOverride);
+
+  // v154: identity effect helpers. Every ticket/fame movement caused by a player's
+  // identity flows through here so it gets logged to identityLog (for the panel + hover)
+  // AND to ticketsLog/fameLog (so the existing hover-tooltip UI already shows it).
+  const applyIdentityTickets = (pid, amount, source) => {
+    if (!amount) return;
+    const y = yearRef.current || year || 1;
+    setIdentityLog(prev => ({
+      ...prev,
+      [pid]: [...(prev[pid] || []), { source, amount, year: y, kind: "ticket" }],
+    }));
+    // Route through logTicketGain so the ticket-hover tooltip aggregates it under the
+    // identity name AND the actual bonusTickets state moves. Suppresses the +/-N popup
+    // for identities that fire very frequently to avoid spamming the screen.
+    logTicketGain(pid, amount, source);
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid]?.bonusTickets || 0) + amount) } }));
+  };
+  const applyIdentityFame = (pid, amount, source) => {
+    if (!amount) return;
+    const y = yearRef.current || year || 1;
+    setIdentityLog(prev => ({
+      ...prev,
+      [pid]: [...(prev[pid] || []), { source, amount, year: y, kind: "fame" }],
+    }));
+    logFameGain(pid, amount, source);
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, Math.max(0, (p[pid]?.baseFame || 0) + amount)) } }));
+  };
+
+  // v154: fires when an artist is played (any path — hand, pool, contest, tempt) after
+  // the artist is on-stage. `viaSpecialGuest` = true when the play was the year-end
+  // special-guest phase (affects Full of Surprises normal-completion penalty).
+  // `stageBecameFull` = true when this play made the stage go from 2/3 to 3/3 (affects
+  // Full of Surprises penalty for normal completions).
+  const applyIdentityOnPlay = (pid, artist, opts = {}) => {
+    if (!identitiesModeRef.current) return;
+    const idId = playerIdentitiesRef.current[pid];
+    const identity = getIdentity(idId);
+    if (!identity) return;
+    const { viaSpecialGuest = false, stageBecameFull = false } = opts;
+    const artistGenres = (artist.genre || "").split(",").map(g => g.trim());
+    const hasEffect = !!(artist.effect || "").trim();
+    const fame = artist.fame || 0;
+
+    switch (identity.type) {
+      case "genrePair": {
+        const inPair = artistGenres.some(g => identity.inGenres.includes(g));
+        if (inPair) applyIdentityTickets(pid, identity.benefitTickets, `Identity: ${identity.name} (in-genre)`);
+        else applyIdentityTickets(pid, identity.penaltyTickets, `Identity: ${identity.name} (off-genre)`);
+        break;
+      }
+      case "counterCulture": {
+        if (fame <= 3) applyIdentityTickets(pid, 1, `Identity: Counter Culture (low-fame play)`);
+        else applyIdentityTickets(pid, -2, `Identity: Counter Culture (headliner penalty)`);
+        break;
+      }
+      case "localTalent": {
+        if (fame <= 2) applyIdentityTickets(pid, 2, `Identity: Local Talent (local play)`);
+        else applyIdentityTickets(pid, -2, `Identity: Local Talent (big-name penalty)`);
+        break;
+      }
+      case "effectMatch": {
+        // Confetti Cannons: +2 with effect, −1 without
+        if (hasEffect === identity.hasEffect) applyIdentityTickets(pid, identity.benefitTickets, `Identity: ${identity.name} (effect match)`);
+        else applyIdentityTickets(pid, identity.penaltyTickets, `Identity: ${identity.name} (no-effect penalty)`);
+        break;
+      }
+      case "keepingItSimple": {
+        // +4 for no-effect artists; artists WITH effects give 0 base tickets (deducted here).
+        if (!hasEffect) applyIdentityTickets(pid, 4, `Identity: Keeping it Simple (clean lineup)`);
+        else applyIdentityTickets(pid, -(artist.tickets || 0), `Identity: Keeping it Simple (effect artist voided)`);
+        break;
+      }
+      case "fullOfSurprises": {
+        if (viaSpecialGuest) applyIdentityTickets(pid, 4, `Identity: Full of Surprises (special guest)`);
+        else if (stageBecameFull) applyIdentityTickets(pid, -3, `Identity: Full of Surprises (normal completion penalty)`);
+        break;
+      }
+      case "curated": {
+        // Handled at year end via applyIdentityAtYearEnd. No per-play effect.
+        break;
+      }
+      default: break;
+    }
+  };
+
+  // Counter Culture tempt refund: fires when a player tempts an artist ≤3 Fame.
+  const applyIdentityOnTempt = (pid, artist) => {
+    if (!identitiesModeRef.current) return;
+    const idId = playerIdentitiesRef.current[pid];
+    const identity = getIdentity(idId);
+    if (!identity || identity.type !== "counterCulture") return;
+    if ((artist.fame || 0) <= 3) applyIdentityFame(pid, 1, `Identity: Counter Culture (tempt refund)`);
+  };
+
+  // Curated year-end scoring. Called from beginRoundEnd for every player with Curated.
+  const applyIdentityAtYearEnd = (pid) => {
+    if (!identitiesModeRef.current) return;
+    const idId = playerIdentitiesRef.current[pid];
+    const identity = getIdentity(idId);
+    if (!identity || identity.type !== "curated") return;
+    const played = (yearEvents[pid]?.artistsPlayedThisYear) || 0;
+    if (played <= 6) applyIdentityTickets(pid, played, `Identity: Curated (+1 per artist, ${played} played)`);
+    else applyIdentityTickets(pid, -3 * (played - 6), `Identity: Curated (${played - 6} artists over cap)`);
+  };
 
   // v135: Alternative Artist Objectives — lobby toggle. When ON, this system replaces the
   // fame-based stage-opening progression. Players draw objectives and complete them to earn
@@ -2428,6 +2647,8 @@ export default function Headliners() {
       // Deduct 1 Fame (from baseFame — the reversible portion of the fame stack).
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 1) } }));
       logFameLoss(pid, 1, `Tempting ${artist.name}`);
+      // v154: Counter Culture identity refunds 1 Fame when tempting a Fame ≤ 3 artist.
+      applyIdentityOnTempt(pid, artist);
       setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber }] }));
       setTimeout(() => recalcTickets(), 30);
       const pName = players.find(p => p.id === pid)?.festivalName || "?";
@@ -4018,6 +4239,12 @@ export default function Headliners() {
     const isHeadliner = slotCount === 3;
     const sName = (pd.stageNames || [])[stageIdx] || `Stage ${stageIdx + 1}`;
     const festival = players.find(p => p.id === pid)?.festivalName;
+
+    // v154: identity hook. Fires for every normal play (special-guest path calls the
+    // hook separately with viaSpecialGuest=true). `stageBecameFull` = this play made
+    // the stage go from 2 → 3 artists, which triggers Full of Surprises's -3 penalty.
+    const stageBecameFull = isHeadliner; // slotCount === 3 means we're placing the 3rd artist
+    applyIdentityOnPlay(pid, artist, { viaSpecialGuest: false, stageBecameFull });
 
     // Show the booking popup (headliner popup takes priority if headliner)
     if (isHeadliner) {
@@ -5850,6 +6077,25 @@ export default function Headliners() {
     // v135: alt-objectives event — Friends in Special Places tracks special guest placements.
     bumpYearEvent(p.id, "specialGuestPlacedThisYear");
     setTimeout(() => checkMidYearAchievements(p.id), 80);
+    // v154: identity hook. Full of Surprises grants +4 tickets per successful special
+    // guest play. Any identity keying off "played artist" fires here too, since a
+    // special guest IS an artist play (though we mark it viaSpecialGuest so the
+    // Full-of-Surprises normal-completion penalty doesn't misfire).
+    applyIdentityOnPlay(p.id, artist, { viaSpecialGuest: true, stageBecameFull: true });
+    // v154: Full of Surprises — if the player still has 2/3-full stages and there are
+    // eligible draws left, loop back into another special guest opportunity for them
+    // rather than advancing to the next player.
+    const identityId = playerIdentitiesRef.current[p.id];
+    if (identitiesModeRef.current && identityId === "full_of_surprises") {
+      const latestPd = playerDataRef.current?.[p.id] || playerData[p.id] || {};
+      const stillEligible = (latestPd.stageArtists || []).some(s => s.length === 2);
+      if (stillEligible) {
+        // Reset the idempotency guard so the next draw fires for the SAME player.
+        sgSetupPidRef.current = null;
+        setTimeout(() => setupSpecialGuestForPlayer(specialGuestPlayer), 500);
+        return;
+      }
+    }
     // Advance to next player
     if (specialGuestPlayer < players.length - 1) {
       const next = specialGuestPlayer + 1;
@@ -5868,6 +6114,18 @@ export default function Headliners() {
       addLog("🌟 Special Guest", `${p?.festivalName} declined ${artist.name}.`);
     }
     setSpecialGuestCard(null);
+    // v154: Full of Surprises — declining doesn't consume the extra opportunities; loop
+    // if they still have eligible stages and there are more cards to try.
+    const identityId = playerIdentitiesRef.current[p?.id];
+    if (identitiesModeRef.current && identityId === "full_of_surprises" && p) {
+      const latestPd = playerDataRef.current?.[p.id] || playerData[p.id] || {};
+      const stillEligible = (latestPd.stageArtists || []).some(s => s.length === 2);
+      if (stillEligible) {
+        sgSetupPidRef.current = null;
+        setTimeout(() => setupSpecialGuestForPlayer(specialGuestPlayer), 300);
+        return;
+      }
+    }
     if (specialGuestPlayer < players.length - 1) {
       const next = specialGuestPlayer + 1;
       setSpecialGuestPlayer(next);
@@ -6457,6 +6715,12 @@ export default function Headliners() {
 
   const beginRoundEnd = () => {
     try {
+    // v154: Curated identity fires here — score based on artists played this year.
+    // Runs BEFORE the ticket calc so the +N/-3N adjustments land in bonusTickets in time
+    // to be included in this year's totals.
+    if (identitiesModeRef.current) {
+      players.forEach(p => applyIdentityAtYearEnd(p.id));
+    }
     // Collect all data BEFORE any setState
     const logs = [];
     const nat = { ...allTickets };
@@ -7047,6 +7311,13 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
             </div>
           </label>
+          <label onClick={() => setIdentitiesMode(!identitiesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: identitiesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: identitiesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${identitiesMode ? "#fbbf24" : "#4c1d95"}`, background: identitiesMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{identitiesMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: identitiesMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎭 Festival Identities</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{identitiesMode ? "On — each player picks 1 of 3 dealt identities before setup. Their identity fires benefits/penalties on plays, tempts, or year-end throughout the game." : "Off — no identity layer. All players play the same base scoring rules."}</div>
+            </div>
+          </label>
           <label onClick={() => setAntiLeadMechanics(!antiLeadMechanics)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: antiLeadMechanics ? "2px solid #fbbf24" : "1px solid #4c1d95", background: antiLeadMechanics ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${antiLeadMechanics ? "#fbbf24" : "#4c1d95"}`, background: antiLeadMechanics ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{antiLeadMechanics ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
@@ -7096,7 +7367,21 @@ export default function Headliners() {
       setWinCondition(cond);
       addLogH(`Win Condition: ${label}`, "year");
       addLog(firstHuman?.festivalName || "?", `chose "${label}" as the win condition`);
-      setPhase("setup"); addLogH("Setup Phase", "year");
+      // v154: if identities are enabled, players pick identities before setup begins.
+      if (identitiesModeRef.current) {
+        // Deal 3 unique identities to each player. AIs auto-pick randomly.
+        const dealt = {};
+        players.forEach(p => {
+          const shuffled = [...ALL_IDENTITIES].sort(() => Math.random() - 0.5);
+          dealt[p.id] = shuffled.slice(0, 3).map(i => i.id);
+        });
+        setIdentityDealt(dealt);
+        setIdentityPickerIdx(0);
+        // Auto-pick for AI at the front of the queue
+        setPhase("identityChoice");
+      } else {
+        setPhase("setup"); addLogH("Setup Phase", "year");
+      }
     };
     const opt = (cond, label, blurb, tie) => <button onClick={() => pickCondition(cond, label)} style={{
       padding: 18, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.10), rgba(124,58,237,0.06))",
@@ -7118,6 +7403,54 @@ export default function Headliners() {
             {opt("following", "📈 Following", "Add your ticket sales up from every year. The highest game total wins.", "The default rule — steady growth pays off.")}
             {opt("talkOfTheTown", "⭐ Talk of the Town", "The player with the highest single-year ticket count at game end wins — one huge festival is all you need.", "Ties broken by second-best year, then cumulative.")}
           </div>
+        </div>
+      </div>{anim}</div>;
+  }
+
+  // v154: identity picker — each player in turn picks 1 of 3 dealt festival identities
+  // before setup begins. AIs auto-pick a random option.
+  if (phase === "identityChoice") {
+    const currentPicker = players[identityPickerIdx];
+    const advance = () => {
+      const next = identityPickerIdx + 1;
+      if (next >= players.length) {
+        setPhase("setup"); addLogH("Setup Phase", "year");
+      } else {
+        setIdentityPickerIdx(next);
+      }
+    };
+    const pickIdentity = (identityId) => {
+      const identity = getIdentity(identityId);
+      setPlayerIdentities(prev => ({ ...prev, [currentPicker.id]: identityId }));
+      addLog(currentPicker.festivalName, `chose the "${identity?.name}" festival identity`);
+      setTimeout(advance, 300);
+    };
+    // If the current picker is AI, auto-pick a random option from the dealt three and advance.
+    if (currentPicker?.isAI) {
+      const options = identityDealt[currentPicker.id] || [];
+      if (options.length > 0) {
+        setTimeout(() => pickIdentity(options[Math.floor(Math.random() * options.length)]), 800);
+      }
+    }
+    const options = (identityDealt[currentPicker?.id] || []).map(id => getIdentity(id)).filter(Boolean);
+    return <div style={CS}>{utilButtons}{showLog && <GameLog log={gameLog} onClose={() => setShowLog(false)} />}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 24, minHeight: "100vh" }}>
+        <div style={{ ...card, maxWidth: 760, width: "100%", textAlign: "center", marginTop: 24 }}>
+          <div style={{ fontSize: 11, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.4, fontWeight: 700, marginBottom: 4 }}>🎭 Festival Identity</div>
+          <h2 style={{ color: "#e2e8f0", fontSize: 26, margin: "0 0 6px" }}>{currentPicker?.festivalName}: pick your festival's identity</h2>
+          <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 18 }}>{currentPicker?.isAI ? "AI is choosing…" : "This identity will shape your festival's scoring for the whole game."} <span style={{ color: "#64748b" }}>Player {identityPickerIdx + 1} of {players.length}</span></p>
+          {currentPicker?.isAI ? <div style={{ color: "#64748b", fontSize: 14, padding: 40 }}>⏳ Waiting for AI…</div> : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {options.map(identity => <button key={identity.id} onClick={() => pickIdentity(identity.id)} style={{
+              padding: 16, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.10), rgba(124,58,237,0.06))",
+              border: "2px solid rgba(251,191,36,0.5)", color: "#e2e8f0", cursor: "pointer", textAlign: "left",
+              transition: "all 0.15s", width: "100%",
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 17, color: "#fbbf24", marginBottom: 4 }}>{identity.name}</div>
+              <div style={{ fontSize: 11, color: "#c4b5fd", fontStyle: "italic", marginBottom: 8 }}>Goal: {identity.goal}</div>
+              <div style={{ fontSize: 12, color: "#86efac", lineHeight: 1.4, marginBottom: 4 }}><strong>✓</strong> {identity.benefit}</div>
+              <div style={{ fontSize: 12, color: "#f87171", lineHeight: 1.4 }}><strong>✗</strong> {identity.penalty}</div>
+            </button>)}
+          </div>}
         </div>
       </div>{anim}</div>;
   }
@@ -8084,6 +8417,22 @@ export default function Headliners() {
                   return <div key={e.id} style={{ fontSize: 9, color: "#4ade80", fontWeight: 700, padding: "1px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "help" }} title={obj.req}>✓ {obj.name}</div>;
                 })}
               </div>}
+              {/* v154: Festival Identity panel — shown for current player only when identities mode is on. */}
+              {identitiesMode && p.id === currentPlayerId && playerIdentities[p.id] && (() => {
+                const identity = getIdentity(playerIdentities[p.id]);
+                if (!identity) return null;
+                const log = identityLog[p.id] || [];
+                const totalTickets = log.filter(e => e.kind === "ticket").reduce((s, e) => s + e.amount, 0);
+                const totalFame = log.filter(e => e.kind === "fame").reduce((s, e) => s + e.amount, 0);
+                return <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.28)" }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎭 Identity: {identity.name}</div>
+                  <div style={{ fontSize: 9, color: "#c4b5fd", fontStyle: "italic", marginBottom: 3 }}>{identity.goal}</div>
+                  <div style={{ display: "flex", gap: 8, fontSize: 10, fontWeight: 700 }}>
+                    <span style={{ color: totalTickets >= 0 ? "#86efac" : "#f87171" }}>🎟️ {totalTickets >= 0 ? "+" : ""}{totalTickets}</span>
+                    {totalFame !== 0 && <span style={{ color: totalFame >= 0 ? "#fb923c" : "#f87171" }}>🔥 {totalFame >= 0 ? "+" : ""}{totalFame}</span>}
+                  </div>
+                </div>;
+              })()}
             </div>); })}
           <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
@@ -8222,6 +8571,21 @@ export default function Headliners() {
                   {(activeObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#e2e8f0", cursor: "help" }} title={obj.req}>◇ {obj.name}</div> : null; })}
                   {(completedObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#4ade80", fontWeight: 700, cursor: "help" }} title={obj.req}>✓ {obj.name}</div> : null; })}
                 </div>}
+                {identitiesMode && p.id === currentPlayerId && playerIdentities[p.id] && (() => {
+                  const identity = getIdentity(playerIdentities[p.id]);
+                  if (!identity) return null;
+                  const log = identityLog[p.id] || [];
+                  const totalTickets = log.filter(e => e.kind === "ticket").reduce((s, e) => s + e.amount, 0);
+                  const totalFame = log.filter(e => e.kind === "fame").reduce((s, e) => s + e.amount, 0);
+                  return <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.28)" }}>
+                    <div style={{ fontSize: 8, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎭 {identity.name}</div>
+                    <div style={{ fontSize: 8, color: "#c4b5fd", fontStyle: "italic", marginBottom: 2 }}>{identity.goal}</div>
+                    <div style={{ display: "flex", gap: 6, fontSize: 9, fontWeight: 700 }}>
+                      <span style={{ color: totalTickets >= 0 ? "#86efac" : "#f87171" }}>🎟️ {totalTickets >= 0 ? "+" : ""}{totalTickets}</span>
+                      {totalFame !== 0 && <span style={{ color: totalFame >= 0 ? "#fb923c" : "#f87171" }}>🔥 {totalFame >= 0 ? "+" : ""}{totalFame}</span>}
+                    </div>
+                  </div>;
+                })()}
               </div>); })}
           </div>
         </div>}
@@ -9527,6 +9891,7 @@ export default function Headliners() {
               setPendingHandDiscard(null); setPendingContestPlacements([]); setPendingAgentArtist(null);
               setAgentContest(null); setTemptPlacements({}); setAgentPlacements({});
               setFameLog({}); setTicketsLog({}); setPlayerData({});
+              setPlayerIdentities({}); setIdentityLog({}); setIdentityDealt({}); setIdentityPickerIdx(0);
               setArtistDeck([]); setArtistPool([]); setDiscardPile([]);
               setPlayerObjectives({}); setYearEvents({}); setDicePool(0); setTurnOrder([]);
               setCurrentPlayerIdx(0); setTurnsLeft({}); setActionTaken(false); setTurnAction(null);
