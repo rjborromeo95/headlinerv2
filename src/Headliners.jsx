@@ -281,8 +281,8 @@ const ALT_OBJECTIVES = [
     check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && (sa[2].fame || 0) <= 1) },
   { id: "fyre_festival", name: "Fyre Festival", req: "Play 0 artists this year", source: "starter", copies: 2,
     check: (pd, ctx) => (ctx.yearEvents?.[ctx.currentPid]?.artistsPlayedThisYear || 0) === 0 },
-  { id: "punching", name: "Punching", req: "Play exactly 1 artist who costs more than 1 Fame", source: "starter", copies: 2,
-    check: (pd) => (pd.stageArtists || []).flat().filter(a => (a.fame || 0) > 1).length === 1 },
+  { id: "punching", name: "Punching", req: "Play an artist who costs more than 1 Fame", source: "starter", copies: 2,
+    check: (pd) => (pd.stageArtists || []).flat().filter(a => (a.fame || 0) > 1).length >= 1 },
   { id: "pandering", name: "Pandering", req: "Win a genre microtrend by playing an artist", source: "starter", copies: 2,
     check: (pd, ctx) => (ctx.yearEvents?.[ctx.currentPid]?.genreMicrotrendWinsThisYear || 0) >= 1 },
   { id: "mainstream", name: "Mainstream", req: "Play at least 2 Hip Hop, Pop, or Rock artists", source: "starter", copies: 2,
@@ -2790,7 +2790,7 @@ export default function Headliners() {
       switch (entry.id) {
         case "fyre_festival": bonus -= 20; break; // Playing ANY artist kills this objective
         case "local_talent": if (fame <= 1) bonus += 3; break;
-        case "punching": if (fame > 1) bonus += 2; break; // Wants exactly 1, but hard to enforce here
+        case "punching": if (fame > 1) bonus += 2; break; // Any >1 Fame artist advances this
         case "mainstream": if (genres.some(g => /Pop|Rock|Hip Hop/i.test(g))) bonus += 3; break;
         case "alternative": if (genres.some(g => /Funk|Electronic|Indie/i.test(g))) bonus += 3; break;
         // v146: renamed Experimental→Eclectic (multi-genre-per-artist), removed the six
