@@ -4786,8 +4786,13 @@ export default function Headliners() {
     // Skip straight to objective view (no council step)
     // v158: under altObjectivesMode=false (default), no artist objectives are picked —
     // skip the misleading "you'll pick an objective" screen and jump to draft.
-    setSetupStep(altObjectivesModeRef.current ? "viewObjective" : "draftArtist");
-    setSetupDraftOptions([]); setSetupDraftSelected([]);
+    // v160: when skipping viewObjective, we ALSO need to populate the draft options
+    // (previously done inside confirmViewObjective) — otherwise the draft screen has
+    // nothing to pick from.
+    const skipObjective = !altObjectivesModeRef.current;
+    setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
+    setSetupDraftOptions(skipObjective ? fame0.slice(0, 6) : []);
+    setSetupDraftSelected([]);
     // v143: before setup begins, the first non-AI player picks the win condition. If
     // all players are AI, pick randomly and jump straight to setup.
     const firstHuman = players.find(p => !p.isAI);
@@ -4925,10 +4930,14 @@ export default function Headliners() {
     if (setupIndex < players.length - 1) {
       const nextIdx = setupIndex + 1;
       setSetupIndex(nextIdx); setSetupSelectedAmenity(null); setSetupSelectedField(null);
-      setSetupDraftOptions([]); setSetupDraftSelected([]);
       setSetupCouncilSelected([]); setSetupCouncilAssignments({});
       // v158: skip the viewObjective intro when artist objectives are disabled.
-      setSetupStep(altObjectivesModeRef.current ? "viewObjective" : "draftArtist");
+      // v160: also populate draft options for the next player (this used to happen
+      // inside confirmViewObjective; skipping that step means we must set it here).
+      const skipObjective = !altObjectivesModeRef.current;
+      setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
+      setSetupDraftOptions(skipObjective ? draftRemaining0.slice(0, 6) : []);
+      setSetupDraftSelected([]);
     } else startGame();
   };
   const undoSetupPlacement = () => {
