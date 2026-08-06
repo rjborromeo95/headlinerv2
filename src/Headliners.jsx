@@ -1870,26 +1870,124 @@ export default function Headliners() {
   const sharedContractsRef = useRef([]);
   useEffect(() => { sharedContractsRef.current = sharedContracts; }, [sharedContracts]);
 
-  // Claim resolution — attach contract to field, remove from shared pool.
-  // v158: writes into pd.councils[fieldIdx] directly so the existing council-reward
-  // machinery (checkAndClaimCouncilDice, checkAndClaimCouncilAmenity, year-end evaluation)
-  // fires naturally without needing a parallel reward system.
+  // Claim resolution — fire the reward ONCE immediately and remove from shared pool.
+  // v161: contracts are one-time effects on claim, not recurring yearly rewards. This
+  // fires each reward type as an immediate action. Contracts no longer attach to fields
+  // for future firing — the claim IS the effect.
+  const fireContractRewardOnce = (pid, council, fieldIdx) => {
+    const r = council.reward;
+    if (!r) return;
+    const y = yearRef.current || year || 1;
+    const yIdx = Math.max(0, Math.min(3, y - 1));
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    switch (r.type) {
+      case "fame": {
+        const amount = (r.perYear && r.perYear[yIdx]) || 1;
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(FAME_MAX, (prev[pid]?.baseFame || 0) + amount) } }));
+        logFameGain(pid, amount, `Contract: ${council.name}`);
+        addLog("📜 Contract", `${pName} claimed ${council.name}: +${amount} 🔥 Fame`);
+        break;
+      }
+      case "starDice": {
+        const amount = (r.perYear && r.perYear[yIdx]) || 1;
+        setDicePool(prevPool => {
+          const got = Math.min(amount, prevPool);
+          if (got > 0) {
+            setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], heldDice: (prev[pid]?.heldDice || 0) + got } }));
+            addLog("📜 Contract", `${pName} claimed ${council.name}: +${got} Star Die${got === 1 ? "" : "s"}`);
+          } else {
+            addLog("📜 Contract", `${pName} claimed ${council.name}: no dice left in pool`);
+          }
+          return Math.max(0, prevPool - amount);
+        });
+        break;
+      }
+      case "placeAmenity": {
+        // Grant 1 amenity of the specified type on the same field they claimed on.
+        recalcAfterUpdate(pid, pd => mutateAmenity(pd, fieldIdx, r.amenity, +1));
+        addLog("📜 Contract", `${pName} claimed ${council.name}: placed ${AMENITY_ICONS[r.amenity] || ""} ${AMENITY_LABELS[r.amenity]} on Field ${fieldIdx + 1}`);
+        showFloatingBonus(`+1 ${AMENITY_LABELS[r.amenity]}`, AMENITY_COLORS[r.amenity] || "#fbbf24");
+        break;
+      }
+      case "drawOnPlay": {
+        // Convert continuous → one-shot "draw 3 artists now"
+        const drawn = drawFromDeck(3);
+        if (drawn.length > 0) {
+          setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...(prev[pid]?.hand || []), ...drawn] } }));
+          addLog("📜 Contract", `${pName} claimed ${council.name}: drew ${drawn.length} artists`);
+        }
+        break;
+      }
+      case "refreshPool": {
+        // Refresh the artist pool now
+        const currentPool = artistPoolRef.current || artistPool;
+        const newDiscards = [...currentPool];
+        setDiscardPile(prev => [...prev, ...newDiscards]);
+        const fresh = drawFromDeck(5);
+        setArtistPool(fresh);
+        addLog("📜 Contract", `${pName} claimed ${council.name}: refreshed the pool`);
+        break;
+      }
+      case "freeSpecialGuests":
+      case "drawSpecialGuests": {
+        // Give one immediate special guest opportunity — draw 1 guest, add to hand
+        const drawn = drawFromDeck(1);
+        if (drawn.length > 0) {
+          setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...(prev[pid]?.hand || []), ...drawn] } }));
+          addLog("📜 Contract", `${pName} claimed ${council.name}: drew a special guest into hand`);
+        }
+        break;
+      }
+      case "drawArtists": {
+        const amount = (r.perYear && r.perYear[yIdx]) || 2;
+        const drawn = drawFromDeck(amount);
+        if (drawn.length > 0) {
+          setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...(prev[pid]?.hand || []), ...drawn] } }));
+          addLog("📜 Contract", `${pName} claimed ${council.name}: drew ${drawn.length} artists`);
+        }
+        break;
+      }
+      case "artistOnMicrotrend": {
+        // Convert to "draw 2 artists now"
+        const drawn = drawFromDeck(2);
+        if (drawn.length > 0) {
+          setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...(prev[pid]?.hand || []), ...drawn] } }));
+          addLog("📜 Contract", `${pName} claimed ${council.name}: drew ${drawn.length} artists`);
+        }
+        break;
+      }
+      case "tickets": {
+        const amount = (r.perYear && r.perYear[yIdx]) || 3;
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid]?.bonusTickets || 0) + amount } }));
+        logTicketGain(pid, amount, `Contract: ${council.name}`);
+        addLog("📜 Contract", `${pName} claimed ${council.name}: +${amount} 🎟️`);
+        break;
+      }
+      default: {
+        addLog("📜 Contract", `${pName} claimed ${council.name} (no immediate effect)`);
+      }
+    }
+  };
+
   const claimContract = (pid, contractId, fieldIdx) => {
     const council = ALL_COUNCILS.find(c => c.id === contractId);
     if (!council) { setPendingContractClaim(null); return; }
+    // v161: record the claim, then FIRE the reward once. No attachment to pd.councils —
+    // contracts are one-time on claim, not recurring per year.
     setPlayerData(prev => {
       const cur = prev[pid] || {};
       const claimed = [...(cur.claimedContracts || []), { contractId, fieldIdx }];
-      const councils = [...(cur.councils || [null, null, null])];
-      councils[fieldIdx] = council;
-      return { ...prev, [pid]: { ...cur, claimedContracts: claimed, councils } };
+      return { ...prev, [pid]: { ...cur, claimedContracts: claimed } };
     });
     setSharedContracts(prev => prev.filter(id => id !== contractId));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("📜 Contract Claimed", `${pName} claimed "${council.name}" on Field ${fieldIdx + 1}!`);
     showFloatingBonus(`📜 ${council.name}!`, "#a855f7");
     setPendingContractClaim(null);
-    setTimeout(() => checkContractsForPlayer(pid, fieldIdx), 250);
+    // Fire the immediate reward
+    setTimeout(() => fireContractRewardOnce(pid, council, fieldIdx), 200);
+    // Check if this player NOW satisfies another shared contract
+    setTimeout(() => checkContractsForPlayer(pid, fieldIdx), 400);
   };
   const declineContract = () => {
     // Player chose not to claim. Contract stays on the shared table.
@@ -7600,19 +7698,6 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
             </div>
           </label>
-          <label onClick={() => {
-            const next = stageOpenMode === "trends" ? "objectives" : "trends";
-            setStageOpenMode(next);
-            // v155: keep altObjectivesMode in sync with stageOpenMode so the objectives
-            // picker phase and check logic fire only under "objectives" mode.
-            setAltObjectivesMode(next === "objectives");
-          }} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stageOpenMode === "trends" ? "2px solid #4ade80" : "1px solid #4c1d95", background: stageOpenMode === "trends" ? "rgba(74,222,128,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenMode === "trends" ? "#4ade80" : "#4c1d95"}`, background: stageOpenMode === "trends" ? "#4ade80" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenMode === "trends" ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: stageOpenMode === "trends" ? "#4ade80" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎪 Trend-based stage opening</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenMode === "trends" ? "Default (v155) — every 3 microtrends OR 1 trending lineup 1st claim earns a stage-open credit. Spend credits on your turn to open a new stage (max 3). Replaces artist objectives." : "Off — legacy artist-objective progression. Pick objectives, complete them to open stages."}</div>
-            </div>
-          </label>
           <label onClick={() => setContractsMode(!contractsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: contractsMode ? "2px solid #a855f7" : "1px solid #4c1d95", background: contractsMode ? "rgba(168,85,247,0.10)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${contractsMode ? "#a855f7" : "#4c1d95"}`, background: contractsMode ? "#a855f7" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{contractsMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
@@ -7653,13 +7738,6 @@ export default function Headliners() {
             <div style={{ flex: 1 }}>
               <div style={{ color: temptMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>💫 Implement tempt function</div>
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "Default (v143) — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 2/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket."}</div>
-            </div>
-          </label>
-          <label onClick={() => setAltObjectivesMode(!altObjectivesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: altObjectivesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: altObjectivesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${altObjectivesMode ? "#fbbf24" : "#4c1d95"}`, background: altObjectivesMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{altObjectivesMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: altObjectivesMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎯 Alternative artist objectives</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{altObjectivesMode ? "Default (v144) — stages open by completing artist objectives, not by Fame. Each player picks 1 of 2 objectives at game start + at the end of Years 1/2/3 (progression if they completed one this year, failure if not). Achievements are permanent; each opens a new stage and grants +1 Fame next year (+10 tickets if already at 3 stages)." : "Off — Fame 3+ unlocks stages during pre-round. Standard progression."}</div>
             </div>
           </label>
         </div>
