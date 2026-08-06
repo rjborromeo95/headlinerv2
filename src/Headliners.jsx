@@ -67,37 +67,35 @@ const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 // Conditions are evaluated per-field; rewards are year-scaled where indicated by perYear arrays.
 // Year is 1-indexed (year 1 = perYear[0]).
 const ALL_COUNCILS = [
-  { id: "glamping", name: "Glamping", condition: { type: "thresholdPaired", a: "campsite", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  // v146: xlsx update — 9 threshold tightenings, Muscle Food & Neighbourhood Watch now
+  // grant a permanent field amenity (placeAmenity) instead of extra agent actions,
+  // Extended Dancefloor removed entirely. Rewards for other councils unchanged.
+  { id: "glamping", name: "Glamping", condition: { type: "thresholdPaired", a: "campsite", b: "portaloo", perYear: [1,1,2,3] }, reward: { type: "fame", perYear: [1,1,2,2] } },
   { id: "foodCourts", name: "Food Courts", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
-  { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "agents", perYear: [1,1,1,2] } },
+  // v146: Muscle Food now grants +1 Portaloo on its field once per year (placeAmenity).
+  { id: "muscleFood", name: "Muscle Food", condition: { type: "comparative", greater: "catering", lesser: "security" }, reward: { type: "placeAmenity", amenity: "portaloo" } },
   { id: "shepherds", name: "Shepherds", condition: { type: "comparative", greater: "campsite", lesser: "security" }, reward: { type: "refreshPool" } },
-  // v134 xlsx rewrite: Good For Business now grants persistent "free special guests" (no
-  // amenity requirement, no effect application, tickets still counted) rather than +N draws.
+  // v134 xlsx rewrite: Good For Business grants freeSpecialGuests.
   { id: "goodForBusiness", name: "Good For Business", condition: { type: "comparative", greater: "campsite", lesser: "catering" }, reward: { type: "freeSpecialGuests" } },
-  { id: "extendedDancefloor", name: "Extended Dancefloor", condition: { type: "emptyField" }, reward: { type: "agents", perYear: [1,1,1,2] } },
-  { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,1,2,2] }, reward: { type: "fame", perYear: [1,1,2,2] } },
-  // v134: Official Partner now triggers on each artist play (draw one from deck).
-  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,1,2,2] }, reward: { type: "drawOnPlay" } },
-  { id: "staffArea", name: "Staff Area", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,1,2,2] }, reward: { type: "artistOnMicrotrend" } },
-  { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdSingle", amenity: "security", perYear: [2,2,3,3] }, reward: { type: "refreshPool" } },
-  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdSingle", amenity: "catering", perYear: [2,2,3,3] }, reward: { type: "artistOnMicrotrend" } },
-  // v134: Liquid Lunches now triggers on each artist play.
-  { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,2] }, reward: { type: "drawOnPlay" } },
-  { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,2] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
+  { id: "homeSecurity", name: "Home Security", condition: { type: "thresholdPaired", a: "campsite", b: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
+  { id: "officialPartner", name: "Official Partner", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "drawOnPlay" } },
+  { id: "staffArea", name: "Staff Area", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "artistOnMicrotrend" } },
+  { id: "snifferDogs", name: "Sniffer Dogs", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "refreshPool" } },
+  { id: "competitiveSteak", name: "Competitive Steak", condition: { type: "thresholdSingle", amenity: "catering", perYear: [1,2,3,4] }, reward: { type: "artistOnMicrotrend" } },
+  { id: "liquidLunches", name: "Liquid Lunches", condition: { type: "thresholdPaired", a: "portaloo", b: "catering", perYear: [1,1,2,3] }, reward: { type: "drawOnPlay" } },
+  { id: "luxuryLoos", name: "Luxury Loos", condition: { type: "thresholdPaired", a: "security", b: "portaloo", perYear: [1,1,2,3] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
   { id: "wellStaffed", name: "Well Staffed", condition: { type: "thresholdSingle", amenity: "security", perYear: [1,2,3,4] }, reward: { type: "fame", perYear: [1,1,2,2] } },
-  { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "agents", perYear: [1,1,1,2] } },
-  // v134: VIPee also switched to freeSpecialGuests.
+  // v146: Neighbourhood Watch now grants +1 Catering Van on its field once per year (placeAmenity).
+  { id: "neighbourhoodWatch", name: "Neighbourhood Watch", condition: { type: "comparative", greater: "security", lesser: "campsite" }, reward: { type: "placeAmenity", amenity: "catering" } },
   { id: "vipee", name: "VIPee", condition: { type: "comparative", greater: "security", lesser: "portaloo" }, reward: { type: "freeSpecialGuests" } },
   { id: "secretSauce", name: "Secret Sauce", condition: { type: "comparative", greater: "security", lesser: "catering" }, reward: { type: "refreshDice" } },
   { id: "funkyFood", name: "Funky Food", condition: { type: "comparative", greater: "portaloo", lesser: "catering" }, reward: { type: "artistOnMicrotrend" } },
-  // v134: Number One Fans switched to drawOnPlay.
   { id: "numberOneFans", name: "Number One Fans", condition: { type: "comparative", greater: "portaloo", lesser: "campsite" }, reward: { type: "drawOnPlay" } },
   { id: "wellEquipped", name: "Well Equipped", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "starDice", perYear: [1,2,2,3] } },
-  // v134: Plenty For Everyone switched to freeSpecialGuests.
-  { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,2] }, reward: { type: "freeSpecialGuests" } },
+  { id: "plentyForEveryone", name: "Plenty For Everyone", condition: { type: "thresholdPaired", a: "catering", b: "campsite", perYear: [1,1,2,3] }, reward: { type: "freeSpecialGuests" } },
   { id: "quietCamping", name: "Quiet Camping", condition: { type: "thresholdSingle", amenity: "campsite", perYear: [1,1,2,2] }, reward: { type: "refreshDice" } },
   { id: "spoiltForChoice", name: "Spoilt for Choice", condition: { type: "comparative", greater: "catering", lesser: "campsite" }, reward: { type: "refreshPool" } },
-  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [2,2,3,3] }, reward: { type: "refreshDice" } },
+  { id: "urinalsAndCubicles", name: "Urinals and Cubicles", condition: { type: "thresholdSingle", amenity: "portaloo", perYear: [1,2,3,4] }, reward: { type: "refreshDice" } },
 ];
 
 function getCouncilById(id) { return ALL_COUNCILS.find(c => c.id === id); }
@@ -127,6 +125,7 @@ function formatCouncilReward(c) {
   if (r.type === "agents") return `+${r.perYear.join("/")} 🕵️ Agent use(s) / year`;
   if (r.type === "agentFame") return `+1 🔥 Fame per successful 🕵️ Agent action`;
   if (r.type === "artistOnMicrotrend") return `Draw an artist from the pool or deck when you complete a Microtrend`;
+  if (r.type === "placeAmenity") return `+1 ${r.amenity === "portaloo" ? "🚽 Portaloo" : r.amenity === "catering" ? "🍔 Catering" : r.amenity === "campsite" ? "⛺ Campsite" : "🛡️ Security"} on this field / year`;
   if (r.type === "freeStageOpenOnce") return `Open a free stage at year end (once / game)`;
   return "?";
 }
@@ -323,7 +322,12 @@ const ALT_OBJECTIVES = [
     }
   },
 
-  // ─── Progression deck (year 2+) — 1 copy each, harder ───
+  // ─── Progression deck (year 2+) — mostly 1 copy each, Purists is 3 copies ───
+  // v146 xlsx update: culled the 6 single-genre objectives (Popstars/Rock On/Disc Jockeys/
+  // Fire Verses/Indiependent/Funky Town), old Eclectic (3+ genres), Same Song Sheet, and
+  // Experimental. Added Purists (full single-genre), Cohesive (share one common genre),
+  // Big Finish (headliner Fame ≥4), Guilty Pleasures (headliner Fame = 3). Renamed
+  // Experimental → Eclectic (each artist mixes 2+ genres).
   { id: "leading_example", name: "Leading by Example", req: "Play a stage where the 2nd and 3rd artists both have lower Fame cost than the 1st", source: "progression", copies: 1,
     check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && (sa[1].fame || 0) < (sa[0].fame || 0) && (sa[2].fame || 0) < (sa[0].fame || 0)) },
   { id: "switching_up", name: "Switching it Up", req: "Play a full 3-artist lineup covering exactly 2 distinct genres", source: "progression", copies: 1,
@@ -349,13 +353,11 @@ const ALT_OBJECTIVES = [
       for (let i = 0; i < heads.length; i++) for (let j = i + 1; j < heads.length; j++) if (heads[i].some(g => heads[j].includes(g))) return true;
       return false;
     } },
-  { id: "same_song_sheet", name: "Singing From The Same Song Sheet", req: "Play a full lineup where all 3 artists have identical amenity requirements", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => {
-      if (sa.length !== 3) return false;
-      const key = a => `${a.campCost || 0}-${a.securityCost || 0}-${a.cateringCost || 0}-${a.portalooCost || 0}`;
-      return key(sa[0]) === key(sa[1]) && key(sa[1]) === key(sa[2]);
-    }) },
-  { id: "experimental", name: "Experimental", req: "Play a full lineup where every artist has 2+ genres", source: "progression", copies: 1,
+  // v146: Big Finish — headliner (3rd artist on a full stage) has Fame cost ≥4.
+  { id: "big_finish", name: "Big Finish", req: "Feature a headliner who is 4+ Fame", source: "progression", copies: 1,
+    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && (sa[2].fame || 0) >= 4) },
+  // v146: Eclectic — was "Experimental" pre-v146. Each artist on a stage has 2+ genres.
+  { id: "eclectic", name: "Eclectic", req: "Play a full lineup where each artist has 2+ genres", source: "progression", copies: 1,
     check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => (a.genre || "").split(",").filter(g => g.trim()).length >= 2)) },
   { id: "fair_share", name: "Fair Share", req: "Play a full lineup where every artist needs the same total number of amenities", source: "progression", copies: 1,
     check: (pd) => (pd.stageArtists || []).some(sa => {
@@ -363,25 +365,28 @@ const ALT_OBJECTIVES = [
       const totals = sa.map(a => (a.campCost || 0) + (a.securityCost || 0) + (a.cateringCost || 0) + (a.portalooCost || 0));
       return totals[0] === totals[1] && totals[1] === totals[2];
     }) },
-  { id: "popstars", name: "Popstars", req: "Play a full Pop lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Pop/i.test(a.genre || ""))) },
-  { id: "rock_on", name: "Rock On", req: "Play a full Rock lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Rock/i.test(a.genre || ""))) },
-  { id: "disc_jockeys", name: "Disc Jockeys", req: "Play a full Electronic lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Electronic/i.test(a.genre || ""))) },
-  { id: "fire_verses", name: "Fire Verses", req: "Play a full Hip Hop lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Hip Hop/i.test(a.genre || ""))) },
-  { id: "indiependent", name: "Indiependent", req: "Play a full Indie lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Indie/i.test(a.genre || ""))) },
-  { id: "funky_town", name: "Funky Town", req: "Play a full Funk lineup", source: "progression", copies: 1,
-    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && sa.every(a => /Funk/i.test(a.genre || ""))) },
-  { id: "eclectic", name: "Eclectic", req: "Play a full lineup covering 3+ distinct genres", source: "progression", copies: 1,
+  // v146: Purists — a "pure" single-genre lineup: every artist has exactly ONE genre and
+  // all 3 match. Multi-genre artists (Nelly = Pop+Hip Hop) don't qualify — that's Cohesive.
+  // Quantity 3 per user's spec — more likely to be dealt in a game.
+  { id: "purists", name: "Purists", req: "Play a full single-genre lineup (all Pop, all Rock, etc.) — no multi-genre artists", source: "progression", copies: 3,
     check: (pd) => (pd.stageArtists || []).some(sa => {
       if (sa.length !== 3) return false;
-      const genres = new Set();
-      sa.forEach(a => (a.genre || "").split(",").map(g => g.trim()).forEach(g => g && genres.add(g)));
-      return genres.size >= 3;
+      const singleGenres = sa.map(a => (a.genre || "").split(",").map(g => g.trim()).filter(Boolean));
+      if (singleGenres.some(gs => gs.length !== 1)) return false;
+      return singleGenres[0][0] === singleGenres[1][0] && singleGenres[1][0] === singleGenres[2][0];
     }) },
+  // v146: Cohesive — every artist shares at least one common genre (multi-genre artists
+  // count as long as they overlap). Broader than Purists.
+  { id: "cohesive", name: "Cohesive", req: "Play a lineup where all 3 artists share at least one common genre", source: "progression", copies: 1,
+    check: (pd) => (pd.stageArtists || []).some(sa => {
+      if (sa.length !== 3) return false;
+      const genreSets = sa.map(a => (a.genre || "").split(",").map(g => g.trim()).filter(Boolean));
+      const common = genreSets[0].filter(g => genreSets[1].includes(g) && genreSets[2].includes(g));
+      return common.length >= 1;
+    }) },
+  // v146: Guilty Pleasures — headliner is exactly Fame 3.
+  { id: "guilty_pleasures", name: "Guilty Pleasures", req: "Feature a headliner who is exactly 3 Fame", source: "progression", copies: 1,
+    check: (pd) => (pd.stageArtists || []).some(sa => sa.length === 3 && (sa[2].fame || 0) === 3) },
   { id: "special_places", name: "Friends in Special Places", req: "Finish a lineup with a special guest", source: "progression", copies: 1,
     check: (pd, ctx) => (ctx.yearEvents?.[ctx.currentPid]?.specialGuestPlacedThisYear || 0) >= 1 },
 ];
@@ -548,8 +553,13 @@ function TicketBreakdown({ pd, pid, ticketsLog, ALL_GENRES, year, councilQualifi
     if (contrib !== 0) rows.push({ label: `📋 ${c.name}`, amount: contrib });
   });
   const log = (ticketsLog && ticketsLog[pid]) || [];
+  // v147: filter to entries logged this year only. Previously aggregated across all
+  // history, so entering a new year (tickets reset to 0) still showed "-5 tickets from
+  // last year's Nelly effect" as if it were current. Bounds the hover to what the number
+  // above it actually reflects.
+  const currentYear = year || 1;
   const aggregated = {};
-  log.forEach(e => { aggregated[e.source] = (aggregated[e.source] || 0) + e.amount; });
+  log.filter(e => e.year === currentYear).forEach(e => { aggregated[e.source] = (aggregated[e.source] || 0) + e.amount; });
   const effectRows = Object.entries(aggregated)
     .filter(([_, amount]) => amount !== 0)
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
@@ -594,6 +604,66 @@ function TicketBreakdown({ pd, pid, ticketsLog, ALL_GENRES, year, councilQualifi
             <span style={{ color: "#fbbf24" }}>{pd.tickets || 0}</span>
           </div>
           {Math.abs(total - (pd.tickets || 0)) > 0 && <div style={{ marginTop: 4, fontSize: 9, color: "#64748b", fontStyle: "italic" }}>(Sum {total} may differ from total — ledger doesn't retro-track pre-v132 games.)</div>}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// v148: parallel to TicketBreakdown — shows this year's fame gains and losses on hover.
+// Aggregates entries in `fameLog` filtered to the current year, splitting into gains and
+// losses. Losses include tempt spends (source is the artist tempted) and year carryover.
+function FameBreakdown({ pid, fameLog, year, children, style, currentFame }) {
+  const [hover, setHover] = React.useState(false);
+  const [pos, setPos] = React.useState({ x: 0, y: 0 });
+  const log = (fameLog && fameLog[pid]) || [];
+  const currentYear = year || 1;
+  const thisYear = log.filter(e => e.year === currentYear);
+  const aggregated = {};
+  thisYear.forEach(e => { aggregated[e.source] = (aggregated[e.source] || 0) + e.amount; });
+  const gains = Object.entries(aggregated).filter(([_, a]) => a > 0).sort((a, b) => b[1] - a[1]);
+  const losses = Object.entries(aggregated).filter(([_, a]) => a < 0).sort((a, b) => a[1] - b[1]);
+  return (
+    <span
+      onMouseEnter={e => { setPos({ x: e.clientX, y: e.clientY }); setHover(true); }}
+      onMouseLeave={() => setHover(false)}
+      onMouseMove={e => setPos({ x: e.clientX, y: e.clientY })}
+      style={{ ...style, cursor: "help", position: "relative" }}
+    >
+      {children}
+      {hover && (gains.length > 0 || losses.length > 0) && (
+        <div style={{
+          position: "fixed", left: Math.min(pos.x + 14, (typeof window !== "undefined" ? window.innerWidth - 320 : 800)), top: Math.min(pos.y + 14, (typeof window !== "undefined" ? window.innerHeight - 400 : 500)),
+          zIndex: 9999, minWidth: 240, maxWidth: 320, maxHeight: 400, overflowY: "auto",
+          padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.98)", border: "2px solid #f97316",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.6)", color: "#e2e8f0", fontSize: 11, fontWeight: 400,
+          textAlign: "left", pointerEvents: "none",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#f97316", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid rgba(249,115,22,0.3)" }}>
+            🔥 Fame this year
+          </div>
+          {gains.length > 0 && <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#86efac", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Gained</div>
+            {gains.map(([source, amount], i) => (
+              <div key={"g"+i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}>
+                <span style={{ color: "#c4b5fd" }}>{source}</span>
+                <span style={{ color: "#86efac", fontWeight: 600, whiteSpace: "nowrap" }}>+{amount}</span>
+              </div>
+            ))}
+          </>}
+          {losses.length > 0 && <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#f87171", marginTop: gains.length > 0 ? 8 : 0, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Spent / Lost</div>
+            {losses.map(([source, amount], i) => (
+              <div key={"l"+i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}>
+                <span style={{ color: "#c4b5fd" }}>{source}</span>
+                <span style={{ color: "#f87171", fontWeight: 600, whiteSpace: "nowrap" }}>{amount}</span>
+              </div>
+            ))}
+          </>}
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid rgba(249,115,22,0.3)", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 12 }}>
+            <span style={{ color: "#f97316" }}>Current Fame</span>
+            <span style={{ color: "#f97316" }}>{currentFame || 0}</span>
+          </div>
         </div>
       )}
     </span>
@@ -1392,6 +1462,13 @@ export default function Headliners() {
   //   Shape: { pid: number, needToDiscard: number } | null
   const [pendingHandDiscard, setPendingHandDiscard] = useState(null);
 
+  // v147: contest winners can now choose their stage. When a contest resolves for the
+  // CURRENT player, the pendingAgentArtist modal opens (same UX as uncontested tempts).
+  // When the winner is a DIFFERENT player (they tempted on an earlier turn), the artist
+  // is queued here and the modal opens on their next turn.
+  //   Shape: Array<{ pid: number, artist: object }>
+  const [pendingContestPlacements, setPendingContestPlacements] = useState([]);
+
   // v143: win condition. Chosen at game start by the first non-AI player (or randomly
   // picked when all-AI). Determines how the game's winner is decided at game over.
   //   "consistency"    — most years led in tickets sold. Ties → cumulative total.
@@ -1424,13 +1501,27 @@ export default function Headliners() {
   // silent to avoid making the game a click-through slog).
   //   Shape: Array<{ pid: number, amount: number, source: string, ts: number }>
   const [fameGainQueue, setFameGainQueue] = useState([]);
-  const logFameGain = (pid, amount, source) => {
-    if (!amount || amount <= 0 || pid == null) return;
-    // Skip queueing for AI players — they don't need to click through their own popups.
+  // v148: parallel to ticketsLog — a persistent per-year fame ledger. Every fame gain
+  // AND loss flows through here so the hover tooltip can show sources both ways.
+  //   Shape: { pid: Array<{ source, amount, year }> }
+  const [fameLog, setFameLog] = useState({});
+  const logFameGain = (pid, amount, source, yearOverride) => {
+    if (!amount || pid == null) return;
+    const y = yearOverride != null ? yearOverride : (yearRef.current || year || 1);
+    // Ledger records everything (positive and negative). Used by the hover tooltip.
+    setFameLog(prev => ({
+      ...prev,
+      [pid]: [...(prev[pid] || []), { source, amount, year: y }]
+    }));
+    // Popup queue only for POSITIVE human-facing gains. Losses and AI-side changes
+    // are silent (no popup) but still recorded in the ledger above.
+    if (amount <= 0) return;
     const player = players.find(pl => pl.id === pid);
     if (!player || player.isAI) return;
     setFameGainQueue(prev => [...prev, { pid, amount, source, ts: Date.now() }]);
   };
+  // Convenience wrapper for negative fame — same ledger, no popup.
+  const logFameLoss = (pid, amount, source, yearOverride) => logFameGain(pid, -Math.abs(amount), source, yearOverride);
 
   // v135: Alternative Artist Objectives — lobby toggle. When ON, this system replaces the
   // fame-based stage-opening progression. Players draw objectives and complete them to earn
@@ -2074,7 +2165,12 @@ export default function Headliners() {
           // to match the "beginning of your next year" spec. Also gate on the same toggles
           // the pre-round opening path uses, so a game that turns off stage-fame bonuses
           // universally still respects that intent.
+          // v147: use the fun STAGE_NAMES pool instead of generic "Stage N" labels, matching
+          // setup and pre-round stage-opening paths.
           const grantOpeningFame = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
+          const usedNames = pd.stageNames || [];
+          const availNames = STAGE_NAMES.filter(n => !usedNames.includes(n));
+          const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage ${stageCount + 1}`;
           setPlayerData(prev => {
             const cur = prev[pid] || {};
             return {
@@ -2083,14 +2179,14 @@ export default function Headliners() {
                 ...cur,
                 stages: [...(cur.stages || []), { fameRequired: 0 }],
                 stageArtists: [...(cur.stageArtists || []), []],
-                stageNames: [...(cur.stageNames || []), `Stage ${stageCount + 1}`],
+                stageNames: [...(cur.stageNames || []), sName],
                 stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageCount % STAGE_COLORS.length]],
                 baseFame: grantOpeningFame ? Math.min(FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
               }
             };
           });
           if (grantOpeningFame) logFameGain(pid, 1, `Opened new stage via "${obj.name}"`);
-          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened a new stage${grantOpeningFame ? " (+1 🔥 Fame for next year)" : ""}!`);
+          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened "${sName}"${grantOpeningFame ? " (+1 🔥 Fame for next year)" : ""}!`);
         } else {
           logTicketGain(pid, 10, `Objective: ${obj.name}`);
           setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + 10 } }));
@@ -2231,6 +2327,7 @@ export default function Headliners() {
       }
       // Deduct 1 Fame (from baseFame — the reversible portion of the fame stack).
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 1) } }));
+      logFameLoss(pid, 1, `Tempting ${artist.name}`);
       setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber }] }));
       setTimeout(() => recalcTickets(), 30);
       const pName = players.find(p => p.id === pid)?.festivalName || "?";
@@ -2592,13 +2689,24 @@ export default function Headliners() {
       ? (openStages.length > 0 && canBookArtistAnywhere(artist, winPd))
       : (openStages.length > 0);
     if (canPlayNow) {
-      // v132: prefer a genre-match-eligible headliner stage when one exists, so the
-      // artist's genreMatchEffect fires on contested-winner bookings just like it does
-      // on normal ones. Falls back to the first open stage if none apply.
-      const genreStage = openStages.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
-      const chosenStage = genreStage != null ? genreStage : openStages[0];
-      const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
-      bookArtistToStage(artist, chosenStage, winnerId, true, viaGenre);
+      // v147: winner picks their stage. If it's their turn, open the modal now. If not,
+      // queue for their next turn so they can choose then rather than auto-booking.
+      const winnerIsAI = players.find(p => p.id === winnerId)?.isAI;
+      if (winnerIsAI) {
+        // AI keeps auto-book — prefer genre-match headliner slot if available, else first open.
+        const genreStage = openStages.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
+        const chosenStage = genreStage != null ? genreStage : openStages[0];
+        const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
+        bookArtistToStage(artist, chosenStage, winnerId, true, viaGenre);
+      } else if (winnerId === currentPlayerId) {
+        // Winner is the current human player — open the stage-picker modal now.
+        setPendingAgentArtist({ pid: winnerId, artist });
+      } else {
+        // Winner is a different human player — defer to their next turn via the queue.
+        setPendingContestPlacements(prev => [...prev, { pid: winnerId, artist }]);
+        const wName = players.find(p => p.id === winnerId)?.festivalName || "?";
+        addLog("💫 Contest", `${wName} won ${artist.name} — will place on their next turn`);
+      }
     } else {
       setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...p[winnerId].hand, artist] } }));
       if (isTempt) {
@@ -2685,14 +2793,14 @@ export default function Headliners() {
         case "punching": if (fame > 1) bonus += 2; break; // Wants exactly 1, but hard to enforce here
         case "mainstream": if (genres.some(g => /Pop|Rock|Hip Hop/i.test(g))) bonus += 3; break;
         case "alternative": if (genres.some(g => /Funk|Electronic|Indie/i.test(g))) bonus += 3; break;
-        case "popstars": if (genres.some(g => /Pop/i.test(g))) bonus += 4; break;
-        case "rock_on": if (genres.some(g => /Rock/i.test(g))) bonus += 4; break;
-        case "disc_jockeys": if (genres.some(g => /Electronic/i.test(g))) bonus += 4; break;
-        case "fire_verses": if (genres.some(g => /Hip Hop/i.test(g))) bonus += 4; break;
-        case "indiependent": if (genres.some(g => /Indie/i.test(g))) bonus += 4; break;
-        case "funky_town": if (genres.some(g => /Funk/i.test(g))) bonus += 4; break;
+        // v146: renamed Experimental→Eclectic (multi-genre-per-artist), removed the six
+        // single-genre objectives (Popstars et al). Purists rewards ANY single-genre artist
+        // (the AI can't know which genre it'll end up on, so equal-weight all).
         case "eclectic": if (genres.length >= 2) bonus += 2; break;
-        case "experimental": if (genres.length >= 2) bonus += 2; break;
+        case "purists": if (genres.length === 1) bonus += 3; break;
+        case "cohesive": if (genres.length >= 1) bonus += 1; break; // Very lax — most artists match
+        case "big_finish": if (fame >= 4) bonus += 4; break;
+        case "guilty_pleasures": if (fame === 3) bonus += 4; break;
         case "high_profile": if ((artist.securityCost || 0) >= 2) bonus += 2; break;
         case "foodies": if ((artist.cateringCost || 0) >= 2) bonus += 2; break;
         case "pampered": if ((artist.portalooCost || 0) >= 2) bonus += 2; break;
@@ -4026,7 +4134,7 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -4887,7 +4995,7 @@ export default function Headliners() {
       const fameGain = isTempt ? 2 : 1;
       const ticketGain = isTempt ? 0 : 1;
       logTicketGain(pid, ticketGain, "Microtrend claim (amenity)");
-      logFameGain(pid, 1, "Matching a Microtrend");
+      logFameGain(pid, fameGain, "Matching a Microtrend");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
         baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
@@ -5315,6 +5423,19 @@ export default function Headliners() {
           // to click `overBy` cards to discard before the turn proceeds.
           setPendingHandDiscard({ pid: nextPid, needToDiscard: overBy });
         }
+      }
+    }
+
+    // v147: if this player is holding a contest win from an earlier round, dequeue it
+    // and open the stage-picker modal so they can place it now. Fires before showTurnStart
+    // so the placement modal takes priority over the turn intro.
+    if (pendingContestPlacements.length > 0) {
+      const nextPid = turnOrder[ni];
+      const idx = pendingContestPlacements.findIndex(e => e.pid === nextPid);
+      if (idx >= 0) {
+        const entry = pendingContestPlacements[idx];
+        setPendingContestPlacements(prev => prev.filter((_, i) => i !== idx));
+        setPendingAgentArtist({ pid: entry.pid, artist: entry.artist });
       }
     }
 
@@ -5803,6 +5924,42 @@ export default function Headliners() {
     }
   }
 
+  // v146: parallel to checkAndClaimCouncilDice, for the placeAmenity reward type
+  // (Muscle Food = +1 Portaloo, Neighbourhood Watch = +1 Catering). Once per (field, year)
+  // when the council qualifies, adds the specified amenity to the field. Latched via
+  // pd.councilAmenityGrantedThisYear[fIdx].
+  function checkAndClaimCouncilAmenity(pid) {
+    const cur = playerData[pid];
+    if (!cur) return;
+    const councils = cur.councils || [];
+    const fields = cur.fields || emptyFields();
+    const granted = cur.councilAmenityGrantedThisYear || [false, false, false];
+    for (let fIdx = 0; fIdx < councils.length; fIdx++) {
+      const c = councils[fIdx];
+      if (!c) continue;
+      if (c.reward?.type !== "placeAmenity") continue;
+      if (granted[fIdx]) continue;
+      if (!councilQualifies(c, fields[fIdx], year || 1)) continue;
+      const amenity = c.reward.amenity;
+      if (!amenity) continue;
+      const fIdxClosure = fIdx;
+      const pName = players.find(pl => pl.id === pid)?.festivalName || "?";
+      setPlayerData(prevPD => {
+        const cc = prevPD[pid];
+        if (!cc) return prevPD;
+        const flags = [...(cc.councilAmenityGrantedThisYear || [false, false, false])];
+        flags[fIdxClosure] = true;
+        const updated = mutateAmenity(cc, fIdxClosure, amenity, +1);
+        return {
+          ...prevPD,
+          [pid]: { ...updated, councilAmenityGrantedThisYear: flags }
+        };
+      });
+      addLog("📋 Council", `${pName} gained +1 ${AMENITY_LABELS[amenity]} (${c.name}, F${fIdxClosure + 1})`);
+      showFloatingBonus(`+1 ${AMENITY_ICONS[amenity]} (${c.name})`, AMENITY_COLORS[amenity]);
+    }
+  }
+
   // Auto-trigger: stage-fill dice + council dice on relevant state changes.
   const diceTriggerLatchRef = useRef({});
   useEffect(() => {
@@ -5822,6 +5979,8 @@ export default function Headliners() {
         }
         // Council star dice — checked on every state change since amenity counts may have crossed thresholds
         checkAndClaimCouncilDice(p.id);
+        // v146: parallel check for placeAmenity councils (Muscle Food, Neighbourhood Watch)
+        checkAndClaimCouncilAmenity(p.id);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6192,9 +6351,13 @@ export default function Headliners() {
       return next;
     });
     // Log fame transitions OUTSIDE the updater (so they don't fire twice in StrictMode dev).
-    fameDiffs.forEach(({ festivalName, fameEnd, target }) => {
+    fameDiffs.forEach(({ id, festivalName, fameEnd, target }) => {
       const delta = target - fameEnd; // negative
       addLog(festivalName, `Year transition: 🔥 Fame ${fameEnd} → ${target} (${delta} carryover)`);
+      // v148: record the carryover in the fame ledger against the NEW year so it shows
+      // up when the player hovers their fame at the start of the new year (rather than
+      // being attributed to the year that just ended, which they can no longer see).
+      if (delta < 0) logFameGain(id, delta, "Carryover from previous year", newYear);
     });
     setPreRoundIndex(0); setPreRoundStep("notify");
     setFreeAmenityCount(0); setFreeAmenityPlaced(0); setFreeAmenityType(null);
@@ -6333,7 +6496,7 @@ export default function Headliners() {
         const emptyStages = (pd.stages || []).map(() => []);
         // Reset baseFame but preserve any fame gained during pre-round (stage opening)
         // Reset high-water marks so dice can be re-claimed for current fame/stages this year
-        const reset = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false] };
+        const reset = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false] };
         // Recompute tickets/fame for the NEW year so council ticket/fame bonuses fire immediately
         // (closure's `year` is still the old year here — pass `ny` explicitly)
         next[p.id] = computeTicketsForPlayer(reset, ny);
@@ -7662,7 +7825,9 @@ export default function Headliners() {
                 </div>
               </TicketBreakdown>
               <div style={{ fontSize: 11, color: "#94a3b8", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-                <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
+                <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
+                  <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
+                </FameBreakdown>
                 <span>🔄 {turnsLeft[p.id] || 0} turns</span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
@@ -7727,7 +7892,10 @@ export default function Headliners() {
           {/* Desktop sidebar tabs + content */}
           {!isMobile && <>
             <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
-              <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
+              {/* v147: hide the "🎯 My" tab under altObjectivesMode — the objective/fame
+                  info it used to hold now lives inline in the stat rows, so the tab
+                  renders empty. Kept for the classic objective mode. */}
+              {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
             {sidebarTab === "my" && <div style={{ marginTop: 6 }}>
@@ -7813,7 +7981,10 @@ export default function Headliners() {
                   </div>
                 </TicketBreakdown>
                 <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span><span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
+                  <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
+                    <span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span>
+                  </FameBreakdown>
+                  <span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
                 {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 3, padding: "2px 5px", borderRadius: 5, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>💫 tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}</div>}
                 {lastAction[p.id] && !ic && <div style={{ marginTop: 3, fontSize: 9, color: "#8b5cf6", fontStyle: "italic" }}>Last: {lastAction[p.id]}</div>}
@@ -7852,11 +8023,12 @@ export default function Headliners() {
             })}
           </div>}
 
-          {/* Accordion info panels — mobile only */}
+          {/* Accordion info panels — mobile only. v147: filter out "My" tab under
+              altObjectivesMode; info renders inline in the stat rows there. */}
           {isMobile && <>{[
             { key: "my", label: "🎯 My Festival", color: "#c4b5fd", bg: "rgba(124,58,237,0.3)" },
             { key: "trending", label: "📢 Microtrends", color: "#fbbf24", bg: "rgba(251,191,36,0.3)" },
-          ].map(tab => (
+          ].filter(tab => tab.key !== "my" || !altObjectivesMode).map(tab => (
             <div key={tab.key} style={{ marginTop: 6 }}>
               <button onClick={() => setSidebarTab(sidebarTab === tab.key ? null : tab.key)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "none", background: sidebarTab === tab.key ? tab.bg : "rgba(124,58,237,0.08)", color: sidebarTab === tab.key ? tab.color : "#64748b", cursor: "pointer", fontSize: 13, fontWeight: 700, textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>{tab.label}</span>
