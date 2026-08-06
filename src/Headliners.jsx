@@ -298,17 +298,25 @@ const ALT_OBJECTIVES = [
     check: (pd, ctx) => (ctx.yearEvents?.[ctx.currentPid]?.temptBookingsThisYear || 0) >= 2 },
   { id: "blueprint_success", name: "Blueprint for Success", req: "Play the same artist genres on a stage as another player", source: "failure", copies: 2,
     check: (pd, ctx) => {
-      // For each of this player's full (3-artist) stages, get the sorted genre-tuple, then
-      // check whether ANY other player has a stage with an identical sorted genre-tuple.
-      const myStages = (pd.stageArtists || []).filter(sa => sa.length === 3);
+      // v142: Per user's clarification. Match logic is "deduped genre SET on some stage of
+      // yours equals deduped genre SET on some stage of an opponent". Order, per-slot genre,
+      // and artist count all irrelevant — only the SET of genres present on the stage matters.
+      // Both stages need ≥1 artist. Exact set equality — {funk,rock} ≠ {funk}.
+      const genreSet = (sa) => {
+        const s = new Set();
+        sa.forEach(a => (a.genre || "").split(",").map(g => g.trim()).forEach(g => g && s.add(g)));
+        return s;
+      };
+      const setKey = (s) => [...s].sort().join("|");
+      const setsEqual = (a, b) => a.size === b.size && [...a].every(g => b.has(g));
+      const myStages = (pd.stageArtists || []).filter(sa => sa.length >= 1);
       if (myStages.length === 0) return false;
-      const myKeys = new Set(myStages.map(sa => sa.map(a => (a.genre || "").split(",").map(g => g.trim()).sort().join("|")).sort().join("::")));
+      const myKeys = new Set(myStages.map(sa => setKey(genreSet(sa))));
       for (const [opid, opd] of Object.entries(ctx.allPlayerData || {})) {
         if (parseInt(opid) === ctx.currentPid) continue;
-        const oStages = (opd.stageArtists || []).filter(sa => sa.length === 3);
+        const oStages = (opd.stageArtists || []).filter(sa => sa.length >= 1);
         for (const os of oStages) {
-          const k = os.map(a => (a.genre || "").split(",").map(g => g.trim()).sort().join("|")).sort().join("::");
-          if (myKeys.has(k)) return true;
+          if (myKeys.has(setKey(genreSet(os)))) return true;
         }
       }
       return false;
@@ -1282,28 +1290,29 @@ export default function Headliners() {
   //   traditional agent economy for backward compat.
   // totalYears: how many rounds the game lasts. 4 is standard; 3 is a shorter format.
   const [stageOpenFameBonus, setStageOpenFameBonus] = useState(true);
-  const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(true);
+  const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(false);
   const [stagesProvideNoFame, setStagesProvideNoFame] = useState(false);
   const [agentEffectsEnabled, setAgentEffectsEnabled] = useState(true);
   // Allow agents to be placed on the active microtrend for an immediate +1 Fame.
   // Solves the year-1 "stuck at 0 fame" problem when no one can organically match the
   // active microtrend. Placing the agent advances the microtrend (forecast promotes).
-  const [agentMicrotrendClaim, setAgentMicrotrendClaim] = useState(true);
+  const [agentMicrotrendClaim, setAgentMicrotrendClaim] = useState(false);
   // When ON, comparative councils (X > Y) require Y ≥ 1 as well — meaning both amenities
   // must be present and X > Y. So 1 catering vs 0 security no longer qualifies; you need
   // at least 2 catering + 1 security (total 3 amenities) for "Muscle Food" to fire.
-  // Default OFF preserves the cheap-to-qualify version where "1 > 0" works.
-  const [strictComparativeMode, setStrictComparativeMode] = useState(false);
-  const [temptMode, setTemptMode] = useState(false);
+  // v143: default ON now — strict comparison prevents cheap 1>0 qualification and
+  // encourages amenity diversity.
+  const [strictComparativeMode, setStrictComparativeMode] = useState(true);
+  const [temptMode, setTemptMode] = useState(true);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
-  const preRoundArtistDrawsRef = useRef(true);
+  const preRoundArtistDrawsRef = useRef(false);
   const stagesProvideNoFameRef = useRef(false);
   const agentEffectsEnabledRef = useRef(true);
-  const agentMicrotrendClaimRef = useRef(true);
-  const strictComparativeModeRef = useRef(false);
-  const temptModeRef = useRef(false);
+  const agentMicrotrendClaimRef = useRef(false);
+  const strictComparativeModeRef = useRef(true);
+  const temptModeRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
@@ -1375,6 +1384,22 @@ export default function Headliners() {
   // still appears "live" and re-fires the pendingAgentArtist modal for the same artist.
   const temptPlacementsRef = useRef({});
   useEffect(() => { temptPlacementsRef.current = temptPlacements; }, [temptPlacements]);
+
+  // v142: hand-cap discard picker. When a human player enters their turn with >8 cards
+  // (only under tempt mode, which enforces the 8-card cap), they get a modal to choose
+  // which cards to discard rather than the auto-cull-lowest-value behavior. AI players
+  // still auto-discard (via existing logic) since no picker is possible for them.
+  //   Shape: { pid: number, needToDiscard: number } | null
+  const [pendingHandDiscard, setPendingHandDiscard] = useState(null);
+
+  // v143: win condition. Chosen at game start by the first non-AI player (or randomly
+  // picked when all-AI). Determines how the game's winner is decided at game over.
+  //   "consistency"    — most years led in tickets sold. Ties → cumulative total.
+  //   "following"      — highest cumulative tickets across all years. (The default win rule.)
+  //   "talkOfTheTown"  — highest single-year ticket count wins.
+  const [winCondition, setWinCondition] = useState(null);
+  const winConditionRef = useRef(null);
+  useEffect(() => { winConditionRef.current = winCondition; }, [winCondition]);
   // v132: ledger of ticket-gain sources per player. Every time bonusTickets increases,
   // an entry is appended here for the hover breakdown UI. Losses (negative deltas) are
   // logged too so the sum reconciles with the actual bonusTickets value.
@@ -1410,8 +1435,8 @@ export default function Headliners() {
   // v135: Alternative Artist Objectives — lobby toggle. When ON, this system replaces the
   // fame-based stage-opening progression. Players draw objectives and complete them to earn
   // stage-open rewards.
-  const [altObjectivesMode, setAltObjectivesMode] = useState(false);
-  const altObjectivesModeRef = useRef(false);
+  const [altObjectivesMode, setAltObjectivesMode] = useState(true);
+  const altObjectivesModeRef = useRef(true);
   useEffect(() => { altObjectivesModeRef.current = altObjectivesMode; }, [altObjectivesMode]);
 
   // Per-player state for the alt-objectives system.
@@ -1825,6 +1850,97 @@ export default function Headliners() {
     return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame, councilTicketsThisYear: councilTickets, councilFameThisYear: councilFame };
   }
 
+  // v143: win-condition star computation. Derives per-player star state from `allTickets`
+  // (which stores { raw, fame, ... } per pid per year). Updates only when `allTickets`
+  // changes — i.e., at year end. Returns:
+  //   { emoji, tooltip, color } per pid, or null if no star for that player yet.
+  const winStars = useMemo(() => {
+    const cond = winCondition;
+    if (!cond) return {};
+    const result = {};
+    if (cond === "consistency") {
+      // Per year, whichever player had max tickets that year gets a star for that year.
+      // A player accumulates stars across years — hover shows the list of years led.
+      const yearsLed = {};
+      players.forEach(p => { yearsLed[p.id] = []; });
+      for (let y = 1; y <= 4; y++) {
+        const yearHas = players.some(p => allTickets[p.id]?.[y]?.raw != null);
+        if (!yearHas) continue;
+        let maxT = -Infinity;
+        players.forEach(p => { const t = allTickets[p.id]?.[y]?.raw ?? -Infinity; if (t > maxT) maxT = t; });
+        if (maxT === -Infinity) continue;
+        players.forEach(p => { if ((allTickets[p.id]?.[y]?.raw ?? -Infinity) === maxT) yearsLed[p.id].push(y); });
+      }
+      players.forEach(p => {
+        const led = yearsLed[p.id];
+        if (led.length === 0) { result[p.id] = null; return; }
+        result[p.id] = {
+          emoji: "⭐".repeat(Math.min(4, led.length)),
+          count: led.length,
+          tooltip: `${p.festivalName} had the highest ticket sales in Year${led.length === 1 ? "" : "s"} ${led.join(", ")}`,
+          color: "#fbbf24",
+        };
+      });
+    } else if (cond === "following") {
+      // Every player gets a place-based medal. Updates on allTickets change (year end).
+      // Gold = 1st, Silver = 2nd, Bronze = 3rd. Anyone below third gets no star.
+      const totals = players.map(p => ({
+        p,
+        total: Object.values(allTickets[p.id] || {}).reduce((s, e) => s + (e?.raw || 0), 0)
+      }));
+      const hasAny = totals.some(t => Object.keys(allTickets[t.p.id] || {}).length > 0);
+      if (!hasAny) return {};
+      const sorted = [...totals].sort((a, b) => b.total - a.total);
+      // Compute placement with ties (same total = same place).
+      let lastTotal = null, lastPlace = 0;
+      sorted.forEach((row, idx) => {
+        const place = row.total === lastTotal ? lastPlace : idx + 1;
+        lastTotal = row.total; lastPlace = place;
+        const medal = place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : null;
+        const color = place === 1 ? "#fbbf24" : place === 2 ? "#94a3b8" : place === 3 ? "#f59e0b" : "#64748b";
+        const placeStr = place === 1 ? "1st" : place === 2 ? "2nd" : place === 3 ? "3rd" : `${place}th`;
+        result[row.p.id] = medal ? {
+          emoji: medal,
+          tooltip: `${row.p.festivalName} is in ${placeStr} place with ${row.total.toLocaleString()} ticket sales`,
+          color,
+        } : {
+          emoji: null,
+          tooltip: `${row.p.festivalName} is in ${placeStr} place with ${row.total.toLocaleString()} ticket sales`,
+          color,
+        };
+      });
+    } else if (cond === "talkOfTheTown") {
+      // ONE star, held by the player with the highest single-year ticket count so far.
+      // Whoever has that peak gets the star; ties => most recent year among the tied.
+      let peak = -Infinity, peakPid = null, peakYear = null;
+      players.forEach(p => {
+        const yrs = allTickets[p.id] || {};
+        for (const [y, entry] of Object.entries(yrs)) {
+          const t = entry?.raw ?? -Infinity;
+          if (t > peak || (t === peak && parseInt(y) > (peakYear || 0))) {
+            peak = t; peakPid = p.id; peakYear = parseInt(y);
+          }
+        }
+      });
+      if (peakPid == null || peak === -Infinity) return {};
+      const peakPlayer = players.find(p => p.id === peakPid);
+      players.forEach(p => {
+        result[p.id] = p.id === peakPid ? {
+          emoji: "⭐",
+          tooltip: `${peakPlayer?.festivalName} is the talk of the town — they've sold ${peak.toLocaleString()} tickets in one year (Year ${peakYear})`,
+          color: "#fbbf24",
+        } : null;
+      });
+    }
+    return result;
+  }, [winCondition, allTickets, players]);
+
+  const StarBadge = ({ pid, size = 12 }) => {
+    const s = winStars[pid];
+    if (!s || !s.emoji) return null;
+    return <span title={s.tooltip} style={{ fontSize: size, marginLeft: 4, cursor: "help", verticalAlign: "middle" }}>{s.emoji}</span>;
+  };
+
   // Recalculate ALL players' tickets using latest state
   const recalcTickets = useCallback(() => {
     setPlayerData(prev => {
@@ -1932,6 +2048,9 @@ export default function Headliners() {
   const evaluateAltObjectivesYearEnd = () => {
     if (!altObjectivesModeRef.current) return;
     const y = yearRef.current || year || 1;
+    // Is a new-year deal even applicable? The last year of the game (year 4 by default)
+    // doesn't need a new objective — the game's about to end.
+    const nextYearNeedsDeal = y < (totalYearsRef.current || 4);
     let deckWorking = altObjectiveDeck;
     players.forEach(p => {
       const pid = p.id;
@@ -1950,6 +2069,12 @@ export default function Headliners() {
         const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
         const stageCount = (pd.stages || []).length;
         if (stageCount < 3) {
+          // v143: opening a stage grants +1 fame at the start of the next year — this
+          // fires here (during year-end evaluation, right before the new year's pre-round)
+          // to match the "beginning of your next year" spec. Also gate on the same toggles
+          // the pre-round opening path uses, so a game that turns off stage-fame bonuses
+          // universally still respects that intent.
+          const grantOpeningFame = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
           setPlayerData(prev => {
             const cur = prev[pid] || {};
             return {
@@ -1960,10 +2085,12 @@ export default function Headliners() {
                 stageArtists: [...(cur.stageArtists || []), []],
                 stageNames: [...(cur.stageNames || []), `Stage ${stageCount + 1}`],
                 stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageCount % STAGE_COLORS.length]],
+                baseFame: grantOpeningFame ? Math.min(FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
               }
             };
           });
-          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened a new stage!`);
+          if (grantOpeningFame) logFameGain(pid, 1, `Opened new stage via "${obj.name}"`);
+          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened a new stage${grantOpeningFame ? " (+1 🔥 Fame for next year)" : ""}!`);
         } else {
           logTicketGain(pid, 10, `Objective: ${obj.name}`);
           setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + 10 } }));
@@ -1989,11 +2116,15 @@ export default function Headliners() {
           [pid]: (prev[pid] || []).filter(e => !newlyCompleted.some(nc => nc.id === e.id))
         }));
       }
-      // Failure check: was this year's normal objective completed?
-      const thisYearsNormal = yearObjectiveAssignments[y]?.[pid];
-      const failed = thisYearsNormal && !newlyCompleted.some(e => e.id === thisYearsNormal);
-      if (failed) {
-        const result = offerObjectivePicker(pid, "failure", "failure", deckWorking);
+      // v142: Rule per user's clarification — the deal is based on whether the player
+      // completed AT LEAST ONE objective this year, not on whether the specific year's
+      // normal was completed. So a player who completes a rolled-over starter (but not
+      // this year's assigned normal) still gets a progression objective, and a player
+      // who completes nothing gets a failure objective.
+      if (nextYearNeedsDeal) {
+        const anyCompleted = newlyCompleted.length > 0;
+        const source = anyCompleted ? "progression" : "failure";
+        const result = offerObjectivePicker(pid, source, "normal", deckWorking);
         deckWorking = result.deck;
       }
     });
@@ -2536,9 +2667,45 @@ export default function Headliners() {
   }
   
   // AI agent deployment logic
+  // v140: score how much an artist advances a player's live objectives (alt-objectives mode).
+  // Returns a small integer bonus. Rough heuristic — the goal isn't perfect play, just to
+  // stop the AI making obviously anti-objective picks (e.g. Fyre Festival + tempting artists).
+  const scoreArtistForObjectives = (artist, pid) => {
+    if (!altObjectivesModeRef.current) return 0;
+    const live = activeObjectives[pid] || [];
+    if (live.length === 0) return 0;
+    const genres = getGenres(artist.genre);
+    const fame = artist.fame || 0;
+    const amenityTotal = (artist.campCost || 0) + (artist.securityCost || 0) + (artist.cateringCost || 0) + (artist.portalooCost || 0);
+    let bonus = 0;
+    live.forEach(entry => {
+      switch (entry.id) {
+        case "fyre_festival": bonus -= 20; break; // Playing ANY artist kills this objective
+        case "local_talent": if (fame <= 1) bonus += 3; break;
+        case "punching": if (fame > 1) bonus += 2; break; // Wants exactly 1, but hard to enforce here
+        case "mainstream": if (genres.some(g => /Pop|Rock|Hip Hop/i.test(g))) bonus += 3; break;
+        case "alternative": if (genres.some(g => /Funk|Electronic|Indie/i.test(g))) bonus += 3; break;
+        case "popstars": if (genres.some(g => /Pop/i.test(g))) bonus += 4; break;
+        case "rock_on": if (genres.some(g => /Rock/i.test(g))) bonus += 4; break;
+        case "disc_jockeys": if (genres.some(g => /Electronic/i.test(g))) bonus += 4; break;
+        case "fire_verses": if (genres.some(g => /Hip Hop/i.test(g))) bonus += 4; break;
+        case "indiependent": if (genres.some(g => /Indie/i.test(g))) bonus += 4; break;
+        case "funky_town": if (genres.some(g => /Funk/i.test(g))) bonus += 4; break;
+        case "eclectic": if (genres.length >= 2) bonus += 2; break;
+        case "experimental": if (genres.length >= 2) bonus += 2; break;
+        case "high_profile": if ((artist.securityCost || 0) >= 2) bonus += 2; break;
+        case "foodies": if ((artist.cateringCost || 0) >= 2) bonus += 2; break;
+        case "pampered": if ((artist.portalooCost || 0) >= 2) bonus += 2; break;
+        case "price_of_fame": if (amenityTotal >= 4) bonus += 2; break;
+      }
+    });
+    return bonus;
+  };
+
   function aiDeployAgent(pid) {
     const pd = playerData[pid] || {};
     const openStages = (pd.stageArtists || []).filter(s => s.length < 3);
+    const isTempt = temptModeRef.current;
 
     // Microtrend fallback: if AI has no stage capacity but can still claim a microtrend,
     // do that. Also use this as a "last resort" if no pool artist is worth claiming.
@@ -2546,33 +2713,57 @@ export default function Headliners() {
       if (!agentMicrotrendClaimRef.current) return false;
       const active = microtrends.find(mt => mt.claimedBy === null);
       if (!active) return false;
-      // Don't bother if player is already at FAME_MAX and has very high VP — diminishing returns
       const baseFame = pd.baseFame || 0;
       if (baseFame >= FAME_MAX) return false;
       placeAgentOnMicrotrend(pid);
       return true;
     };
 
-    if (openStages.length === 0) { tryMicrotrend(); return; } // No stages? Try microtrend.
-
-    // Use canAffordArtist for parity with the human UI — checks fame AND amenity costs
-    const affordable = artistPool.filter(a => canAffordArtist(a, pd));
-    const bestPool = affordable.sort((a, b) => (b.vp * 2 + b.tickets) - (a.vp * 2 + a.tickets))[0];
-
-    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) {
-      // No worthwhile pool target — fall back to microtrend if available
-      tryMicrotrend();
+    // v140: Tempt-mode branch. Much more liberal about targets and contests since a tempt
+    // costs 1 Fame regardless of the artist's value — asymmetric upside. AI considers ALL
+    // pool artists (even ones it can't afford yet; they'd land in hand as future ammo) and
+    // factors in live objectives + a stronger willingness to challenge other players' tempts.
+    if (isTempt) {
+      if ((pd.fame || 0) < 1) { tryMicrotrend(); return; }
+      if ((temptPlacements[pid] || []).length >= 2) return; // Already tempting max this turn
+      // Score every pool artist. Higher is better.
+      //   base: vp*2 + tickets
+      //   affordable bonus: +3 if we could book them straight to a stage right now
+      //   objective bonus: from scoreArtistForObjectives
+      //   contest penalty: -2 if another player has already tempted them (still worth if strong)
+      const scored = artistPool.map(a => {
+        const base = (a.vp || 0) * 2 + (a.tickets || 0);
+        const affordable = canAffordArtist(a, pd) || canBookArtistAnywhere(a, pd);
+        const affBonus = affordable ? 3 : 0;
+        const objBonus = scoreArtistForObjectives(a, pid);
+        const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
+        // Don't double-tempt the same artist. Skip.
+        const iAlreadyTempted = (temptPlacements[pid] || []).some(pl => pl.artistName === a.name);
+        if (iAlreadyTempted) return { a, score: -999 };
+        const contestPenalty = alreadyTempted ? -1 : 0; // Still willing to contest, just prefers uncontested
+        return { a, score: base + affBonus + objBonus + contestPenalty };
+      }).sort((x, y) => y.score - x.score);
+      const best = scored[0];
+      // Only tempt if best score is worth spending 1 Fame on. Threshold ~5 = an artist worth
+      // 3-5 tickets, or 2-3 tickets with an objective match. Below that, save fame for stages
+      // or the microtrend claim.
+      if (!best || best.score < 5) { tryMicrotrend(); return; }
+      const poolIdx = artistPool.indexOf(best.a);
+      if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
       return;
     }
 
-    // Will contest if the artist is very valuable (fame 4-5), otherwise only claim unclaimed
+    // Standard-mode branch — original logic below.
+    if (openStages.length === 0) { tryMicrotrend(); return; }
+    const affordable = artistPool.filter(a => canAffordArtist(a, pd));
+    const bestPool = affordable.sort((a, b) => (b.vp * 2 + b.tickets + scoreArtistForObjectives(b, pid)) - (a.vp * 2 + a.tickets + scoreArtistForObjectives(a, pid)))[0];
+    if (!bestPool || (bestPool.vp * 2 + bestPool.tickets) <= 8) { tryMicrotrend(); return; }
     const alreadyClaimed = getPlacementsOnArtist(bestPool.name).length > 0;
-    const worthContesting = (bestPool.vp * 2 + bestPool.tickets) > 14;
+    const worthContesting = (bestPool.vp * 2 + bestPool.tickets + scoreArtistForObjectives(bestPool, pid)) > 12;
     if (!alreadyClaimed || worthContesting) {
       const poolIdx = artistPool.indexOf(bestPool);
       if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
     } else {
-      // Wouldn't contest a claimed artist — try microtrend instead
       tryMicrotrend();
     }
   }
@@ -3367,6 +3558,32 @@ export default function Headliners() {
           addLog("Effect", `${artist.name}: would grant +1 Star Die, but pool is empty`);
         }
       }
+      // v140: "Choose an indie artist from the artist pool, if there is one."
+      // Fires as a BASE effect for Djo, Two Door Cinema Club, The Kooks. The same string
+      // also lives on Suki Waterhouse's genreMatchEffect, handled by applyGenreMatchEffect
+      // separately (both parsers are needed). For AI: auto-take highest-fame Indie in the
+      // pool. For humans: open a picker modal.
+      if ((el.includes("indie artist from the artist pool") || el.includes("indie artist from the pool")) && !el.includes("if you have")) {
+        const indieIdxes = artistPool.map((a, i) => getGenres(a.genre).includes("Indie") ? i : -1).filter(i => i >= 0);
+        if (indieIdxes.length === 0) {
+          addLog("Effect", `${artist.name}: no Indie artist in the pool — nothing to take`);
+        } else {
+          const player = players.find(pl => pl.id === pid);
+          if (player?.isAI) {
+            // AI: pick highest-fame indie (proxy for most valuable)
+            const bestIdx = indieIdxes.reduce((best, i) => (artistPool[i].fame > artistPool[best].fame ? i : best), indieIdxes[0]);
+            const chosen = artistPool[bestIdx];
+            setArtistPool(prev => { const np = [...prev]; np.splice(bestIdx, 1); return np; });
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
+            addLog("Effect", `${artist.name}: took ${chosen.name} into hand`);
+          } else {
+            // Human: queue a picker modal. Uses the same pendingEffect scaffold so the UI
+            // that resolves it lives alongside other effect modals.
+            setPendingEffect({ type: "pickIndieFromPool", artistName: artist.name, indieOptions: indieIdxes.map(i => artistPool[i].name) });
+            setPendingEffectPid(pid);
+          }
+        }
+      }
       // === Event-draw effects (retired with the event system) — no-ops kept for log clarity ===
       if (el.includes("+1 negative personal event") || el.includes("+1 negative global event") ||
           (el.includes("+1 global event") && !el.includes("negative")) ||
@@ -3831,7 +4048,16 @@ export default function Headliners() {
     // Skip straight to objective view (no council step)
     setSetupStep("viewObjective");
     setSetupDraftOptions([]); setSetupDraftSelected([]);
-    setPhase("setup"); addLogH("Setup Phase", "year");
+    // v143: before setup begins, the first non-AI player picks the win condition. If
+    // all players are AI, pick randomly and jump straight to setup.
+    const firstHuman = players.find(p => !p.isAI);
+    if (firstHuman) {
+      setPhase("winConditionChoice");
+    } else {
+      const conditions = ["consistency", "following", "talkOfTheTown"];
+      setWinCondition(conditions[Math.floor(Math.random() * 3)]);
+      setPhase("setup"); addLogH("Setup Phase", "year");
+    }
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -5065,23 +5291,30 @@ export default function Headliners() {
     const np = players.find(p => p.id === turnOrder[ni]);
     addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
 
-    // v130: under tempt mode enforce hand cap of 8. If the incoming player has more than
-    // 8 cards, auto-discard the excess (lowest-value first) into the universal discard.
-    // The reshuffle-on-empty deck logic already handles putting the discard back into
-    // rotation when the deck runs out.
+    // v130/v142: under tempt mode enforce hand cap of 8. HUMAN players get a picker
+    // modal (they choose which cards to discard). AI keeps the auto-cull behavior (rank
+    // by tickets + vp ascending, discard the cheapest ones). The reshuffle-on-empty deck
+    // logic already handles putting the discard back into rotation when the deck runs out.
     if (temptModeRef.current) {
       const nextPid = turnOrder[ni];
       const npd = playerDataRef.current?.[nextPid] || playerData[nextPid] || {};
       const hand = npd.hand || [];
       if (hand.length > 8) {
-        // Rank by (tickets + vp) ascending so we discard the cheapest first
-        const sorted = [...hand].map((a, i) => ({ a, i })).sort((x, y) => ((x.a.tickets || 0) + (x.a.vp || 0)) - ((y.a.tickets || 0) + (y.a.vp || 0)));
-        const toDiscard = sorted.slice(0, hand.length - 8).map(x => x.a);
-        const keepIdx = new Set(sorted.slice(hand.length - 8).map(x => x.i));
-        const kept = hand.filter((_, i) => keepIdx.has(i));
-        setPlayerData(p => ({ ...p, [nextPid]: { ...p[nextPid], hand: kept } }));
-        setDiscardPile(prev => [...(prev || []), ...toDiscard]);
-        addLog(np?.festivalName || "?", `Hand over 8 — auto-discarded ${toDiscard.length} artist${toDiscard.length === 1 ? "" : "s"}: ${toDiscard.map(a => a.name).join(", ")}`);
+        const overBy = hand.length - 8;
+        const nextPlayer = players.find(p => p.id === nextPid);
+        if (nextPlayer?.isAI) {
+          const sorted = [...hand].map((a, i) => ({ a, i })).sort((x, y) => ((x.a.tickets || 0) + (x.a.vp || 0)) - ((y.a.tickets || 0) + (y.a.vp || 0)));
+          const toDiscard = sorted.slice(0, overBy).map(x => x.a);
+          const keepIdx = new Set(sorted.slice(overBy).map(x => x.i));
+          const kept = hand.filter((_, i) => keepIdx.has(i));
+          setPlayerData(p => ({ ...p, [nextPid]: { ...p[nextPid], hand: kept } }));
+          setDiscardPile(prev => [...(prev || []), ...toDiscard]);
+          addLog(np?.festivalName || "?", `Hand over 8 — auto-discarded ${toDiscard.length} artist${toDiscard.length === 1 ? "" : "s"}: ${toDiscard.map(a => a.name).join(", ")}`);
+        } else {
+          // Human: open the picker. The modal shows their whole hand and requires them
+          // to click `overBy` cards to discard before the turn proceeds.
+          setPendingHandDiscard({ pid: nextPid, needToDiscard: overBy });
+        }
       }
     }
 
@@ -5966,33 +6199,11 @@ export default function Headliners() {
     setPreRoundIndex(0); setPreRoundStep("notify");
     setFreeAmenityCount(0); setFreeAmenityPlaced(0); setFreeAmenityType(null);
     setPhase("preRound");
-    // v135: alt-objectives — evaluate current year first (open stages / +10 tickets / offer
-    // failure objectives), then deal the new year's progression objectives.
+    // v140: alt-objectives year-end evaluation now handles BOTH the achievement rewards
+    // AND the deal of the next year's objective (progression if succeeded, failure if not).
+    // Previously we ran evaluate + a separate progression deal, which double-dealt.
     if (altObjectivesModeRef.current) {
       evaluateAltObjectivesYearEnd();
-      // Deal a year-2+ objective (1 of 2) to each player entering year 2/3/4.
-      // Done after a short delay so state updates from evaluateAltObjectivesYearEnd land first.
-      setTimeout(() => {
-        setAltObjectiveDeck(currentDeck => {
-          let deckWorking = currentDeck;
-          players.forEach(p => {
-            const { drawn, deckAfter } = drawFromObjectiveDeck(deckWorking, 2, "progression", p.id);
-            deckWorking = deckAfter;
-            if (drawn.length === 0) return;
-            if (p.isAI) {
-              const chosen = drawn[Math.floor(Math.random() * drawn.length)];
-              if (drawn.length > 1) {
-                const other = drawn.find(d => d !== chosen);
-                if (other) deckWorking.push(other);
-              }
-              grantObjective(p.id, chosen, "normal");
-            } else {
-              setPendingObjectivePickerQueue(prev => [...prev, { pid: p.id, kind: "normal", source: "progression", options: drawn }]);
-            }
-          });
-          return deckWorking;
-        });
-      }, 60);
     }
   };
 
@@ -6431,7 +6642,7 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${preRoundArtistDraws ? "#22c55e" : "#fbbf24"}`, background: preRoundArtistDraws ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{preRoundArtistDraws ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: preRoundArtistDraws ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>Free artist draws between years</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{preRoundArtistDraws ? "Standard — players get one free artist draw per stage in the pre-round." : "Off — artists only come from turn actions. Tighter card economy."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{preRoundArtistDraws ? "On — players get one free artist draw per stage in the pre-round." : "Default (v143) — artists only come from turn actions. Tighter card economy."}</div>
             </div>
           </label>
           <label onClick={() => setStagesProvideNoFame(!stagesProvideNoFame)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stagesProvideNoFame ? "2px solid #fbbf24" : "1px solid #4c1d95", background: stagesProvideNoFame ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
@@ -6452,28 +6663,28 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agentMicrotrendClaim ? "#22c55e" : "#fbbf24"}`, background: agentMicrotrendClaim ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{agentMicrotrendClaim ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: agentMicrotrendClaim ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🎵 Agents can claim microtrends</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "Standard — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Off — agents can only target pool artists and dice. Microtrends only claimable via booking/amenity."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
             </div>
           </label>
           <label onClick={() => setStrictComparativeMode(!strictComparativeMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: strictComparativeMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: strictComparativeMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${strictComparativeMode ? "#fbbf24" : "#4c1d95"}`, background: strictComparativeMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{strictComparativeMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: strictComparativeMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>📋 Strict comparative councils</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{strictComparativeMode ? "On — comparative councils (\"X > Y\") require the lesser amenity to also be present. Min 3 amenities in the field to qualify." : "Off — comparative councils qualify with just one amenity (e.g. 1 catering > 0 security). Easier to satisfy. Default."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{strictComparativeMode ? "Default (v143) — comparative councils (\"X > Y\") require the lesser amenity to also be present. Min 3 amenities in the field to qualify." : "Off — comparative councils qualify with just one amenity (e.g. 1 catering > 0 security). Easier to satisfy."}</div>
             </div>
           </label>
           <label onClick={() => setTemptMode(!temptMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: temptMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: temptMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${temptMode ? "#fbbf24" : "#4c1d95"}`, background: temptMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{temptMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: temptMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>💫 Implement tempt function</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "On — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 2/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket. Default."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "Default (v143) — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 2/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket."}</div>
             </div>
           </label>
           <label onClick={() => setAltObjectivesMode(!altObjectivesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: altObjectivesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: altObjectivesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${altObjectivesMode ? "#fbbf24" : "#4c1d95"}`, background: altObjectivesMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{altObjectivesMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: altObjectivesMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎯 Alternative artist objectives</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{altObjectivesMode ? "On — stages open by completing artist objectives, not by Fame. Each player picks 1 of 2 objectives at game start + start of Years 2/3/4. Achievements are permanent; each opens a new stage (+10 tickets if already at 3 stages). Failing a year offers a bonus failure objective." : "Off — Fame 3+ unlocks stages during pre-round (default). Standard progression."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{altObjectivesMode ? "Default (v144) — stages open by completing artist objectives, not by Fame. Each player picks 1 of 2 objectives at game start + at the end of Years 1/2/3 (progression if they completed one this year, failure if not). Achievements are permanent; each opens a new stage and grants +1 Fame next year (+10 tickets if already at 3 stages)." : "Off — Fame 3+ unlocks stages during pre-round. Standard progression."}</div>
             </div>
           </label>
         </div>
@@ -6489,6 +6700,39 @@ export default function Headliners() {
       </div>
     </div>{anim}</div>
   );
+
+  // ═══════════════════════════════════════════════════════════
+  if (phase === "winConditionChoice") {
+    const firstHuman = players.find(p => !p.isAI);
+    const pickCondition = (cond, label) => {
+      setWinCondition(cond);
+      addLogH(`Win Condition: ${label}`, "year");
+      addLog(firstHuman?.festivalName || "?", `chose "${label}" as the win condition`);
+      setPhase("setup"); addLogH("Setup Phase", "year");
+    };
+    const opt = (cond, label, blurb, tie) => <button onClick={() => pickCondition(cond, label)} style={{
+      padding: 18, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.10), rgba(124,58,237,0.06))",
+      border: "2px solid rgba(251,191,36,0.5)", color: "#e2e8f0", cursor: "pointer", textAlign: "left",
+      transition: "all 0.15s", width: "100%"
+    }}>
+      <div style={{ fontWeight: 800, fontSize: 17, color: "#fbbf24", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 13, color: "#e2e8f0", lineHeight: 1.5, marginBottom: 6 }}>{blurb}</div>
+      <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>{tie}</div>
+    </button>;
+    return <div style={CS}>{utilButtons}{showLog && <GameLog log={gameLog} onClose={() => setShowLog(false)} />}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 24, minHeight: "100vh" }}>
+        <div style={{ ...card, maxWidth: 640, width: "100%", textAlign: "center", marginTop: 24 }}>
+          <div style={{ fontSize: 11, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.4, fontWeight: 700, marginBottom: 4 }}>🏆 First Player's Choice</div>
+          <h2 style={{ color: "#e2e8f0", fontSize: 26, margin: "0 0 6px" }}>Choose the win condition</h2>
+          <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 20 }}><strong style={{ color: "#c4b5fd" }}>{firstHuman?.festivalName}</strong> picks how this game will be decided.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {opt("consistency", "🎯 Consistency", "Have the most tickets sold in the most years to win. In a 3-year game, leading in tickets 2+ years wins. In a 4-year game, the most year-leads takes it.", "Ties broken by cumulative total.")}
+            {opt("following", "📈 Following", "Add your ticket sales up from every year. The highest game total wins.", "The default rule — steady growth pays off.")}
+            {opt("talkOfTheTown", "⭐ Talk of the Town", "The player with the highest single-year ticket count at game end wins — one huge festival is all you need.", "Ties broken by second-best year, then cumulative.")}
+          </div>
+        </div>
+      </div>{anim}</div>;
+  }
 
   // ═══════════════════════════════════════════════════════════
   // RENDER: SETUP
@@ -6906,6 +7150,34 @@ export default function Headliners() {
               </div>
             </div>;
           }
+        }
+
+        if (pe.type === "pickIndieFromPool") {
+          // v140: modal for "Choose an indie artist from the artist pool, if there is one."
+          // Filters the current pool to Indie-genre artists (name-matched against snapshot
+          // in case the pool shifted). Player clicks one to take it to hand.
+          const indieArtists = artistPool.filter(a => getGenres(a.genre).includes("Indie"));
+          if (indieArtists.length === 0) {
+            // Pool changed since queueing — nothing to pick anymore. Auto-close.
+            setPendingEffect(null); setPendingEffectPid(null);
+            return null;
+          }
+          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 600, width: "100%" }}>
+              <h3 style={{ color: "#4ade80", marginBottom: 8 }}>🎸 {pe.artistName}: Choose an Indie artist to take</h3>
+              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Pick one Indie artist from the pool. They'll go straight to your hand.</p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {indieArtists.map((a, i) => <ArtistCard key={a.name + i} artist={a} small showCost onClick={() => {
+                  setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
+                  setArtistPool(prev => { const idx = prev.findIndex(x => x.name === a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
+                  addLog("Effect", `Took ${a.name} into hand (via ${pe.artistName})`);
+                  showFloatingBonus(`+${a.name} to hand`, "#4ade80");
+                  setPendingEffect(null); setPendingEffectPid(null);
+                }} />)}
+              </div>
+              <button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Skip (pass)</button>
+            </div>
+          </div>;
         }
 
         if (pe.type === "signArtist") {
@@ -7355,6 +7627,7 @@ export default function Headliners() {
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: "100vh" }}>
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
+          {winCondition && <div style={{ padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(251,191,36,0.14), rgba(124,58,237,0.06))", border: "1px solid rgba(251,191,36,0.4)", marginBottom: 10, fontSize: 10, color: "#fbbf24", textAlign: "center", fontWeight: 700, letterSpacing: 0.5 }} title={winCondition === "consistency" ? "Most years led in tickets wins. Ties → cumulative total." : winCondition === "following" ? "Highest cumulative tickets across all years wins." : "Highest single-year ticket count wins."}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of the Town"}</div>}
           <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
@@ -7376,7 +7649,7 @@ export default function Headliners() {
               cursor: ic ? "default" : "pointer", transition: "all 0.15s",
             }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
+                <span>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}<StarBadge pid={p.id} size={13} /></span>
                 {!ic && <span style={{ fontSize: 9, color: isViewing ? "#fbbf24" : "#64748b" }}>{isViewing ? "👁️" : "👁️"}</span>}
               </div>
               {/* v133: tickets are the score — promoted to hero display in every stat row.
@@ -7511,6 +7784,7 @@ export default function Headliners() {
           <div style={{ display: "flex", gap: 8, alignItems: "stretch", minWidth: "max-content" }}>
             <div style={{ padding: "6px 12px", borderRadius: 10, background: "rgba(124,58,237,0.15)", border: "1px solid #7c3aed40", whiteSpace: "nowrap" }}>
               <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Year {year}/{totalYears}</span>
+              {winCondition && <span title={winCondition === "consistency" ? "Most years led in tickets wins" : winCondition === "following" ? "Highest cumulative tickets wins" : "Highest single-year tickets wins"} style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8, fontWeight: 700 }}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of Town"}</span>}
               <span style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}>📦{artistDeck.length}</span>
               <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8 }} title="Star Dice pool">🎲{dicePool}</span>
             </div>
@@ -7530,7 +7804,7 @@ export default function Headliners() {
                 animation: onFire ? "fameOnFire 1.4s ease-in-out infinite" : "none",
                 cursor: "pointer", whiteSpace: "nowrap", minWidth: 120,
               }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd" }}>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}<StarBadge pid={p.id} size={12} /></div>
                 <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ display: "block", marginTop: 4, marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 4, padding: "4px 8px", borderRadius: 6, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)" }}>
                     <span style={{ fontSize: 14 }}>🎟️</span>
@@ -7898,6 +8172,32 @@ export default function Headliners() {
             {/* v135: Alternative Artist Objectives picker — shown whenever a human has
                 an objective choice to make (game start / year 2+/failure). Player picks
                 one of the two dealt objectives; the other returns to the deck. */}
+            {/* v142: hand-cap discard picker. Blocks the current player's turn until
+                they've clicked N cards to discard from their hand. AI never sees this. */}
+            {pendingHandDiscard && pendingHandDiscard.pid === currentPlayerId && (() => {
+              const phd = pendingHandDiscard;
+              const pd = playerData[phd.pid] || {};
+              const hand = pd.hand || [];
+              return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                <div style={{ padding: 20, borderRadius: 16, background: "rgba(20,18,34,0.98)", border: "2px solid rgba(239,68,53,0.6)", boxShadow: "0 0 40px rgba(239,68,53,0.25)", maxWidth: 720, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+                  <div style={{ fontSize: 11, color: "#f97316", textTransform: "uppercase", letterSpacing: 1.2, fontWeight: 700, marginBottom: 4, textAlign: "center" }}>🎴 Hand over 8</div>
+                  <h2 style={{ color: "#e2e8f0", fontSize: 20, margin: "0 0 6px", textAlign: "center" }}>Discard {phd.needToDiscard} card{phd.needToDiscard === 1 ? "" : "s"}</h2>
+                  <p style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", margin: "0 0 14px" }}>You have {hand.length} cards but the hand limit is 8. Click cards to discard them.</p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                    {hand.map((a, i) => <ArtistCard key={i} artist={a} small showCost onClick={() => {
+                      const newHand = [...hand]; newHand.splice(i, 1);
+                      setPlayerData(p => ({ ...p, [phd.pid]: { ...p[phd.pid], hand: newHand } }));
+                      setDiscardPile(prev => [...(prev || []), a]);
+                      addLog(players.find(pl => pl.id === phd.pid)?.festivalName || "?", `Discarded ${a.name}`);
+                      const remaining = phd.needToDiscard - 1;
+                      if (remaining <= 0) setPendingHandDiscard(null);
+                      else setPendingHandDiscard({ ...phd, needToDiscard: remaining });
+                    }} />)}
+                  </div>
+                </div>
+              </div>;
+            })()}
+
             {pendingObjectivePicker && pendingObjectivePicker.pid === currentPlayerId && (() => {
               const p = pendingObjectivePicker;
               const opts = p.options.map(id => getAltObjective(id)).filter(Boolean);
@@ -8728,19 +9028,92 @@ export default function Headliners() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  if (phase === "gameOver") return (
+  if (phase === "gameOver") {
+    // v142/v143: winner selection depends on the active win condition.
+    // Following (default): highest cumulative tickets across all years.
+    // Consistency: most year-leads. Ties → cumulative.
+    // Talk of the Town: highest single-year peak. Ties → second-best year, then cumulative.
+    const perPlayer = players.map(p => {
+      const byYear = allTickets[p.id] || {};
+      const yearTickets = [1,2,3,4].map(y => byYear[y]?.raw || 0);
+      const total = yearTickets.reduce((s, t) => s + t, 0);
+      const peak = Math.max(...yearTickets, 0);
+      return { player: p, total, peak, yearTickets, byYear };
+    });
+    // Compute per-year winners for the "years led" count
+    const yearsLed = {}; players.forEach(p => { yearsLed[p.id] = 0; });
+    [1,2,3,4].forEach(y => {
+      const played = players.some(p => allTickets[p.id]?.[y]?.raw != null);
+      if (!played) return;
+      let maxT = -Infinity;
+      players.forEach(p => { const t = allTickets[p.id]?.[y]?.raw ?? -Infinity; if (t > maxT) maxT = t; });
+      players.forEach(p => { if ((allTickets[p.id]?.[y]?.raw ?? -Infinity) === maxT && maxT !== -Infinity) yearsLed[p.id]++; });
+    });
+
+    const cond = winCondition || "following";
+    let ranked;
+    if (cond === "consistency") {
+      ranked = [...perPlayer].sort((a, b) => (yearsLed[b.player.id] - yearsLed[a.player.id]) || (b.total - a.total));
+    } else if (cond === "talkOfTheTown") {
+      ranked = [...perPlayer].sort((a, b) => {
+        if (b.peak !== a.peak) return b.peak - a.peak;
+        // Tiebreak: second-highest year
+        const secondBestA = [...a.yearTickets].sort((x, y) => y - x)[1] || 0;
+        const secondBestB = [...b.yearTickets].sort((x, y) => y - x)[1] || 0;
+        if (secondBestB !== secondBestA) return secondBestB - secondBestA;
+        return b.total - a.total;
+      });
+    } else {
+      ranked = [...perPlayer].sort((a, b) => b.total - a.total);
+    }
+    const winnerRow = ranked[0];
+    const condLabel = cond === "consistency" ? "Consistency — most years led" : cond === "talkOfTheTown" ? "Talk of the Town — highest single-year peak" : "Following — highest cumulative tickets";
+    return (
     <div style={CS}>{utilButtons}{showLog && <GameLog log={gameLog} onClose={() => setShowLog(false)} />}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
-        <div style={{ ...card, textAlign: "center", maxWidth: 600, width: "100%" }}>
-          <h1 style={{ fontSize: 48, fontWeight: 900, margin: "0 0 8px", background: "linear-gradient(135deg, #fbbf24, #f472b6, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>🏆 GAME OVER</h1>
-          {winner && <div style={{ marginBottom: 24 }}><p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700 }}>{winner.festivalName} Wins!</p><p style={{ color: "#60a5fa", fontSize: 14 }}>🎟️ {((playerData[winner.id]?.tickets || 0) * 100).toLocaleString()} tickets sold</p></div>}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
+        <div style={{ ...card, textAlign: "center", maxWidth: 780, width: "100%", marginTop: 24 }}>
+          <h1 style={{ fontSize: 44, fontWeight: 900, margin: "0 0 4px", background: "linear-gradient(135deg, #fbbf24, #f472b6, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>🏆 GAME OVER</h1>
+          <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14, fontStyle: "italic" }}>Win Condition: <strong style={{ color: "#fbbf24" }}>{condLabel}</strong></p>
+          {winnerRow && <div style={{ marginBottom: 20 }}>
+            <p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700, margin: "8px 0 4px" }}>{winnerRow.player.festivalName} Wins!</p>
+            <p style={{ color: "#60a5fa", fontSize: 13, margin: 0 }}>
+              {cond === "consistency" && `Led in tickets across ${yearsLed[winnerRow.player.id]} year${yearsLed[winnerRow.player.id] === 1 ? "" : "s"}`}
+              {cond === "talkOfTheTown" && `Peak year: ${(winnerRow.peak * 100).toLocaleString()} tickets sold`}
+              {cond === "following" && `${(winnerRow.total * 100).toLocaleString()} tickets sold across the run`}
+            </p>
+          </div>}
+          {/* Full leaderboard — always shows per-year, total, peak, years led so players
+              can see how they'd have placed under each rule. */}
+          <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr repeat(4, minmax(48px, 1fr)) minmax(60px, auto) minmax(50px, auto) minmax(70px, auto)", gap: 6, alignItems: "center", fontSize: 12 }}>
+              <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
+              <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>Festival</div>
+              {[1,2,3,4].map(y => <div key={y} style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Y{y}</div>)}
+              <div style={{ color: cond === "following" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Total</div>
+              <div style={{ color: cond === "talkOfTheTown" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Peak</div>
+              <div style={{ color: cond === "consistency" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Years Led</div>
+              {ranked.map((row, idx) => <React.Fragment key={row.player.id}>
+                <div style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 14 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</div>
+                <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 12 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</div>
+                {[1,2,3,4].map(y => {
+                  const t = row.byYear[y]?.raw;
+                  return <div key={y} style={{ color: t != null ? "#e2e8f0" : "#475569", textAlign: "right", fontSize: 11 }}>{t != null ? t.toLocaleString() : "—"}</div>;
+                })}
+                <div style={{ color: cond === "following" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "following" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.total.toLocaleString()}</div>
+                <div style={{ color: cond === "talkOfTheTown" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "talkOfTheTown" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.peak.toLocaleString()}</div>
+                <div style={{ color: cond === "consistency" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "consistency" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{yearsLed[row.player.id]}</div>
+              </React.Fragment>)}
+            </div>
+            <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Highlighted column decides the winner under the active condition. Other columns show how you would have ranked under the alternatives.</p>
+          </div>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={exportGameData} style={{ ...bs, padding: "12px 20px", fontSize: 14 }}>📊 Download Game Data</button>
-            <button onClick={() => { setPhase("lobby"); setGameLog([]); setAllTickets({}); setYear(1); }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
+            <button onClick={() => { setPhase("lobby"); setGameLog([]); setAllTickets({}); setYear(1); setWinCondition(null); }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
       </div>{anim}</div>
-  );
+    );
+  }
 
   return null;
 }
