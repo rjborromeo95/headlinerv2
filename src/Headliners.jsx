@@ -1003,15 +1003,67 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
 // ═══════════════════════════════════════════════════════════
 
 /** Find a valid hex to place an amenity (not on stage, not occupied) */
+// v152: identify the AI's aspirational target — the biggest headliner in their hand
+// that they can plausibly grow toward. Prefer Fame 4-5 artists (proper headliners);
+// fall back to the highest-fame artist available. Returns null if hand is empty.
+// Used by amenity picking (to bias toward the target's requirements) and tempt scoring
+// (to keep target artists on the AI's radar even when unaffordable this turn).
+function aiFindTargetHeadliner(pd) {
+  const hand = pd?.hand || [];
+  if (hand.length === 0) return null;
+  const heavyweights = hand.filter(a => (a.fame || 0) >= 4);
+  if (heavyweights.length > 0) return heavyweights.sort((x, y) => (y.fame || 0) - (x.fame || 0))[0];
+  return [...hand].sort((x, y) => (y.fame || 0) - (x.fame || 0))[0];
+}
+
+// v152: extract the AI's target-headliner amenity gaps, or null if no target.
+// Returns { target, gaps: { campsite, security, catering, portaloo } } where each gap
+// is max(0, target.cost - current). Zero-gap types are already satisfied.
+function aiTargetHeadlinerGaps(pd) {
+  const target = aiFindTargetHeadliner(pd);
+  if (!target) return null;
+  const a = pd?.amenities || {};
+  return {
+    target,
+    gaps: {
+      campsite: Math.max(0, (target.campCost || 0) - (a.campsite || 0)),
+      security: Math.max(0, (target.securityCost || 0) - (a.security || 0)),
+      catering: Math.max(0, (target.cateringCost || 0) - (a.catering || 0)),
+      portaloo: Math.max(0, (target.portalooCost || 0) - (a.portaloo || 0)),
+    },
+  };
+}
+
 function aiPickAmenityType(pd) {
   const a = pd.amenities || {};
   const c = (t) => a[t] || 0;
-  // Priority: security for events, campsites for tickets, then balance
+  // v152: council + target-headliner-aware scoring. The AI now bakes three signals into
+  // its amenity choice:
+  //   (1) generic-need floor (early-game infrastructure baseline)
+  //   (2) COUNCIL progression — heavy weight when the AI's own councils would activate/
+  //       maintain with this amenity type (was previously only in setup helper)
+  //   (3) TARGET HEADLINER gaps — weight amenities the biggest hand-heavyweight still
+  //       needs to legally play. Previously the AI would pile campsites when a Fame-5
+  //       headliner in their hand actually needed catering.
+  const councils = pd.councils || [];
+  const councilBonus = { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+  councils.forEach((cc, i) => {
+    if (!cc) return;
+    const cond = cc.condition;
+    // Bump amenities that this council still needs to fire this year. Weighted by
+    // the reward value roughly — fame/dice councils are worth more than refresh-type.
+    const weight = 6;
+    if (cond?.type === "thresholdSingle" || cond?.type === "thresholdFixed") councilBonus[cond.amenity] += weight;
+    else if (cond?.type === "thresholdPaired") { councilBonus[cond.a] += weight; councilBonus[cond.b] += weight; }
+    else if (cond?.type === "comparative") { councilBonus[cond.greater] += weight; councilBonus[cond.lesser] -= 4; }
+  });
+  const headlinerGaps = aiTargetHeadlinerGaps(pd);
+  const gapWeight = 10; // higher than council since it's about being able to PLAY the headliner
   const needs = [
-    { type: "security", need: Math.max(0, 3 - c("security")) * 10 + Math.random() * 3 },
-    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 8 + Math.random() * 3 },
-    { type: "catering", need: Math.max(0, 2 - c("catering")) * 6 + Math.random() * 3 },
-    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 5 + Math.random() * 3 },
+    { type: "security", need: Math.max(0, 3 - c("security")) * 4 + councilBonus.security + (headlinerGaps?.gaps.security || 0) * gapWeight + Math.random() * 2 },
+    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 3 + councilBonus.campsite + (headlinerGaps?.gaps.campsite || 0) * gapWeight + Math.random() * 2 },
+    { type: "catering", need: Math.max(0, 2 - c("catering")) * 3 + councilBonus.catering + (headlinerGaps?.gaps.catering || 0) * gapWeight + Math.random() * 2 },
+    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 3 + councilBonus.portaloo + (headlinerGaps?.gaps.portaloo || 0) * gapWeight + Math.random() * 2 },
   ];
   needs.sort((a, b) => b.need - a.need);
   return needs[0].type;
@@ -1106,14 +1158,17 @@ function aiAssignCouncilsToFields(keptIds) {
 // Heavy negatives prevent breaking active councils or filling empty-field councils.
 // Positive scores reward newly activating, maintaining, or progressing toward qualification.
 function aiScorePlacement(amenityType, field, council, year) {
-  if (!council) return 1; // no council on field → neutral baseline
+  if (!council) return 3; // no council on field → mild positive so empty fields still get some use
   const post = { ...field, [amenityType]: (field[amenityType] || 0) + 1 };
   const wasQualifying = councilQualifies(council, field, year);
   const willQualify = councilQualifies(council, post, year);
   if (wasQualifying && !willQualify) return -1000; // breaks active council — never
   if (!wasQualifying && willQualify) return 100; // newly activates
-  if (wasQualifying && willQualify) return 25; // maintains
-  // Both inactive — check progression toward goal
+  // v152: reduced from +25 to +3. Previously maintaining an already-active council beat
+  // progressing toward a NEW one (+10), so the AI dumped all amenities on one field and
+  // never activated the other two councils. Maintaining is worth barely anything since
+  // the council is already firing this year — spread to activate more.
+  if (wasQualifying && willQualify) return 3;
   const cond = council.condition;
   if (cond.type === "emptyField") return -800; // never break empty-field
   let relevant = false;
@@ -1123,7 +1178,7 @@ function aiScorePlacement(amenityType, field, council, year) {
     relevant = (cond.greater === amenityType || cond.lesser === amenityType);
     if (cond.lesser === amenityType) return -10; // worsens the ratio
   }
-  return relevant ? 10 : 2;
+  return relevant ? 15 : 2;
 }
 
 // AI picks the best field to place a given amenity. Iterates fields, picks max score.
@@ -1214,12 +1269,20 @@ function aiScoreArtistForCouncilProgress(artist, pd, year) {
 }
 
 /** AI decides what to do on its turn: returns { action, ... } */
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
   const totalAmenities = Object.values(counts).reduce((s, v) => s + v, 0);
   const fame = pd.fame || 0;
+  // v152: microtrend-awareness. When an unclaimed active microtrend exists whose genre
+  // matches an artist we could play, prefer that artist. Under alt-obj default this is
+  // the only way to actually claim a trend, so it's a meaningful bonus.
+  // v153: also considers the FORECAST microtrend if it's been passed in (caller signals
+  // whether this player is a non-leader who can claim forecast under anti-lead mode).
+  const activeGenreTrend = (activeMicrotrends || []).find(mt => mt?.claimedBy === null && mt?.kind === "genre");
+  const activeGenre = activeGenreTrend?.genre || null;
+  const forecastGenre = (forecastMicrotrend && forecastMicrotrend.kind === "genre") ? forecastMicrotrend.genre : null;
 
   // Only book from HAND (no direct pool booking)
   const bookedNames = new Set(sa.flat().map(a => a.name));
@@ -1245,15 +1308,21 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives) {
   });
   const hasOpenStage = openStages.length > 0;
 
-  // PRIORITY 1: Book from hand if possible — score now includes lineup objective fit + council impact
+  // PRIORITY 1: Book from hand if possible — score now includes lineup objective fit + council impact + microtrend match
   if (bookableHand.length > 0 && hasOpenStage) {
+    const microBonus = (a) => {
+      const genres = (a.genre || "").split(",").map(g => g.trim());
+      if (activeGenre && genres.includes(activeGenre)) return 6;
+      if (forecastGenre && genres.includes(forecastGenre)) return 5; // v153: forecast worth slightly less than active
+      return 0;
+    };
     bookableHand.sort((x, y) => {
       const xLineup = aiScoreArtistForLineupObjectives(x, pd, lineupObjectives) * 4;
       const xCouncil = aiScoreArtistForCouncilProgress(x, pd, year);
-      const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0) + xLineup + xCouncil;
+      const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0) + xLineup + xCouncil + microBonus(x);
       const yLineup = aiScoreArtistForLineupObjectives(y, pd, lineupObjectives) * 4;
       const yCouncil = aiScoreArtistForCouncilProgress(y, pd, year);
-      const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0) + yLineup + yCouncil;
+      const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0) + yLineup + yCouncil + microBonus(y);
       return yScore - xScore;
     });
     const pick = bookableHand[0];
@@ -1374,6 +1443,11 @@ export default function Headliners() {
   // encourages amenity diversity.
   const [strictComparativeMode, setStrictComparativeMode] = useState(true);
   const [temptMode, setTemptMode] = useState(true);
+  // v153: anti-lead mechanic. Non-leaders can also claim the FORECAST microtrend (not
+  // just the active one), giving trailing players a differential info advantage that
+  // helps prevent runaway leaders. Kicks in from Year 2 onwards (year 1 has no leader
+  // established yet); ties = no leader (everyone gets the perk).
+  const [antiLeadMechanics, setAntiLeadMechanics] = useState(true);
   const [totalYears, setTotalYears] = useState(4);
   const totalYearsRef = useRef(4);
   const stageOpenFameBonusRef = useRef(true);
@@ -1383,6 +1457,7 @@ export default function Headliners() {
   const agentMicrotrendClaimRef = useRef(false);
   const strictComparativeModeRef = useRef(true);
   const temptModeRef = useRef(true);
+  const antiLeadMechanicsRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
@@ -1391,6 +1466,7 @@ export default function Headliners() {
   useEffect(() => { agentMicrotrendClaimRef.current = agentMicrotrendClaim; }, [agentMicrotrendClaim]);
   useEffect(() => { strictComparativeModeRef.current = strictComparativeMode; setStrictCouncilMode(strictComparativeMode); }, [strictComparativeMode]);
   useEffect(() => { temptModeRef.current = temptMode; }, [temptMode]);
+  useEffect(() => { antiLeadMechanicsRef.current = antiLeadMechanics; }, [antiLeadMechanics]);
   const [playerData, setPlayerData] = useState({});
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
@@ -1945,6 +2021,30 @@ export default function Headliners() {
   // (which stores { raw, fame, ... } per pid per year). Updates only when `allTickets`
   // changes — i.e., at year end. Returns:
   //   { emoji, tooltip, color } per pid, or null if no star for that player yet.
+  // v153: anti-lead helpers. `getCurrentLeader` returns the pid of the unique player
+  // with the most cumulative tickets (summed across years in `allTickets`), or null if
+  // there's a tie for first OR nobody has scored yet (year 1). `canClaimForecast` is
+  // the gate for the forecast-microtrend perk: on for non-leaders from Year 2 onwards.
+  const getCurrentLeader = () => {
+    if (!antiLeadMechanicsRef.current) return null;
+    if ((yearRef.current || year || 1) < 2) return null;
+    const totals = players.map(p => ({
+      pid: p.id,
+      total: Object.values(allTickets[p.id] || {}).reduce((s, e) => s + (e?.raw || 0), 0),
+    }));
+    if (totals.every(t => t.total === 0)) return null;
+    totals.sort((a, b) => b.total - a.total);
+    if (totals.length >= 2 && totals[0].total === totals[1].total) return null; // tie → no leader
+    return totals[0].pid;
+  };
+  const canClaimForecast = (pid) => {
+    if (!antiLeadMechanicsRef.current) return false;
+    if ((yearRef.current || year || 1) < 2) return false;
+    const leader = getCurrentLeader();
+    if (leader === null) return true; // no leader = everyone is a non-leader
+    return pid !== leader;
+  };
+
   const winStars = useMemo(() => {
     const cond = winCondition;
     if (!cond) return {};
@@ -2875,27 +2975,49 @@ export default function Headliners() {
     if (isTempt) {
       if ((pd.fame || 0) < 1) { tryMicrotrend(); return; }
       if ((temptPlacements[pid] || []).length >= 2) return; // Already tempting max this turn
-      // Score every pool artist. Higher is better.
-      //   base: vp*2 + tickets
-      //   affordable bonus: +3 if we could book them straight to a stage right now
-      //   objective bonus: from scoreArtistForObjectives
-      //   contest penalty: -2 if another player has already tempted them (still worth if strong)
+      // v152: rebalanced tempt scoring. The AI now weighs "can I actually play this artist
+      // this turn?" much more heavily, chases active microtrends, and reserves headliner
+      // tempts for cases where the AI has already built up amenities close to what they'd need.
+      //   Signals:
+      //     base:        vp*2 + tickets (baseline artist value)
+      //     affordable:  +8 if playable NOW on any stage (up from +3 — this is the big win)
+      //     reach:       -3 per amenity we're short of (unless target-tier headliner)
+      //     target:      +5 if this is our best hand headliner or a Fame 4+ we don't have yet
+      //     microtrend:  +5 if artist genre matches the active microtrend
+      //     objective:   from scoreArtistForObjectives (unchanged)
+      //     contest:     -1 if another player has already tempted them (unchanged)
+      const target = aiFindTargetHeadliner(pd);
+      const activeMicrotrend = (microtrends || []).find(mt => mt.claimedBy === null);
+      const activeGenre = activeMicrotrend?.kind === "genre" ? activeMicrotrend.genre : null;
+      // v153: non-leader AIs also chase the forecast microtrend under anti-lead default.
+      const forecastGenre = (canClaimForecast(pid) && nextMicrotrend?.kind === "genre") ? nextMicrotrend.genre : null;
       const scored = artistPool.map(a => {
-        const base = (a.vp || 0) * 2 + (a.tickets || 0);
-        const affordable = canAffordArtist(a, pd) || canBookArtistAnywhere(a, pd);
-        const affBonus = affordable ? 3 : 0;
-        const objBonus = scoreArtistForObjectives(a, pid);
-        const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
-        // Don't double-tempt the same artist. Skip.
         const iAlreadyTempted = (temptPlacements[pid] || []).some(pl => pl.artistName === a.name);
         if (iAlreadyTempted) return { a, score: -999 };
-        const contestPenalty = alreadyTempted ? -1 : 0; // Still willing to contest, just prefers uncontested
-        return { a, score: base + affBonus + objBonus + contestPenalty };
+        const base = (a.vp || 0) * 2 + (a.tickets || 0);
+        const affordable = canBookArtistAnywhere(a, pd);
+        const affBonus = affordable ? 8 : 0;
+        // How many amenities are we short by? (Sum of gaps.)
+        const gap = Math.max(0, (a.campCost || 0) - (pd.amenities?.campsite || 0))
+                  + Math.max(0, (a.securityCost || 0) - (pd.amenities?.security || 0))
+                  + Math.max(0, (a.cateringCost || 0) - (pd.amenities?.catering || 0))
+                  + Math.max(0, (a.portalooCost || 0) - (pd.amenities?.portaloo || 0));
+        const isTargetHeadlinerTier = (a.fame || 0) >= 4 && (!target || (a.fame || 0) >= (target.fame || 0));
+        // Penalize unreachable artists UNLESS they're a target-tier headliner (worth
+        // stockpiling in hand for later). Non-headliners we can't play get -3 per gap.
+        const reachPenalty = affordable ? 0 : (isTargetHeadlinerTier ? -gap * 1 : -gap * 3);
+        const targetBonus = isTargetHeadlinerTier ? 5 : 0;
+        // Microtrend: matches if artist's genre list overlaps with active trend OR
+        // (for non-leaders under anti-lead) the forecast trend.
+        const artistGenres = (a.genre || "").split(",").map(g => g.trim());
+        const microBonus = (activeGenre && artistGenres.includes(activeGenre)) ? 5
+          : (forecastGenre && artistGenres.includes(forecastGenre)) ? 4 : 0;
+        const objBonus = scoreArtistForObjectives(a, pid);
+        const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
+        const contestPenalty = alreadyTempted ? -1 : 0;
+        return { a, score: base + affBonus + reachPenalty + targetBonus + microBonus + objBonus + contestPenalty };
       }).sort((x, y) => y.score - x.score);
       const best = scored[0];
-      // Only tempt if best score is worth spending 1 Fame on. Threshold ~5 = an artist worth
-      // 3-5 tickets, or 2-3 tickets with an objective match. Below that, save fame for stages
-      // or the microtrend claim.
       if (!best || best.score < 5) { tryMicrotrend(); return; }
       const poolIdx = artistPool.indexOf(best.a);
       if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
@@ -3987,10 +4109,14 @@ export default function Headliners() {
     // Check microtrends — first player to book matching genre claims a genre-kind microtrend.
     // Amenity-kind microtrends are claimed via amenity placement (handled separately).
     // v130: under tempt mode the claim payout is +2 Fame and 0 tickets; standard mode is +1 Fame + 1 ticket.
+    // v153: anti-lead mechanic — non-leaders can ALSO claim the forecast microtrend (nextMicrotrend)
+    // if the artist's genre matches it, giving trailing players an information/timing edge.
+    let claimedActive = false;
     setMicrotrends(prev => prev.map(mt => {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "genre") return mt;
       if (getGenres(artist.genre).includes(mt.genre)) {
+        claimedActive = true;
         const isTempt = temptModeRef.current;
         const fameGain = isTempt ? 2 : 1;
         const ticketGain = isTempt ? 0 : 1;
@@ -4014,6 +4140,37 @@ export default function Headliners() {
       }
       return mt;
     }));
+
+    // v153: anti-lead forecast claim. Only fires if the active trend was NOT already
+    // claimed by this play (a single artist play can't claim both — pick current first).
+    // Non-leaders (from Year 2 onwards) can claim the forecast trend when their play
+    // matches its genre. On claim, the forecast is retired: rotate a fresh trend into
+    // the forecast slot from the bag.
+    if (!claimedActive && canClaimForecast(pid) && nextMicrotrend && nextMicrotrend.kind === "genre") {
+      if (getGenres(artist.genre).includes(nextMicrotrend.genre)) {
+        const isTempt = temptModeRef.current;
+        const fameGain = isTempt ? 2 : 1;
+        const ticketGain = isTempt ? 0 : 1;
+        const claimedTrend = nextMicrotrend;
+        logTicketGain(pid, ticketGain, `Microtrend forecast: ${claimedTrend.genre}`);
+        logFameGain(pid, fameGain, "Matching a Forecast Microtrend");
+        setPlayerData(p => ({ ...p, [pid]: {
+          ...p[pid],
+          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+          bonusTickets: (p[pid].bonusTickets || 0) + ticketGain,
+          microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+        } }));
+        addLog("🎵 Microtrend", `${festival} claimed the forecast "${claimedTrend.genre}" microtrend (anti-lead) → +${fameGain} 🔥 Fame${ticketGain ? `, +${ticketGain} 🎟️ ticket` : ""}!`);
+        showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
+        bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
+        setTimeout(() => checkMidYearAchievements(pid), 80);
+        setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+        // Rotate a fresh forecast in from the bag. Pass claimedTrend as avoidEntry so the
+        // boundary guard prevents the same trend from popping back immediately.
+        const fresh = popMicrotrendFromBag(claimedTrend);
+        setNextMicrotrend(fresh);
+      }
+    }
 
     setTimeout(() => recalcTickets(), 50);
   }
@@ -4789,23 +4946,42 @@ export default function Headliners() {
         // AI: resolve pool agent claims at turn start
         const resolution = resolvePoolAgents(currentPlayerId);
         if (resolution && resolution.type === "uncontested") {
-          // Auto-book uncontested agent claim
+          // Auto-book uncontested agent/tempt claim.
+          // v151: per-stage bookability check. Previously auto-booked to openStages[0]
+          // with no amenity/fame validation — that let an AI who had tempted a Fame-5
+          // headliner (e.g. Silk Sonic, Kendrick Lamar) drop them onto a barebones stage
+          // at the start of their next turn, ignoring stage costs entirely.
           const artist = resolution.artist;
           const pd2 = playerData[currentPlayerId] || {};
           const openStages = (pd2.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-          if (openStages.length > 0) {
-            const si = openStages[0];
+          const bookable = openStages.filter(i => canBookArtistOnStage(artist, pd2, i));
+          const isTempt = temptModeRef.current;
+          if (bookable.length > 0) {
+            // Prefer a genre-match headliner stage when available.
+            const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, pd2, si));
+            const si = genreStage != null ? genreStage : bookable[0];
+            const viaGenre = genreStage != null && !canAffordArtist(artist, pd2);
             const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === artist.name);
             if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-            bookArtistToStage(artist, si, currentPlayerId, true);
-            exhaustAgent(currentPlayerId);
-            addLog("🕵️ AI Agent", `${currentPlayer?.festivalName} booked ${artist.name} (uncontested claim)`);
+            bookArtistToStage(artist, si, currentPlayerId, true, viaGenre);
+            // v151: also pop the resolved tempt placement so it doesn't re-fire.
+            if (isTempt) {
+              setTemptPlacements(prev => ({ ...prev, [currentPlayerId]: (prev[currentPlayerId] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
+            } else {
+              exhaustAgent(currentPlayerId);
+            }
+            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} booked ${artist.name} (uncontested claim)`);
           } else {
-            // No open stages — add to hand
-            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, artist] } }));
+            // Not legally bookable on any stage (or no open stages) — send to hand.
+            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), artist] } }));
             const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === artist.name);
             if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-            exhaustAgent(currentPlayerId);
+            if (isTempt) {
+              setTemptPlacements(prev => ({ ...prev, [currentPlayerId]: (prev[currentPlayerId] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
+            } else {
+              exhaustAgent(currentPlayerId);
+            }
+            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} sent ${artist.name} to hand (couldn't afford stage placement)`);
           }
         } else if (resolution && resolution.type === "contested") {
           // Roll the contest die and surface the result in the modal.
@@ -4852,7 +5028,8 @@ export default function Headliners() {
 
       // Decide and execute ONE action
       const pd = playerData[currentPlayerId] || {};
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives);
+      const forecastForAI = canClaimForecast(currentPlayerId) ? nextMicrotrend : null;
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       if (decision.action === "book") {
@@ -6870,6 +7047,13 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
             </div>
           </label>
+          <label onClick={() => setAntiLeadMechanics(!antiLeadMechanics)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: antiLeadMechanics ? "2px solid #fbbf24" : "1px solid #4c1d95", background: antiLeadMechanics ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${antiLeadMechanics ? "#fbbf24" : "#4c1d95"}`, background: antiLeadMechanics ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{antiLeadMechanics ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: antiLeadMechanics ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎯 Anti-Lead Mechanics</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{antiLeadMechanics ? "Default (v153) — from Year 2 onwards, non-leaders can also claim the FORECAST microtrend (not just the active one). The current leader is locked out of the forecast until they lose the lead. Ties = no leader." : "Off — only the active microtrend is claimable. Simpler, but no rubber-band mechanism."}</div>
+            </div>
+          </label>
           <label onClick={() => setStrictComparativeMode(!strictComparativeMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: strictComparativeMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: strictComparativeMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${strictComparativeMode ? "#fbbf24" : "#4c1d95"}`, background: strictComparativeMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{strictComparativeMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
@@ -7969,9 +8153,13 @@ export default function Headliners() {
                 const isAmenity = nmt.kind === "amenity";
                 const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[nmt.genre] || "#fbbf24");
                 const action = isAmenity ? `Place ${AMENITY_ICONS[nmt.amenity]} ${AMENITY_LABELS[nmt.amenity]}` : `Book a ${nmt.genre} artist`;
-                return <div style={{ marginTop: 6, padding: 4, borderRadius: 6, background: "rgba(15,14,26,0.5)", border: `1px dashed ${accent}60` }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>⏭ Coming up next</div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: accent, opacity: 0.85 }}>{action}</div>
+                // v153: anti-lead indicator. Genre-kind forecasts are claimable by the
+                // current player if they're a non-leader from Y2 onwards. Show a badge.
+                const canClaim = !isAmenity && canClaimForecast(currentPlayerId);
+                return <div style={{ marginTop: 6, padding: 4, borderRadius: 6, background: canClaim ? "rgba(74,222,128,0.10)" : "rgba(15,14,26,0.5)", border: canClaim ? `1px solid ${accent}` : `1px dashed ${accent}60` }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: canClaim ? "#4ade80" : "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{canClaim ? "🎯 Anti-Lead: Claimable" : "⏭ Coming up next"}</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: accent, opacity: canClaim ? 1 : 0.85 }}>{action}</div>
+                  {canClaim && <div style={{ fontSize: 8, color: "#94a3b8", marginTop: 2 }}>You're not the leader — match to claim early → +{temptMode ? 2 : 1} Fame</div>}
                 </div>;
               })()}
             </div>}
@@ -8116,9 +8304,11 @@ export default function Headliners() {
                 const isAmenity = nmt.kind === "amenity";
                 const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[nmt.genre] || "#fbbf24");
                 const action = isAmenity ? `Place ${AMENITY_ICONS[nmt.amenity]} ${AMENITY_LABELS[nmt.amenity]}` : `Book a ${nmt.genre} artist`;
-                return <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 8, background: "rgba(15,14,26,0.5)", border: `1px dashed ${accent}60` }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 2 }}>⏭ Coming up next</div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: accent, opacity: 0.85 }}>{action}</div>
+                const canClaim = !isAmenity && canClaimForecast(currentPlayerId);
+                return <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 8, background: canClaim ? "rgba(74,222,128,0.10)" : "rgba(15,14,26,0.5)", border: canClaim ? `1px solid ${accent}` : `1px dashed ${accent}60` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: canClaim ? "#4ade80" : "#64748b", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 2 }}>{canClaim ? "🎯 Anti-Lead: Claimable" : "⏭ Coming up next"}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: accent, opacity: canClaim ? 1 : 0.85 }}>{action}</div>
+                  {canClaim && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>Match to claim early → +{temptMode ? 2 : 1} Fame</div>}
                 </div>;
               })()}
             </div>}
