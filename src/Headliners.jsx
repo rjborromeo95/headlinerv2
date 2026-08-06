@@ -4784,7 +4784,9 @@ export default function Headliners() {
     }
 
     // Skip straight to objective view (no council step)
-    setSetupStep("viewObjective");
+    // v158: under altObjectivesMode=false (default), no artist objectives are picked —
+    // skip the misleading "you'll pick an objective" screen and jump to draft.
+    setSetupStep(altObjectivesModeRef.current ? "viewObjective" : "draftArtist");
     setSetupDraftOptions([]); setSetupDraftSelected([]);
     // v143: before setup begins, the first non-AI player picks the win condition. If
     // all players are AI, pick randomly and jump straight to setup.
@@ -4925,7 +4927,8 @@ export default function Headliners() {
       setSetupIndex(nextIdx); setSetupSelectedAmenity(null); setSetupSelectedField(null);
       setSetupDraftOptions([]); setSetupDraftSelected([]);
       setSetupCouncilSelected([]); setSetupCouncilAssignments({});
-      setSetupStep("viewObjective");
+      // v158: skip the viewObjective intro when artist objectives are disabled.
+      setSetupStep(altObjectivesModeRef.current ? "viewObjective" : "draftArtist");
     } else startGame();
   };
   const undoSetupPlacement = () => {
@@ -6944,11 +6947,34 @@ export default function Headliners() {
 
   const beginRoundEnd = () => {
     try {
-    // v154: Curated identity fires here — score based on artists played this year.
-    // Runs BEFORE the ticket calc so the +N/-3N adjustments land in bonusTickets in time
-    // to be included in this year's totals.
+    // v154/v159: Curated identity fires BEFORE the ticket calc so this year's tickets
+    // include the +N/−3N adjustment. Previously routed through applyIdentityAtYearEnd
+    // which used setPlayerData (async) — the update didn't land before beginRoundEnd's
+    // snapshot below, so Curated tickets were off by a year. Now we compute the delta,
+    // record it in the identityLog + ticketsLog, AND apply it inline to the snap used
+    // for this year's total.
+    const curatedDeltas = {};
     if (identitiesModeRef.current) {
-      players.forEach(p => applyIdentityAtYearEnd(p.id));
+      const y = yearRef.current || year || 1;
+      players.forEach(p => {
+        const idId = playerIdentitiesRef.current[p.id];
+        const identity = getIdentity(idId);
+        if (!identity || identity.type !== "curated") return;
+        const played = (yearEvents[p.id]?.artistsPlayedThisYear) || 0;
+        const delta = played <= 6 ? played : -3 * (played - 6);
+        if (delta === 0) return;
+        const source = played <= 6
+          ? `Identity: Curated (+1 per artist, ${played} played)`
+          : `Identity: Curated (${played - 6} artists over cap)`;
+        curatedDeltas[p.id] = { delta, source };
+        // Log for hover + panel
+        setIdentityLog(prev => ({ ...prev, [p.id]: [...(prev[p.id] || []), { source, amount: delta, year: y, kind: "ticket" }] }));
+        logTicketGain(p.id, delta, source);
+        // Update state so future years read the correct bonusTickets baseline
+        setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: Math.max(0, (prev[p.id]?.bonusTickets || 0) + delta) } }));
+        const pName = players.find(pl => pl.id === p.id)?.festivalName || "?";
+        addLog("🎭 Curated", `${pName} played ${played} artist${played === 1 ? "" : "s"} → ${delta > 0 ? "+" : ""}${delta} 🎟️ (${delta > 0 ? "under cap" : "over cap"})`);
+      });
     }
     // Collect all data BEFORE any setState
     const logs = [];
@@ -6959,6 +6985,14 @@ export default function Headliners() {
     // star-VP additions (and any other in-flight player state) are visible in the leaderboard.
     const latestPD = playerDataRef.current || playerData;
     const snap = JSON.parse(JSON.stringify(latestPD));
+    // v159: fold Curated deltas into the snap so the ticket calc below picks them up
+    // in the CURRENT year's total. Without this, the setPlayerData above hasn't flushed
+    // by the time we snapshot, so Curated tickets would land a year late.
+    Object.entries(curatedDeltas).forEach(([pid, { delta }]) => {
+      if (snap[pid]) {
+        snap[pid].bonusTickets = Math.max(0, (snap[pid].bonusTickets || 0) + delta);
+      }
+    });
     
     // PASS 1: Calculate tickets for all players
     const playerTickets = {};
@@ -8734,9 +8768,9 @@ export default function Headliners() {
               const council = ALL_COUNCILS.find(c => c.id === cid);
               if (!council) return null;
               return <div key={idx} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: "rgba(15,14,26,0.5)", border: "1px solid rgba(168,85,247,0.4)" }}>
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#a855f7", marginBottom: 2 }}>{council.name}</div>
-                <div style={{ fontSize: 11, color: "#c4b5fd", marginBottom: 3 }}>{council.description || ""}</div>
-                {council.rewardText && <div style={{ fontSize: 10, color: "#86efac", fontStyle: "italic" }}>Reward: {council.rewardText}</div>}
+                <div style={{ fontWeight: 800, fontSize: 13, color: "#a855f7", marginBottom: 4 }}>{council.name}</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3, lineHeight: 1.3 }}>📋 {formatCouncilCondition(council)}</div>
+                <div style={{ fontSize: 10, color: "#86efac", fontWeight: 600 }}>🎁 {formatCouncilReward(council)}</div>
               </div>;
             })}
           </div>}
@@ -8910,8 +8944,9 @@ export default function Headliners() {
               const council = ALL_COUNCILS.find(c => c.id === cid);
               if (!council) return null;
               return <div key={idx} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: "rgba(15,14,26,0.5)", border: "1px solid rgba(168,85,247,0.4)" }}>
-                <div style={{ fontWeight: 800, fontSize: 12, color: "#a855f7", marginBottom: 2 }}>{council.name}</div>
-                <div style={{ fontSize: 10, color: "#c4b5fd" }}>{council.description || ""}</div>
+                <div style={{ fontWeight: 800, fontSize: 12, color: "#a855f7", marginBottom: 3 }}>{council.name}</div>
+                <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 2, lineHeight: 1.3 }}>📋 {formatCouncilCondition(council)}</div>
+                <div style={{ fontSize: 9, color: "#86efac", fontWeight: 600 }}>🎁 {formatCouncilReward(council)}</div>
               </div>;
             })}
           </div>}
@@ -9327,8 +9362,9 @@ export default function Headliners() {
                   <div style={{ fontSize: 11, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1.2, fontWeight: 700, marginBottom: 4 }}>📜 Council Contract Satisfied</div>
                   <h2 style={{ color: "#e2e8f0", fontSize: 22, margin: "0 0 8px" }}>{claimerPlayer.festivalName}</h2>
                   <div style={{ padding: 12, borderRadius: 10, background: "rgba(168,85,247,0.10)", border: "1px solid rgba(168,85,247,0.35)", margin: "8px 0 12px" }}>
-                    <div style={{ fontWeight: 800, fontSize: 18, color: "#a855f7", marginBottom: 4 }}>{council.name}</div>
-                    <div style={{ fontSize: 12, color: "#c4b5fd", marginBottom: 6 }}>{council.description || ""}</div>
+                    <div style={{ fontWeight: 800, fontSize: 18, color: "#a855f7", marginBottom: 6 }}>{council.name}</div>
+                    <div style={{ fontSize: 12, color: "#c4b5fd", marginBottom: 4 }}>📋 {formatCouncilCondition(council)}</div>
+                    <div style={{ fontSize: 12, color: "#86efac", fontWeight: 600, marginBottom: 6 }}>🎁 {formatCouncilReward(council)}</div>
                     <div style={{ fontSize: 11, color: "#94a3b8" }}>Reward fires each year the condition remains met on Field {claim.fieldIdx + 1}.</div>
                   </div>
                   {isAI ? <div style={{ color: "#64748b", fontSize: 12, padding: 8 }}>⏳ AI deciding…</div> : <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
