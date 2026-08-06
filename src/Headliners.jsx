@@ -4148,22 +4148,10 @@ export default function Headliners() {
           (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
-      // "-2 VP. Draw an artist objective" (Missy Elliott) — append to player's objectives list
+      // v163: "draw an artist objective" (Missy Elliott) — the objective system was
+      // removed; the effect is a no-op now. Kept the -2 VP so the artist still has cost.
       if (el.includes("draw an artist objective")) {
-        // Draw from objective deck if available
-        if (objectiveDeck && objectiveDeck.length > 0) {
-          const newObj = objectiveDeck[Math.floor(Math.random() * objectiveDeck.length)];
-          // playerObjectives[pid] is an ARRAY of { obj, completed, vpAwarded } — append, don't overwrite.
-          // Previous bug: this assigned the raw newObj object directly, breaking subsequent .map() calls.
-          setPlayerObjectives(prev => {
-            const existing = Array.isArray(prev[pid]) ? prev[pid] : [];
-            return { ...prev, [pid]: [...existing, { obj: newObj, completed: false, vpAwarded: false }] };
-          });
-          addLog("Effect", `${artist.name}: Drew new artist objective: ${newObj.name}`);
-          showFloatingBonus(`📋 ${newObj.name}`, "#c4b5fd");
-        } else {
-          addLog("Effect", `${artist.name}: No objectives available to draw`);
-        }
+        addLog("Effect", `${artist.name}: (no-op — objective system removed)`);
       }
       // === -VP effects (Hip Hop risk/reward) ===
       // "-X VP" — generic VP loss patterns
@@ -5182,31 +5170,10 @@ export default function Headliners() {
       // Go directly to game — the alt-objective picker modal will pop over top for humans.
       setPhase("game");
     } else {
-      // Standard mode: offer first human player their old-style objective choice, auto-assign AI.
-      let firstHumanId = null;
-      for (const p of players) {
-        if (p.isAI) {
-          // Auto-assign: draw 2, pick random
-          const d = [...objectiveDeck];
-          if (d.length >= 2) {
-            const opt1 = d.pop(); const opt2 = d.pop();
-            const pick = Math.random() < 0.5 ? opt1 : opt2;
-            const reject = pick === opt1 ? opt2 : opt1;
-            setPlayerObjectives(prev => ({ ...prev, [p.id]: [{ obj: pick, completed: false, vpAwarded: false }] }));
-            setObjectiveDeck(shuffle([...d, reject]));
-            addLog(p.festivalName, `chose objective: ${pick.name}`);
-          }
-        } else if (!firstHumanId) {
-          firstHumanId = p.id;
-        }
-      }
-      if (firstHumanId !== null) {
-        offerObjectiveChoice(firstHumanId);
-        setPhase("objectiveChoice");
-      } else {
-        // All AI — skip to game
-        setPhase("game");
-      }
+      // v163: the OLD (pre-v135) objective picker used to fire here under standard mode
+      // — but there's no objective system in play anymore under the current defaults
+      // (stageOpenMode="trends", altObjectivesMode=false). Skip straight to game.
+      setPhase("game");
     }
     setTimeout(() => recalcTickets(), 50); addLogH("Year 1 Begins", "year"); addLogH(`${players[0]?.festivalName}'s Turn`, "turn");
     setShowYearAnnouncement(true);
@@ -8665,8 +8632,10 @@ export default function Headliners() {
         </div>
       </div>}
       
-      {/* Mid-game objective choice popup */}
-      {pendingObjectiveChoice && pendingObjectiveChoice.options.length >= 2 && pendingObjectiveChoice.playerId === currentPlayerId && !showTurnStart && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 910, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      {/* Mid-game objective choice popup — v163: hard-gated off. The old (pre-v135)
+          objective system is retired; this modal is preserved as dead code but cannot
+          fire under any current toggle configuration. */}
+      {false && pendingObjectiveChoice && pendingObjectiveChoice.options.length >= 2 && pendingObjectiveChoice.playerId === currentPlayerId && !showTurnStart && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 910, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
         <div style={{ ...card, textAlign: "center", maxWidth: 550, width: "100%", animation: "fadeSlideIn 0.3s" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 22, marginBottom: 4 }}>🎯 New Objective!</h2>
           <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>You completed an objective! Choose your next one:</p>
@@ -9410,7 +9379,7 @@ export default function Headliners() {
               </div>;
             })()}
 
-            {pendingObjectivePicker && pendingObjectivePicker.pid === currentPlayerId && (() => {
+            {false && pendingObjectivePicker && pendingObjectivePicker.pid === currentPlayerId && (() => {
               const p = pendingObjectivePicker;
               const opts = p.options.map(id => getAltObjective(id)).filter(Boolean);
               const sourceLabel = p.source === "starter" ? "Starter objective" : p.source === "failure" ? "Failure objective (bonus reward)" : "Year " + (yearRef.current || year || 2) + " objective";
