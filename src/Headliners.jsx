@@ -2374,7 +2374,39 @@ export default function Headliners() {
       const resolution = resolvePoolAgents(pid);
       if (!resolution) return;
       if (resolution.type === "uncontested") {
-        setPendingAgentArtist({ pid: resolution.pid, artist: resolution.artist });
+        // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
+        // modal renders during the AI's turn and the human user ends up picking a stage
+        // for the AI (with no amenity check per-stage, which is how Kendrick landed on
+        // a barebones field). Auto-book for AI, following the same rules as bookArtistToStage
+        // + per-stage amenity/genre-match validation.
+        const winner = players.find(p => p.id === resolution.pid);
+        const winPd = playerDataRef.current?.[resolution.pid] || playerData[resolution.pid] || {};
+        const artist = resolution.artist;
+        if (winner?.isAI) {
+          const stages = (winPd.stageArtists || []).map((sa, i) => ({ i, len: sa.length }));
+          const bookable = stages.filter(({ i }) => canBookArtistOnStage(artist, winPd, i)).map(x => x.i);
+          if (bookable.length > 0) {
+            const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
+            const chosen = genreStage != null ? genreStage : bookable[0];
+            const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
+            bookArtistToStage(artist, chosen, resolution.pid, true, viaGenre);
+            setTemptPlacements(prev => ({ ...prev, [resolution.pid]: (prev[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
+            const newPool = [...(artistPool || [])]; const idx = newPool.findIndex(a => a.name === artist.name);
+            if (idx >= 0) { newPool.splice(idx, 1); setArtistPool(newPool); }
+            addLog("💫 Tempt", `${winner.festivalName} booked ${artist.name} (uncontested)`);
+          } else {
+            // No playable stage — send to hand.
+            setPlayerData(prev => ({ ...prev, [resolution.pid]: { ...prev[resolution.pid], hand: [...(prev[resolution.pid]?.hand || []), artist] } }));
+            const newPool = [...(artistPool || [])]; const idx = newPool.findIndex(a => a.name === artist.name);
+            if (idx >= 0) { newPool.splice(idx, 1); setArtistPool(newPool); }
+            setTemptPlacements(prev => ({ ...prev, [resolution.pid]: (prev[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
+            addLog("💫 Tempt", `${winner.festivalName} sent ${artist.name} to hand (couldn't afford stage placement)`);
+          }
+          // Continue chain in case AI has more tempts to resolve
+          checkNextTempt(resolution.pid);
+          return;
+        }
+        setPendingAgentArtist({ pid: resolution.pid, artist });
       } else if (resolution.type === "contested") {
         const contest = resolveAgentContestRoll(resolution.contestants, resolution.artist, resolution.poolIdx);
         const humanInvolved = contest.contestantData.some(c => !players.find(p => p.id === c.pid)?.isAI);
@@ -2693,11 +2725,20 @@ export default function Headliners() {
       // queue for their next turn so they can choose then rather than auto-booking.
       const winnerIsAI = players.find(p => p.id === winnerId)?.isAI;
       if (winnerIsAI) {
-        // AI keeps auto-book — prefer genre-match headliner slot if available, else first open.
-        const genreStage = openStages.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
-        const chosenStage = genreStage != null ? genreStage : openStages[0];
-        const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
-        bookArtistToStage(artist, chosenStage, winnerId, true, viaGenre);
+        // v150: filter to stages the artist can actually be booked to (amenity or genre-match).
+        // Previously trusted openStages[0] which may not meet amenity reqs — allowed AI to
+        // land a Fame-5 headliner on a barebones stage.
+        const bookable = openStages.filter(si => canBookArtistOnStage(artist, winPd, si));
+        if (bookable.length === 0) {
+          // No legal placement — hand.
+          setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...(p[winnerId].hand || []), artist] } }));
+          addLog("💫 Contest", `${players.find(p => p.id === winnerId)?.festivalName} won ${artist.name} but has no legal stage — sent to hand`);
+        } else {
+          const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
+          const chosenStage = genreStage != null ? genreStage : bookable[0];
+          const viaGenre = genreStage != null && !canAffordArtist(artist, winPd);
+          bookArtistToStage(artist, chosenStage, winnerId, true, viaGenre);
+        }
       } else if (winnerId === currentPlayerId) {
         // Winner is the current human player — open the stage-picker modal now.
         setPendingAgentArtist({ pid: winnerId, artist });
@@ -8398,11 +8439,16 @@ export default function Headliners() {
             {pendingAgentArtist && (() => {
               const pa = pendingAgentArtist;
               const pd = playerData[pa.pid];
-              const openStages = (pd?.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+              // v150: filter to stages the artist can ACTUALLY be booked on (per amenities
+              // and/or genre-match). Previously the modal listed every open stage as clickable
+              // and bookArtistToStage trusted the caller — so a Fame-5 headliner could land
+              // on a barebones stage. Now bookable openStages only.
+              const allOpen = (pd?.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+              const openStages = allOpen.filter(i => canBookArtistOnStage(pa.artist, pd || {}, i));
               // v131: under tempt mode, verify the artist is actually playable given the
               // player's current fame + amenities (or genre-match). If not, force to hand.
               const isTempt = temptMode;
-              const playable = isTempt ? canBookArtistAnywhere(pa.artist, pd || {}) : (openStages.length > 0);
+              const playable = openStages.length > 0;
               // Under tempt mode, ALSO pop the resolved placement from temptPlacements as
               // part of any action that finalizes this modal.
               const popTemptPlacement = () => {
@@ -9280,7 +9326,27 @@ export default function Headliners() {
           </div>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={exportGameData} style={{ ...bs, padding: "12px 20px", fontSize: 14 }}>📊 Download Game Data</button>
-            <button onClick={() => { setPhase("lobby"); setGameLog([]); setAllTickets({}); setYear(1); setWinCondition(null); }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
+            <button onClick={() => {
+              // v150: comprehensive reset for Play Again. Previously only cleared phase,
+              // gameLog, allTickets, year, and winCondition — everything else (objectives,
+              // fame log, tempts, player data, deck, dice, contest queue, etc.) leaked
+              // into the next game. Now we wipe every game-scoped state variable.
+              setPhase("lobby"); setGameLog([]); setAllTickets({}); setYear(1); setWinCondition(null);
+              setActiveObjectives({}); setCompletedObjectives({}); setYearObjectiveAssignments({});
+              setPendingObjectivePickerQueue([]); setPendingObjectivePicker(null); setAltObjectiveDeck([]);
+              setPendingHandDiscard(null); setPendingContestPlacements([]); setPendingAgentArtist(null);
+              setAgentContest(null); setTemptPlacements({}); setAgentPlacements({});
+              setFameLog({}); setTicketsLog({}); setPlayerData({});
+              setArtistDeck([]); setArtistPool([]); setDiscardPile([]);
+              setPlayerObjectives({}); setYearEvents({}); setDicePool(0); setTurnOrder([]);
+              setCurrentPlayerIdx(0); setTurnsLeft({}); setActionTaken(false); setTurnAction(null);
+              setAgentBookedThisYear({}); setAgentExhausted({}); setShowTurnStart(false);
+              setSetupIndex(0); setSetupStep("viewObjective"); setMicrotrends([]); setNextMicrotrend(null);
+              setMicrotrendHistory([]); setFameGainQueue([]); setFloatingBonuses([]);
+              setYearEndEffectsList([]); setYearEndEffectIdx(0); setYearEndEffectsPlayer(0);
+              setRevealIndex(0); setLeaderboardRevealed(false); setTurnNumber(0);
+              setLastAction({}); setUndoSnapshot(null); setPendingDiceRoll(null);
+            }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
       </div>{anim}</div>
