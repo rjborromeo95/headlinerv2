@@ -58,6 +58,11 @@ const AMENITY_ICONS = { campsite: "⛺", portaloo: "🚽", security: "👮‍♀
 const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f87171", catering: "#fbbf24" };
 const DICE_OPTIONS = ["campsite", "portaloo", "security", "catering", "catering_or_portaloo", "security_or_campsite", "fame"];
 const TURNS_PER_YEAR = { 1: 6, 2: 7, 3: 8, 4: 9 };
+// v157: alternate "flat" schedule — every year is 6 turns. Toggled via the
+// flatTurnsMode state. Sim data (50 games × 3 players) showed the extra Y2/Y3
+// turns were being spent on amenity spam without generating additional artist
+// plays or tickets, so a flat schedule tightens the endgame without hurting scoring.
+const TURNS_PER_YEAR_FLAT = { 1: 6, 2: 6, 3: 6, 4: 6 };
 const FAME_MAX = 5;
 const GENRE_COLORS = { Pop: "#ec4899", Rock: "#ef4444", Electronic: "#94a3b8", "Hip Hop": "#f97316", Indie: "#22c55e", Funk: "#a855f7" };
 const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
@@ -1368,7 +1373,7 @@ function aiScoreArtistForCouncilProgress(artist, pd, year) {
 }
 
 /** AI decides what to do on its turn: returns { action, ... } */
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
@@ -1379,9 +1384,17 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // the only way to actually claim a trend, so it's a meaningful bonus.
   // v153: also considers the FORECAST microtrend if it's been passed in (caller signals
   // whether this player is a non-leader who can claim forecast under anti-lead mode).
+  // v156: under trends mode, microtrend claims and lineup completions ALSO progress
+  // stage-open credits (3 microtrends = 1 credit; 1 lineup 1st = 1 credit). Since opening
+  // a stage is worth ~15+ tickets over the game, we boost these bonuses meaningfully.
   const activeGenreTrend = (activeMicrotrends || []).find(mt => mt?.claimedBy === null && mt?.kind === "genre");
   const activeGenre = activeGenreTrend?.genre || null;
   const forecastGenre = (forecastMicrotrend && forecastMicrotrend.kind === "genre") ? forecastMicrotrend.genre : null;
+  // Under trends mode, an unopened stage is a strong future-value multiplier. Ballpark:
+  // opening a stage lets you play 3 more artists, worth ~5 tickets each = ~15 tickets.
+  // A microtrend = 1/3 of a credit ≈ 5 ticket-equivalent. A lineup 1st = 1 credit ≈ 15.
+  const stagesLeft = 3 - (pd.stages || []).length;
+  const trendsBoost = (trendsMode && stagesLeft > 0) ? 1 : 0;
 
   // Only book from HAND (no direct pool booking)
   const bookedNames = new Set(sa.flat().map(a => a.name));
@@ -1411,15 +1424,20 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   if (bookableHand.length > 0 && hasOpenStage) {
     const microBonus = (a) => {
       const genres = (a.genre || "").split(",").map(g => g.trim());
-      if (activeGenre && genres.includes(activeGenre)) return 6;
-      if (forecastGenre && genres.includes(forecastGenre)) return 5; // v153: forecast worth slightly less than active
+      // v156: under trends mode add ~5 ticket-equivalent for the credit-progress benefit.
+      const trendBoost = trendsBoost * 5;
+      if (activeGenre && genres.includes(activeGenre)) return 6 + trendBoost;
+      if (forecastGenre && genres.includes(forecastGenre)) return 5 + trendBoost;
       return 0;
     };
     bookableHand.sort((x, y) => {
-      const xLineup = aiScoreArtistForLineupObjectives(x, pd, lineupObjectives) * 4;
+      // v156: under trends mode, lineup 1st claims grant a full stage credit (~15 tickets).
+      // Boost lineup scoring multiplier from ×4 to ×8 when in trends mode with stages left.
+      const lineupWeight = 4 + (trendsBoost * 4);
+      const xLineup = aiScoreArtistForLineupObjectives(x, pd, lineupObjectives) * lineupWeight;
       const xCouncil = aiScoreArtistForCouncilProgress(x, pd, year);
       const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0) + xLineup + xCouncil + microBonus(x);
-      const yLineup = aiScoreArtistForLineupObjectives(y, pd, lineupObjectives) * 4;
+      const yLineup = aiScoreArtistForLineupObjectives(y, pd, lineupObjectives) * lineupWeight;
       const yCouncil = aiScoreArtistForCouncilProgress(y, pd, year);
       const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0) + yLineup + yCouncil + microBonus(y);
       return yScore - xScore;
@@ -1559,6 +1577,28 @@ export default function Headliners() {
   const [stageOpenMode, setStageOpenMode] = useState("trends");
   const stageOpenModeRef = useRef("trends");
   useEffect(() => { stageOpenModeRef.current = stageOpenMode; }, [stageOpenMode]);
+  // v157: flat 6/6/6/6 turn schedule toggle. Default OFF — original 6/7/8/9 escalating
+  // schedule. On → every year gets 6 turns. Trims late-game amenity spam without hurting
+  // total scoring (simulation showed near-identical tickets under both schedules).
+  const [flatTurnsMode, setFlatTurnsMode] = useState(false);
+  const flatTurnsModeRef = useRef(false);
+  useEffect(() => { flatTurnsModeRef.current = flatTurnsMode; }, [flatTurnsMode]);
+  // v158: Council Contracts mode. When ON, councils become a SHARED pool that all players
+  // race to satisfy. Each year, N-1 (min 2) contracts appear on the shared table. When a
+  // player satisfies a contract's condition on any of their fields, they get the option to
+  // CLAIM it (permanently attaches to that field, reward fires each year while satisfied).
+  // Fields start empty of councils under this mode — no setup draft. Unclaimed contracts
+  // discard at year end and a fresh batch is dealt.
+  // Also suppresses trending lineups when ON (contracts replace both as the interactive
+  // objective layer).
+  const [contractsMode, setContractsMode] = useState(false);
+  const contractsModeRef = useRef(false);
+  useEffect(() => { contractsModeRef.current = contractsMode; }, [contractsMode]);
+  // Shared contracts pool — array of council IDs currently up for grabs.
+  const [sharedContracts, setSharedContracts] = useState([]);
+  // Pending claim modal — set when a player just satisfied a contract on a specific field.
+  //   { pid, contractId, fieldIdx }
+  const [pendingContractClaim, setPendingContractClaim] = useState(null);
   // Per-player: which identity did they pick? { pid: identityId }
   const [playerIdentities, setPlayerIdentities] = useState({});
   const playerIdentitiesRef = useRef({});
@@ -1784,6 +1824,76 @@ export default function Headliners() {
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("🎪 Stage Open", `${pName} spent a stage credit → opened "${sName}"${grantOpeningFame ? " (+1 🔥 Fame)" : ""}!`);
     showFloatingBonus(`🎪 Opened ${sName}!`, "#4ade80");
+  };
+
+  // v158: contract helpers.
+  // Deal N-1 (min 2) shared contracts, avoiding duplicates and any already-claimed ones.
+  const dealSharedContracts = () => {
+    const n = Math.max(2, players.length - 1);
+    // Exclude any council currently claimed by any player (checking playerData for claimed contracts)
+    const claimedIds = new Set();
+    Object.values(playerDataRef.current || {}).forEach(pd => {
+      (pd.claimedContracts || []).forEach(cc => claimedIds.add(cc.contractId));
+    });
+    const pool = ALL_COUNCILS.filter(c => !claimedIds.has(c.id));
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const dealt = shuffled.slice(0, n).map(c => c.id);
+    setSharedContracts(dealt);
+    if (dealt.length > 0) {
+      const names = dealt.map(id => ALL_COUNCILS.find(c => c.id === id)?.name || id).join(", ");
+      addLog("📜 Council Contracts", `Shared contracts revealed: ${names}`);
+    }
+  };
+  // Check whether any shared contract is newly satisfied on the given player+field.
+  // If so, queue a pending claim modal (only 1 at a time; more resolve as this one clears).
+  const checkContractsForPlayer = (pid, fieldIdx) => {
+    if (!contractsModeRef.current) return;
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    // Skip if the player already has 3 claimed contracts (one per field)
+    const claimed = pd.claimedContracts || [];
+    if (claimed.length >= 3) return;
+    // Skip fields that already have a claimed contract attached
+    if (claimed.some(cc => cc.fieldIdx === fieldIdx)) return;
+    const field = (pd.fields || [])[fieldIdx];
+    if (!field) return;
+    // Find first shared contract whose condition is satisfied on this field
+    const currentShared = sharedContractsRef.current || [];
+    for (const cid of currentShared) {
+      const council = ALL_COUNCILS.find(c => c.id === cid);
+      if (!council) continue;
+      if (councilQualifies(council, field, yearRef.current || year || 1)) {
+        setPendingContractClaim({ pid, contractId: cid, fieldIdx });
+        return; // only one modal at a time
+      }
+    }
+  };
+  const sharedContractsRef = useRef([]);
+  useEffect(() => { sharedContractsRef.current = sharedContracts; }, [sharedContracts]);
+
+  // Claim resolution — attach contract to field, remove from shared pool.
+  // v158: writes into pd.councils[fieldIdx] directly so the existing council-reward
+  // machinery (checkAndClaimCouncilDice, checkAndClaimCouncilAmenity, year-end evaluation)
+  // fires naturally without needing a parallel reward system.
+  const claimContract = (pid, contractId, fieldIdx) => {
+    const council = ALL_COUNCILS.find(c => c.id === contractId);
+    if (!council) { setPendingContractClaim(null); return; }
+    setPlayerData(prev => {
+      const cur = prev[pid] || {};
+      const claimed = [...(cur.claimedContracts || []), { contractId, fieldIdx }];
+      const councils = [...(cur.councils || [null, null, null])];
+      councils[fieldIdx] = council;
+      return { ...prev, [pid]: { ...cur, claimedContracts: claimed, councils } };
+    });
+    setSharedContracts(prev => prev.filter(id => id !== contractId));
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("📜 Contract Claimed", `${pName} claimed "${council.name}" on Field ${fieldIdx + 1}!`);
+    showFloatingBonus(`📜 ${council.name}!`, "#a855f7");
+    setPendingContractClaim(null);
+    setTimeout(() => checkContractsForPlayer(pid, fieldIdx), 250);
+  };
+  const declineContract = () => {
+    // Player chose not to claim. Contract stays on the shared table.
+    setPendingContractClaim(null);
   };
 
   // v154: identity effect helpers. Every ticket/fame movement caused by a player's
@@ -3302,9 +3412,12 @@ export default function Headliners() {
         const targetBonus = isTargetHeadlinerTier ? 5 : 0;
         // Microtrend: matches if artist's genre list overlaps with active trend OR
         // (for non-leaders under anti-lead) the forecast trend.
+        // v156: under trends mode, matching a trend also progresses stage credits — bump.
         const artistGenres = (a.genre || "").split(",").map(g => g.trim());
-        const microBonus = (activeGenre && artistGenres.includes(activeGenre)) ? 5
-          : (forecastGenre && artistGenres.includes(forecastGenre)) ? 4 : 0;
+        const stagesLeftForBump = 3 - ((pd.stages || []).length);
+        const trendBump = (stageOpenModeRef.current === "trends" && stagesLeftForBump > 0) ? 5 : 0;
+        const microBonus = (activeGenre && artistGenres.includes(activeGenre)) ? (5 + trendBump)
+          : (forecastGenre && artistGenres.includes(forecastGenre)) ? (4 + trendBump) : 0;
         const objBonus = scoreArtistForObjectives(a, pid);
         const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
         const contestPenalty = alreadyTempted ? -1 : 0;
@@ -4651,10 +4764,24 @@ export default function Headliners() {
     setPlayerObjectives({}); // empty — will be filled after draft choices
     setObjectiveDeck(objDeck);
 
-    // Initialize 3 Lineup Objectives
-    drawInitialLineupObjectives();
+    // v158: under contracts mode, suppress trending lineups (contracts replace them
+    // as the shared interactive objective layer). Otherwise, initialize 3 lineups.
+    if (!contractsModeRef.current) drawInitialLineupObjectives();
     setActiveGoals([]);
     setGoalProgress({});
+    // v158: deal the initial shared contracts (N-1, min 2). Refreshed at each year end.
+    if (contractsModeRef.current) {
+      const n = Math.max(2, players.length - 1);
+      const shuffled = [...ALL_COUNCILS].sort(() => Math.random() - 0.5);
+      const dealt = shuffled.slice(0, n).map(c => c.id);
+      setSharedContracts(dealt);
+      if (dealt.length > 0) {
+        const names = dealt.map(id => ALL_COUNCILS.find(c => c.id === id)?.name || id).join(", ");
+        addLog("📜 Council Contracts", `Shared contracts for Year 1: ${names}`);
+      }
+    } else {
+      setSharedContracts([]);
+    }
 
     // Skip straight to objective view (no council step)
     setSetupStep("viewObjective");
@@ -4733,7 +4860,13 @@ export default function Headliners() {
     const newR5 = draftRemaining5;
     setDraftRemaining0(newR0); setDraftRemaining5(newR5);
     setSetupDraftOptions([]); setSetupDraftSelected([]);
-    setSetupStep("councilDraft");
+    // v158: under contracts mode, skip council draft/assign entirely — fields start blank
+    // and councils appear as shared contracts.
+    if (contractsModeRef.current) {
+      setSetupStep("pickAmenity");
+    } else {
+      setSetupStep("councilDraft");
+    }
   };
 
   // ─── Council Draft + Assign ───
@@ -4891,7 +5024,8 @@ export default function Headliners() {
     setArtistDeck(fullDeck); setArtistPool(pool); setDiscardPile([]);
 
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
-    const tl = {}; order.forEach(id => { tl[id] = TURNS_PER_YEAR[1]; }); setTurnsLeft(tl);
+    const schedule = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR;
+    const tl = {}; order.forEach(id => { tl[id] = schedule[1]; }); setTurnsLeft(tl);
     setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     setAgentBookedThisYear({});
     // Reset year-scoped latches
@@ -5248,6 +5382,19 @@ export default function Headliners() {
       if (showTurnStart) {
         setShowTurnStart(false);
         setTurnNumber(prev => prev + 1);
+        // v155: AI auto-spends banked stage-open credits under trends mode. Every credit
+        // becomes a new stage immediately — the AI has no reason to bank them, since it
+        // just plays whatever's optimal on whatever stages it has open.
+        if (stageOpenModeRef.current === "trends") {
+          const pdSnap = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+          let credits = pdSnap.stageOpenCredits || 0;
+          let stages = (pdSnap.stages || []).length;
+          while (credits > 0 && stages < 3) {
+            spendStageCredit(currentPlayerId);
+            credits--;
+            stages++;
+          }
+        }
         // AI: resolve pool agent claims at turn start
         const resolution = resolvePoolAgents(currentPlayerId);
         if (resolution && resolution.type === "uncontested") {
@@ -5334,7 +5481,8 @@ export default function Headliners() {
       // Decide and execute ONE action
       const pd = playerData[currentPlayerId] || {};
       const forecastForAI = canClaimForecast(currentPlayerId) ? nextMicrotrend : null;
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI);
+      const trendsMode = stageOpenModeRef.current === "trends";
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       if (decision.action === "book") {
@@ -5539,6 +5687,9 @@ export default function Headliners() {
     setLastActionFor(currentPlayerId, `built ${AMENITY_LABELS[amenityType]} ${AMENITY_ICONS[amenityType] || ""}`);
     checkSecurityVPBonus(currentPlayerId, amenityType);
     claimAmenityMicrotrend(currentPlayerId, amenityType);
+    // v158: check whether this placement satisfies any shared contract on this field.
+    // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
+    setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
     sfx.placeAmenity();
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
     setTurnAction(null);
@@ -7067,6 +7218,23 @@ export default function Headliners() {
     diceTriggerLatchRef.current = {};
     setDiscardPile(newDiscard);
     addLog("🔄 New Year", "All stages cleared — artists moved to discard pile");
+    // v158: refresh shared contracts for the new year — discard unclaimed, deal fresh N-1
+    // (min 2). Claimed contracts remain on their fields and keep firing rewards yearly.
+    if (contractsModeRef.current) {
+      const claimedIds = new Set();
+      players.forEach(p => {
+        (playerDataRef.current?.[p.id]?.claimedContracts || []).forEach(cc => claimedIds.add(cc.contractId));
+      });
+      const n = Math.max(2, players.length - 1);
+      const pool = ALL_COUNCILS.filter(c => !claimedIds.has(c.id));
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      const dealt = shuffled.slice(0, n).map(c => c.id);
+      setSharedContracts(dealt);
+      if (dealt.length > 0) {
+        const names = dealt.map(id => ALL_COUNCILS.find(c => c.id === id)?.name || id).join(", ");
+        addLog("📜 Council Contracts", `Year ${ny} contracts: ${names}`);
+      }
+    }
 
     // Replace any fully claimed lineup objectives (both 1st and 2nd taken)
     lineupObjectives.forEach((lo, idx) => {
@@ -7077,7 +7245,7 @@ export default function Headliners() {
 
     const sorted = [...players].sort((a, b) => (allTickets[a.id]?.[year] || 0) - (allTickets[b.id]?.[year] || 0));
     const no = sorted.map(p => p.id); setTurnOrder(no); setCurrentPlayerIdx(0);
-    const tl = {}; no.forEach(id => { tl[id] = TURNS_PER_YEAR[ny]; }); setTurnsLeft(tl);
+    const tl = {}; const sch = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR; no.forEach(id => { tl[id] = sch[ny]; }); setTurnsLeft(tl);
     setDice(rollDice()); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     // (Star Dice phase replaces old per-year event drawing)
     // Microtrends now persist across years — they get replaced as players claim them.
@@ -7400,6 +7568,20 @@ export default function Headliners() {
             <div style={{ flex: 1 }}>
               <div style={{ color: stageOpenMode === "trends" ? "#4ade80" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎪 Trend-based stage opening</div>
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenMode === "trends" ? "Default (v155) — every 3 microtrends OR 1 trending lineup 1st claim earns a stage-open credit. Spend credits on your turn to open a new stage (max 3). Replaces artist objectives." : "Off — legacy artist-objective progression. Pick objectives, complete them to open stages."}</div>
+            </div>
+          </label>
+          <label onClick={() => setContractsMode(!contractsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: contractsMode ? "2px solid #a855f7" : "1px solid #4c1d95", background: contractsMode ? "rgba(168,85,247,0.10)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${contractsMode ? "#a855f7" : "#4c1d95"}`, background: contractsMode ? "#a855f7" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{contractsMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: contractsMode ? "#a855f7" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>📜 Council Contracts (shared)</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{contractsMode ? "On (v158) — councils are a SHARED pool. Each year, N-1 (min 2) contracts appear on the table. First to satisfy on one of their fields can claim it permanently. Skips council draft phase. Trending lineups disabled." : "Off — legacy per-player council draft. Each player drafts 3 of 5 dealt at setup."}</div>
+            </div>
+          </label>
+          <label onClick={() => setFlatTurnsMode(!flatTurnsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: flatTurnsMode ? "2px solid #4ade80" : "1px solid #4c1d95", background: flatTurnsMode ? "rgba(74,222,128,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${flatTurnsMode ? "#4ade80" : "#4c1d95"}`, background: flatTurnsMode ? "#4ade80" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{flatTurnsMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: flatTurnsMode ? "#4ade80" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>⏱️ Flat turn schedule (6/6/6/6)</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{flatTurnsMode ? "On (v157) — every year has 6 turns. Tightens the endgame and cuts down late-year amenity spam." : "Off — original 6/7/8/9 escalating schedule. Later years have more turns."}</div>
             </div>
           </label>
           <label onClick={() => setIdentitiesMode(!identitiesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: identitiesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: identitiesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
@@ -8546,7 +8728,19 @@ export default function Headliners() {
           {/* ── Always-visible Trending Lineups panel (desktop). The trending-lineup race is
               the game's most engaging mechanic — promoted out of the tab system so players
               always see what they're racing for. ── */}
-          {!isMobile && lineupObjectives.length > 0 && <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)", boxShadow: "0 0 18px rgba(251,191,36,0.12)" }}>
+          {!isMobile && contractsMode && sharedContracts.length > 0 && <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(168,85,247,0.15), rgba(124,58,237,0.08))", border: "2px solid rgba(168,85,247,0.5)", boxShadow: "0 0 18px rgba(168,85,247,0.15)" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#a855f7", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>📜 Council Contracts — First to satisfy claims!</div>
+            {sharedContracts.map((cid, idx) => {
+              const council = ALL_COUNCILS.find(c => c.id === cid);
+              if (!council) return null;
+              return <div key={idx} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: "rgba(15,14,26,0.5)", border: "1px solid rgba(168,85,247,0.4)" }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: "#a855f7", marginBottom: 2 }}>{council.name}</div>
+                <div style={{ fontSize: 11, color: "#c4b5fd", marginBottom: 3 }}>{council.description || ""}</div>
+                {council.rewardText && <div style={{ fontSize: 10, color: "#86efac", fontStyle: "italic" }}>Reward: {council.rewardText}</div>}
+              </div>;
+            })}
+          </div>}
+          {!isMobile && !contractsMode && lineupObjectives.length > 0 && <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)", boxShadow: "0 0 18px rgba(251,191,36,0.12)" }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>🎯 Trending Lineups</div>
             {lineupObjectives.map((lo, oi) => {
               if (!lo) return null;
@@ -8710,7 +8904,18 @@ export default function Headliners() {
 
           {/* Always-visible Trending Lineups card on mobile too — the game's most important
               shared state, doesn't belong hidden in a collapsed accordion. */}
-          {isMobile && lineupObjectives.length > 0 && <div style={{ marginTop: 8, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)" }}>
+          {isMobile && contractsMode && sharedContracts.length > 0 && <div style={{ marginTop: 8, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(168,85,247,0.15), rgba(124,58,237,0.08))", border: "2px solid rgba(168,85,247,0.5)" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#a855f7", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>📜 Council Contracts</div>
+            {sharedContracts.map((cid, idx) => {
+              const council = ALL_COUNCILS.find(c => c.id === cid);
+              if (!council) return null;
+              return <div key={idx} style={{ padding: 8, borderRadius: 10, marginBottom: 6, background: "rgba(15,14,26,0.5)", border: "1px solid rgba(168,85,247,0.4)" }}>
+                <div style={{ fontWeight: 800, fontSize: 12, color: "#a855f7", marginBottom: 2 }}>{council.name}</div>
+                <div style={{ fontSize: 10, color: "#c4b5fd" }}>{council.description || ""}</div>
+              </div>;
+            })}
+          </div>}
+          {isMobile && !contractsMode && lineupObjectives.length > 0 && <div style={{ marginTop: 8, padding: 10, borderRadius: 12, background: "linear-gradient(135deg, rgba(251,191,36,0.12), rgba(236,72,153,0.08))", border: "2px solid rgba(251,191,36,0.4)" }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, textAlign: "center" }}>🎯 Trending Lineups</div>
             {lineupObjectives.map((lo, oi) => {
               if (!lo) return null;
@@ -9104,6 +9309,32 @@ export default function Headliners() {
                     ))}
                   </div>
                   <p style={{ color: "#64748b", fontSize: 10, marginTop: 14, textAlign: "center", fontStyle: "italic" }}>The objective you don't pick goes back into the shared deck.</p>
+                </div>
+              </div>;
+            })()}
+
+            {pendingContractClaim && (() => {
+              const claim = pendingContractClaim;
+              const council = ALL_COUNCILS.find(c => c.id === claim.contractId);
+              const claimerPlayer = players.find(p => p.id === claim.pid);
+              if (!council || !claimerPlayer) return null;
+              const isAI = claimerPlayer.isAI;
+              if (isAI) {
+                setTimeout(() => claimContract(claim.pid, claim.contractId, claim.fieldIdx), 800);
+              }
+              return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 950, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                <div style={{ ...card, maxWidth: 480, textAlign: "center", border: "2px solid #a855f7" }}>
+                  <div style={{ fontSize: 11, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1.2, fontWeight: 700, marginBottom: 4 }}>📜 Council Contract Satisfied</div>
+                  <h2 style={{ color: "#e2e8f0", fontSize: 22, margin: "0 0 8px" }}>{claimerPlayer.festivalName}</h2>
+                  <div style={{ padding: 12, borderRadius: 10, background: "rgba(168,85,247,0.10)", border: "1px solid rgba(168,85,247,0.35)", margin: "8px 0 12px" }}>
+                    <div style={{ fontWeight: 800, fontSize: 18, color: "#a855f7", marginBottom: 4 }}>{council.name}</div>
+                    <div style={{ fontSize: 12, color: "#c4b5fd", marginBottom: 6 }}>{council.description || ""}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8" }}>Reward fires each year the condition remains met on Field {claim.fieldIdx + 1}.</div>
+                  </div>
+                  {isAI ? <div style={{ color: "#64748b", fontSize: 12, padding: 8 }}>⏳ AI deciding…</div> : <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button onClick={() => claimContract(claim.pid, claim.contractId, claim.fieldIdx)} style={{ ...bp, padding: "10px 20px", background: "linear-gradient(135deg, rgba(168,85,247,0.25), rgba(124,58,237,0.15))", border: "2px solid #a855f7" }}>Claim it 📜</button>
+                    <button onClick={declineContract} style={{ ...bs, padding: "10px 20px" }}>Skip</button>
+                  </div>}
                 </div>
               </div>;
             })()}
@@ -10010,6 +10241,7 @@ export default function Headliners() {
               setAgentContest(null); setTemptPlacements({}); setAgentPlacements({});
               setFameLog({}); setTicketsLog({}); setPlayerData({});
               setPlayerIdentities({}); setIdentityLog({}); setIdentityDealt({}); setIdentityPickerIdx(0);
+              setSharedContracts([]); setPendingContractClaim(null);
               setArtistDeck([]); setArtistPool([]); setDiscardPile([]);
               setPlayerObjectives({}); setYearEvents({}); setDicePool(0); setTurnOrder([]);
               setCurrentPlayerIdx(0); setTurnsLeft({}); setActionTaken(false); setTurnAction(null);
