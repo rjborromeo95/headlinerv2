@@ -4701,6 +4701,19 @@ export default function Headliners() {
           requiredFace = "__anyAmenity__";
         }
         if (requiredFace) {
+          // Parse the paired benefit ONCE — used in both branches (no match → offered
+          // as the reward if reroll succeeds; has match → passed into the picker modal).
+          let benefit = null;
+          const fameMatch = eff.match(/\+(\d+)\s+Fame\b/i);
+          const ticketMatch = eff.match(/\+(\d+)\s+ticket(?:\s+sales?|s?)?/i);
+          if (el.includes("play another artist from your hand")) {
+            benefit = { type: "chainPlay" };
+          } else if (fameMatch) {
+            benefit = { type: "fame", amount: parseInt(fameMatch[1]) };
+          } else if (ticketMatch) {
+            benefit = { type: "ticket", amount: parseInt(ticketMatch[1]) };
+          }
+
           const has = requiredFace === "__anyAmenity__"
             ? currentDice.some(d => d !== "fame" && d !== "stage")
             : currentDice.some(d => d === requiredFace);
@@ -4709,7 +4722,8 @@ export default function Headliners() {
             addLog("Effect", `${artist.name}: no ${faceLabel} die on the pool — effect does not fire`);
             // v177: for humans, surface this via an acknowledgment modal that shows
             // the current dice pool so the player can see what was (and wasn't) there.
-            // AI just logs and moves on.
+            // v181: also include filterType and benefit so a reroll from the modal can
+            // transition to the picker if the new roll has a matching die.
             const isAIcheck = players.find(p => p.id === pid)?.isAI;
             if (!isAIcheck) {
               setPendingEffect({
@@ -4719,6 +4733,9 @@ export default function Headliners() {
                   ? "No amenity die (Campsite / Portaloo / Security / Catering) was in the shared pool."
                   : `No ${faceLabel === "fame" ? "🔥 Fame" : faceLabel === "stage" ? "🎪 Stage" : `${AMENITY_ICONS[faceLabel] || ""} ${AMENITY_LABELS[faceLabel] || faceLabel}`} die was in the shared pool.`,
                 diceSnapshot: [...currentDice],
+                filterType: requiredFace,
+                benefit: benefit,
+                hasRerolled: false,
               });
               setPendingEffectPid(pid);
             }
@@ -4730,23 +4747,12 @@ export default function Headliners() {
           // auto-remove the first match and the paired benefit handlers will fire.
           const isAI = players.find(p => p.id === pid)?.isAI;
           if (!isAI) {
-            // Parse the paired benefit from the effect string so we know what to
-            // fire if the player accepts.
-            let benefit = null;
-            const fameMatch = eff.match(/\+(\d+)\s+Fame\b/i);
-            const ticketMatch = eff.match(/\+(\d+)\s+ticket(?:\s+sales?|s?)?/i);
-            if (el.includes("play another artist from your hand")) {
-              benefit = { type: "chainPlay" };
-            } else if (fameMatch) {
-              benefit = { type: "fame", amount: parseInt(fameMatch[1]) };
-            } else if (ticketMatch) {
-              benefit = { type: "ticket", amount: parseInt(ticketMatch[1]) };
-            }
             setPendingEffect({
               type: "removeDieFromPool",
               artistName: artist.name,
               filterType: requiredFace,
               benefit: benefit,
+              hasRerolled: false,
             });
             setPendingEffectPid(pid);
             addLog("Effect", `${artist.name}: choose a die to remove from the pool (or decline)`);
@@ -6195,16 +6201,57 @@ export default function Headliners() {
         scheduleNext(600); return;
       }
       if (pe.type === "signArtist") {
+        // v180: proper AI handler for the sign-artist effect (Ayle, etc.).
+        // Previously referenced an undefined `eligible` — code threw at runtime, the
+        // pending effect stayed open, and the human UI wound up making the pick
+        // on the AI's behalf. Now the AI:
+        //   1. Filters out pool artists agent-claimed by other players
+        //   2. Scores each candidate by AI's own strategy (identity match, microtrend
+        //      match, immediate playability, base value)
+        //   3. If canRefresh AND the current pool's best score is weak, spends the
+        //      refresh option first, then signs on the NEXT tick from the fresh pool
+        //   4. Otherwise signs the highest-scoring eligible card; falls back to deck
+        //      draw if the pool is fully agent-blocked
         const remaining = pe.signCount || 1;
+        const aiIdentity = getIdentity(playerIdentitiesRef.current?.[pid]);
+        const aiIdentityGenres = aiIdentity?.inGenres || [];
+        const activeMicrotrend = (microtrends || []).find(mt => mt.claimedBy === null);
+        const activeGenre = activeMicrotrend?.kind === "genre" ? activeMicrotrend.genre : null;
+        const forecastGenre = (canClaimForecast(pid) && nextMicrotrend?.kind === "genre") ? nextMicrotrend.genre : null;
+
+        const scoreArtist = (a) => {
+          const genres = (a.genre || "").split(",").map(g => g.trim());
+          let score = (a.vp || 0) * 2 + (a.tickets || 0);
+          if (a.effect) score += 3;
+          if (aiIdentityGenres.length > 0 && genres.some(g => aiIdentityGenres.includes(g))) score += 8;
+          if (activeGenre && genres.includes(activeGenre)) score += 6;
+          else if (forecastGenre && genres.includes(forecastGenre)) score += 4;
+          if ((pd.fame || 0) >= (a.fame || 0) && canAffordArtist(a, pd)) score += 8;
+          return score;
+        };
+
+        const eligible = (artistPool || []).filter(a => !isAgentClaimedByOther(a.name, pid));
+        const bestScore = eligible.length > 0 ? Math.max(...eligible.map(scoreArtist)) : 0;
+        const REFRESH_THRESHOLD = 12;
+
+        // Refresh path: spend the refresh option if it's available and the current
+        // best is uninspiring. Defer signing to the next AI tick so the freshly-refilled
+        // pool becomes visible via state, and canRefresh is now false so we won't loop.
+        if (pe.canRefresh && bestScore < REFRESH_THRESHOLD) {
+          refreshPool();
+          addLog("🤖 AI", `${pe.artistName}: refreshing the pool for a better sign target`);
+          setPendingEffect({ ...pe, canRefresh: false });
+          scheduleNext(400); return;
+        }
+
         if (eligible.length > 0) {
-          const best = [...eligible].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0];
+          const best = [...eligible].sort((a, b) => scoreArtist(b) - scoreArtist(a))[0];
           const idx = artistPool.indexOf(best);
           const np = [...artistPool]; np.splice(idx, 1);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, best] } }));
           addLog("🤖 AI", `Signed ${best.name} from pool`);
           refillPool(np);
         } else if (artistDeck.length > 0) {
-          // No eligible pool artist — fall back to deck
           const drawn = drawFromDeck(1);
           if (drawn.length > 0) {
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...p[pid].hand, drawn[0]] } }));
@@ -6715,6 +6762,11 @@ export default function Headliners() {
       showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+      // v180: bug fix — amenity microtrends were missing the stage-progress grant that
+      // genre microtrends have. Every microtrend claim (genre OR amenity) should push
+      // the player toward opening a new stage under trends mode. Same call the genre
+      // path uses at line ~5419.
+      checkMicrotrendCredit(pid);
       return { ...mt, claimedBy: pid };
     }));
   };
@@ -9339,15 +9391,58 @@ export default function Headliners() {
                     style={{
                       padding: "10px 14px", borderRadius: 8,
                       border: match ? "2px solid #4ade80" : "1px solid #2a2a4a",
-                      background: match ? "rgba(74,222,128,0.15)" : "rgba(15,14,26,0.4)",
+                      background: match ? "rgba(15,14,26,0.4)" : "rgba(15,14,26,0.4)",
                       color: match ? "#e9d5ff" : "#475569",
                       cursor: match ? "pointer" : "not-allowed",
                       fontSize: 13, fontWeight: 600,
                       opacity: match ? 1 : 0.4,
+                      background: match ? "rgba(74,222,128,0.15)" : "rgba(15,14,26,0.4)",
                     }}
                   >{faceLabel(face)}</button>;
                 })}
               </div>
+              {/* v181: reroll button — offered when the shared pool has ≤2 amenity dice
+                  (fame/stage don't count) AND the player hasn't already used their reroll
+                  for this effect. Rerolling replaces the shared dice pool visible to all
+                  players. Player still needs to click a matching die to remove afterward. */}
+              {(() => {
+                const amenityCount = currentDice.filter(d => d !== "fame" && d !== "stage").length;
+                const canReroll = !pe.hasRerolled && amenityCount <= 2;
+                if (!canReroll) return null;
+                return <div style={{ marginBottom: 10 }}>
+                  <button onClick={() => {
+                    const fresh = rollDice();
+                    setDice(fresh);
+                    addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool (was low on amenities)`);
+                    sfx.rollDice && sfx.rollDice();
+                    // Check if the new pool still has a matching die for this effect.
+                    // If not, transition to the aborted modal instead of leaving the
+                    // player in a picker with nothing to pick.
+                    const has = pe.filterType === "__anyAmenity__"
+                      ? fresh.some(d => d !== "fame" && d !== "stage")
+                      : fresh.some(d => d === pe.filterType);
+                    if (!has) {
+                      const faceLabel = pe.filterType === "__anyAmenity__" ? "amenity" : pe.filterType;
+                      setPendingEffect({
+                        type: "effectAborted",
+                        artistName: pe.artistName,
+                        reason: pe.filterType === "__anyAmenity__"
+                          ? "After reroll: still no amenity die in the shared pool."
+                          : `After reroll: still no ${faceLabel === "fame" ? "🔥 Fame" : faceLabel === "stage" ? "🎪 Stage" : `${AMENITY_ICONS[faceLabel] || ""} ${AMENITY_LABELS[faceLabel] || faceLabel}`} die was rolled.`,
+                        diceSnapshot: fresh,
+                        filterType: pe.filterType,
+                        benefit: pe.benefit,
+                        hasRerolled: true, // reroll already spent
+                      });
+                    } else {
+                      setPendingEffect({ ...pe, hasRerolled: true });
+                    }
+                  }} style={{ ...bp, fontSize: 11, padding: "6px 14px", background: "linear-gradient(135deg, #f97316, #ea580c)" }}>
+                    🎲 Reroll shared dice (only {amenityCount} amenit{amenityCount === 1 ? "y" : "ies"} available)
+                  </button>
+                </div>;
+              })()}
+              {pe.hasRerolled && <p style={{ color: "#64748b", fontSize: 10, marginBottom: 8, fontStyle: "italic" }}>Reroll already used for this effect.</p>}
               <button onClick={() => {
                 addLog("Effect", `${pe.artistName}: declined the trade — no die removed, no bonus`);
                 setPendingEffect(null); setPendingEffectPid(null);
@@ -9497,18 +9592,46 @@ export default function Headliners() {
           // v177: acknowledgment modal for effects that couldn't fire (e.g. required
           // die not present in the shared pool). Shows a snapshot of the dice pool at
           // that moment so the player can see what was actually available.
+          // v181: added a reroll button — clicking it rerolls the shared dice pool
+          // (visible to all players from that point on) and re-checks whether the
+          // effect can now fire. If yes, transitions to the picker modal. If no,
+          // stays on this modal with the new snapshot. One reroll per effect firing.
           const snapshot = pe.diceSnapshot || [];
           const faceLabel = (face) => {
             if (face === "fame") return "🔥";
             if (face === "stage") return "🎪";
             return AMENITY_ICONS[face] || "?";
           };
+          const canReroll = !pe.hasRerolled && pe.filterType;
+          const handleReroll = () => {
+            const fresh = rollDice();
+            setDice(fresh);
+            addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool`);
+            sfx.rollDice && sfx.rollDice();
+            // Check if the new pool has a matching die
+            const has = pe.filterType === "__anyAmenity__"
+              ? fresh.some(d => d !== "fame" && d !== "stage")
+              : fresh.some(d => d === pe.filterType);
+            if (has) {
+              // Transition to the picker modal — same benefit, but reroll is now used
+              setPendingEffect({
+                type: "removeDieFromPool",
+                artistName: pe.artistName,
+                filterType: pe.filterType,
+                benefit: pe.benefit,
+                hasRerolled: true,
+              });
+            } else {
+              // Still no match. Update the snapshot; disable further rerolls.
+              setPendingEffect({ ...pe, diceSnapshot: fresh, hasRerolled: true });
+            }
+          };
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 500, width: "100%" }}>
               <h3 style={{ color: "#fbbf24", marginBottom: 8 }}>ℹ️ {pe.artistName}: effect could not fire</h3>
               <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>{pe.reason}</p>
               {snapshot.length > 0 && <>
-                <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 6 }}>The shared dice pool at that moment:</p>
+                <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 6 }}>The shared dice pool{pe.hasRerolled ? " (after reroll)" : ""}:</p>
                 <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 14 }}>
                   {snapshot.map((face, di) => <div key={di} style={{
                     padding: "8px 10px", borderRadius: 6, background: "rgba(15,14,26,0.6)",
@@ -9517,7 +9640,11 @@ export default function Headliners() {
                 </div>
               </>}
               {snapshot.length === 0 && pe.diceSnapshot !== undefined && <p style={{ color: "#475569", fontSize: 11, fontStyle: "italic", marginBottom: 14 }}>(the pool was empty)</p>}
-              <button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bp, fontSize: 12 }}>OK</button>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                {canReroll && <button onClick={handleReroll} style={{ ...bp, fontSize: 12, background: "linear-gradient(135deg, #f97316, #ea580c)" }}>🎲 Reroll shared dice</button>}
+                <button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bs, fontSize: 12 }}>OK</button>
+              </div>
+              {pe.hasRerolled && <p style={{ color: "#64748b", fontSize: 10, marginTop: 8, fontStyle: "italic" }}>Reroll already used for this effect.</p>}
             </div>
           </div>;
         }
@@ -9977,6 +10104,11 @@ export default function Headliners() {
             // Check if this player has an agent on a pool artist to resolve
             const resolution = resolvePoolAgents(currentPlayerId);
             if (resolution && resolution.type === "uncontested") {
+              // v180: fire uncontested tempt bonus (+2 Fame) at this entry point too.
+              // This path was missed in v179 — it's the human turn-start "Let's Go!"
+              // path, which resolves pool agents but wasn't calling the helper. Now
+              // all three uncontested resolution entry points fire it.
+              grantUncontestedTemptBonus(resolution.pid);
               setPendingAgentArtist({ pid: resolution.pid, artist: resolution.artist });
             } else if (resolution && resolution.type === "contested") {
               const contest = resolveAgentContestRoll(resolution.contestants, resolution.artist, resolution.poolIdx);
