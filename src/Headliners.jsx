@@ -1178,8 +1178,16 @@ function aiPickAmenityType(pd) {
 }
 
 /** AI decides which die to pick from available dice */
-function aiPickDie(dice, pd, preferredType, wantsStageProgress) {
+function aiPickDie(dice, pd, preferredType, wantsStageProgress, wantsFameThisTurn) {
   const wanted = preferredType || aiPickAmenityType(pd);
+  // v187: on Year 1 Turn 1 when the AI is at Fame 1 and wants to reach Fame 2,
+  // the fame die takes priority over everything else. Guarantees the AI hits Fame 2
+  // by end of turn whenever a fame die is in the roll.
+  if (wantsFameThisTurn) {
+    for (let i = 0; i < dice.length; i++) {
+      if (dice[i] === "fame") return { idx: i, type: "fame" };
+    }
+  }
   // v166: if the AI wants stage progress (1 stage, or 2 stages with a stage credit banked
   // that's close to another), prefer a stage die when one is available.
   if (wantsStageProgress) {
@@ -1612,6 +1620,23 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     }
   }
 
+  // v187: Year 1 Turn 1 priority — everyone starts at Fame 1 now (v187 rule change).
+  // On the AI's very first turn (Year 1, no booked artists yet), aggressively steer
+  // toward reaching Fame 2 by end of turn:
+  //   1. If a matching-genre artist is playable and would claim the active microtrend,
+  //      the standard Priority 1 book path already handles this well (microtrend score
+  //      bonus is baked in). No override needed for that case.
+  //   2. If NO book path leads to Fame 2 but the shared dice have a fame die OR a
+  //      microtrend-amenity die, we prefer amenity/fame-die actions over pool draws.
+  //   3. Free tempt at end of turn (aiDeployAgent) covers the fallback case — with
+  //      starting Fame 1, the AI can always tempt as its free action even if the main
+  //      action doesn't reach Fame 2.
+  // The steering below biases the amenity preferredType toward the fame die when
+  // (a) it's the first turn AND (b) the AI is at Fame 1 with no direct route to +Fame
+  // from a book action, so the amenity dice pick prioritizes fame-face over amenity-face.
+  const isFirstTurn = (year === 1) && (sa.flat().length === 0);
+  const wantsFameThisTurn = isFirstTurn && fame < 2;
+
   // PRIORITY 3: Get amenities — only consider artists we could actually book (fame-wise)
   // v172: boost amenity types needed by microtrend-matching or identity-matching artists
   // in hand — the AI actively works toward playing an artist that satisfies its goals.
@@ -1633,7 +1658,7 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     neededForArtists[activeAmenity] += 4;
   }
 
-  return { action: "amenity", preferredType: Object.entries(neededForArtists).sort((a, b) => b[1] - a[1])[0]?.[0] };
+  return { action: "amenity", preferredType: Object.entries(neededForArtists).sort((a, b) => b[1] - a[1])[0]?.[0], wantsFameThisTurn };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3034,7 +3059,10 @@ export default function Headliners() {
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
-      return Math.max(0, Math.min(2 - tempts.length, pd.fame || 0));
+      // v188: tempt cap reduced from 2/turn to 1/turn. Each tempt is now a single-Fame
+      // commitment that returns +1 Fame net if uncontested. Removes the double-tempt
+      // snowball that only benefited high-Fame players.
+      return Math.max(0, Math.min(1 - tempts.length, pd.fame || 0));
     }
     const pd = playerData[pid] || {};
     const y = year || 1;
@@ -3651,7 +3679,7 @@ export default function Headliners() {
     // factors in live objectives + a stronger willingness to challenge other players' tempts.
     if (isTempt) {
       if ((pd.fame || 0) < 1) { tryMicrotrend(); return; }
-      if ((temptPlacements[pid] || []).length >= 2) return; // Already tempting max this turn
+      if ((temptPlacements[pid] || []).length >= 1) return; // v188: 1 tempt/turn cap (was 2)
       // v152: rebalanced tempt scoring. The AI now weighs "can I actually play this artist
       // this turn?" much more heavily, chases active microtrends, and reserves headliner
       // tempts for cases where the AI has already built up amenities close to what they'd need.
@@ -5643,7 +5671,7 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 0, baseFame: 0, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 1, baseFame: 1, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -6644,7 +6672,10 @@ export default function Headliners() {
           addLog("🤖 AI", "Booking failed — fallback to amenity");
           const cd2 = dice.length > 0 ? dice : rollDice();
           if (cd2.length > 0) {
-            const pk = aiPickDie(cd2, pd, null);
+            // v187: preserve Turn 1 fame-die priority even in the book-fallback path
+            const isFirstTurnFB = (year === 1) && ((pd.stageArtists || []).flat().length === 0);
+            const wantsFameFB = isFirstTurnFB && (pd.fame || 0) < 2;
+            const pk = aiPickDie(cd2, pd, null, false, wantsFameFB);
             const nd2 = [...cd2]; nd2.splice(pk.idx, 1); setDice(nd2);
             if (pk.type === "fame") {
               logFameGain(currentPlayerId, 1, "Effect");
@@ -6721,7 +6752,7 @@ export default function Headliners() {
       const aiTotalAm = (aiAmen.campsite || 0) + (aiAmen.portaloo || 0) + (aiAmen.security || 0) + (aiAmen.catering || 0);
       const wantsStageProgress = aiStages < 3 && aiCredits === 0
         && (aiStages < 2 || aiTotalAm >= 4);
-      const pick = aiPickDie(currentDice, pd, decision.preferredType, wantsStageProgress);
+      const pick = aiPickDie(currentDice, pd, decision.preferredType, wantsStageProgress, decision.wantsFameThisTurn);
       const dieVal = currentDice[pick.idx];
 
       if (dieVal === "fame" || pick.type === "fame") {
@@ -8819,7 +8850,7 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${temptMode ? "#fbbf24" : "#4c1d95"}`, background: temptMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{temptMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: temptMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>💫 Implement tempt function</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "Default (v143) — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 2/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "Default (v143) — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 1/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket."}</div>
             </div>
           </label>
         </div>
