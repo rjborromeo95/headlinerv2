@@ -32,7 +32,11 @@ const AMENITY_TYPES = ["campsite", "security", "catering", "portaloo"];
 // Each player has 3 fields. Each field is an independent counter object.
 // pd.fields[i] is the source of truth for amenity placement; pd.amenities is the
 // derived sum across fields, kept in sync by computeTicketsForPlayer / setPlayerData.
-const FIELD_COUNT = 3;
+// v189: single amenity area (was 3 fields). Councils are gone, and per-field placement
+// was primarily driven by council fit. Now amenities pool into one running total per
+// type. `fields` remains a 1-element array so all existing code that iterates fields
+// or reads fields[i][type] continues to work without a broader refactor.
+const FIELD_COUNT = 1;
 function emptyField() { return { campsite: 0, security: 0, catering: 0, portaloo: 0 }; }
 function emptyFields() { return Array.from({ length: FIELD_COUNT }, emptyField); }
 function sumFields(fields) {
@@ -1052,54 +1056,34 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           </div>;
         })}
       </div>}
-      {/* Three Fields side by side — sized to match stage card proportions */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, minmax(0, 1fr))`, gap: 10, maxWidth: 620, margin: "0 auto" }}>
-        {fields.map((field, fIdx) => {
-          const fieldTotal = (field?.campsite || 0) + (field?.security || 0) + (field?.catering || 0) + (field?.portaloo || 0);
-          const disabled = fieldsDisabled && fieldsDisabled(fIdx, field);
-          const clickable = pickFieldMode && !disabled;
-          const council = (pd?.councils || [])[fIdx];
-          const councilActive = council ? councilQualifies(council, field, year || 1) : false;
-          return <div key={fIdx} onClick={() => clickable && onFieldClick && onFieldClick(fIdx)} style={{
-            padding: compact ? 10 : 12,
+      {/* v189: single unified amenity area — no fields, no councils */}
+      <div style={{ display: "flex", justifyContent: "center", maxWidth: 620, margin: "0 auto" }}>
+        {(() => {
+          const totals = am;
+          const anyAmenity = totalAmenities > 0;
+          return <div style={{
+            padding: compact ? 10 : 14,
             borderRadius: 12,
-            background: clickable ? "rgba(124,58,237,0.18)" : "rgba(15,14,26,0.6)",
-            border: clickable ? "2px solid #a78bfa" : "1px solid rgba(124,58,237,0.2)",
+            background: "rgba(15,14,26,0.6)",
+            border: "1px solid rgba(124,58,237,0.2)",
             display: "flex",
             flexDirection: "column",
-            minWidth: 0,
-            cursor: clickable ? "pointer" : (disabled ? "not-allowed" : "default"),
-            opacity: disabled ? 0.45 : 1,
-            boxShadow: clickable ? "0 0 12px rgba(167,139,250,0.5)" : "none",
-            animation: clickable ? "affordPulse 1.5s ease-in-out infinite" : "none",
+            width: "100%",
             transition: "all 0.2s",
           }}>
-            <div style={{ fontSize: 10, color: clickable ? "#fbbf24" : "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6, textAlign: "center" }}>Field {fIdx + 1}{clickable ? " ↓" : ""}</div>
-            {council && <div style={{
-              marginBottom: 8,
-              padding: 6,
-              borderRadius: 6,
-              background: councilActive ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.06)",
-              border: councilActive ? "1px solid #22c55e80" : "1px solid #ef444440",
-              boxShadow: councilActive ? "0 0 8px rgba(34,197,94,0.25)" : "none",
-              transition: "all 0.3s",
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: councilActive ? "#86efac" : "#fca5a5", marginBottom: 2 }}>{councilActive ? "✓" : "✗"} {council.name}</div>
-              <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3 }}>{formatCouncilCondition(council)}</div>
-              <div style={{ fontSize: 9, color: councilActive ? "#4ade80" : "#94a3b8", lineHeight: 1.3, marginTop: 2, opacity: councilActive ? 1 : 0.7 }}>{formatCouncilReward(council)}</div>
-            </div>}
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, textAlign: "center" }}>🎪 Festival Grounds</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {AMENITY_TYPES.map(t => {
-                const c = field?.[t] || 0;
-                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 7px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 22 : 26 }}>
-                  <span style={{ fontSize: 11, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
-                  {c > 0 && renderFieldTokens(field, t)}
+                const c = totals[t] || 0;
+                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 28 : 32 }}>
+                  <span style={{ fontSize: 12, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                  {c > 0 && renderFieldTokens({ [t]: c }, t)}
                 </div>;
               })}
             </div>
-            {fieldTotal === 0 && <div style={{ fontSize: 10, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
+            {!anyAmenity && <div style={{ fontSize: 10, color: "#475569", textAlign: "center", marginTop: 8, fontStyle: "italic" }}>no amenities yet</div>}
           </div>;
-        })}
+        })()}
       </div>
       {totalAmenities === 0 && stages.length === 0 && <div style={{ textAlign: "center", color: "#6b7280", fontSize: 12, padding: 20 }}>No stages or amenities yet</div>}
     </div>
@@ -1306,15 +1290,8 @@ function aiScorePlacement(amenityType, field, council, year) {
 
 // AI picks the best field to place a given amenity. Iterates fields, picks max score.
 function aiPickFieldForAmenity(pd, amenityType, year) {
-  const fields = pd?.fields || [];
-  const councils = pd?.councils || [];
-  if (fields.length === 0) return 0;
-  let bestIdx = 0, bestScore = -Infinity;
-  for (let i = 0; i < fields.length; i++) {
-    const score = aiScorePlacement(amenityType, fields[i], councils[i], year);
-    if (score > bestScore) { bestScore = score; bestIdx = i; }
-  }
-  return bestIdx;
+  // v189: with councils removed, all amenities go to field 0 (the single festival area).
+  return 0;
 }
 
 // AI picks the best STARTING amenity considering its councils. Weight amenities that progress
@@ -1689,88 +1666,64 @@ export default function Headliners() {
   //   interactive one where Fame is a genuinely spendable resource. Off preserves the
   //   traditional agent economy for backward compat.
   // totalYears: how many rounds the game lasts. 4 is standard; 3 is a shorter format.
-  const [stageOpenFameBonus, setStageOpenFameBonus] = useState(true);
-  const [preRoundArtistDraws, setPreRoundArtistDraws] = useState(false);
-  const [stagesProvideNoFame, setStagesProvideNoFame] = useState(false);
-  const [agentEffectsEnabled, setAgentEffectsEnabled] = useState(true);
-  // Allow agents to be placed on the active microtrend for an immediate +1 Fame.
-  // Solves the year-1 "stuck at 0 fame" problem when no one can organically match the
-  // active microtrend. Placing the agent advances the microtrend (forecast promotes).
-  const [agentMicrotrendClaim, setAgentMicrotrendClaim] = useState(false);
-  // When ON, comparative councils (X > Y) require Y ≥ 1 as well — meaning both amenities
-  // must be present and X > Y. So 1 catering vs 0 security no longer qualifies; you need
-  // at least 2 catering + 1 security (total 3 amenities) for "Muscle Food" to fire.
-  // v143: default ON now — strict comparison prevents cheap 1>0 qualification and
-  // encourages amenity diversity.
-  const [strictComparativeMode, setStrictComparativeMode] = useState(true);
-  const [temptMode, setTemptMode] = useState(true);
-  // v153: anti-lead mechanic. Non-leaders can also claim the FORECAST microtrend (not
-  // just the active one), giving trailing players a differential info advantage that
-  // helps prevent runaway leaders. Kicks in from Year 2 onwards (year 1 has no leader
-  // established yet); ties = no leader (everyone gets the perk).
-  const [antiLeadMechanics, setAntiLeadMechanics] = useState(true);
-  // v154: festival identities. Each player picks one of 3 dealt identities before setup.
-  // Toggle is off by default — it's a big flavor addition, opt-in per game.
-  const [identitiesMode, setIdentitiesMode] = useState(false);
-  const identitiesModeRef = useRef(false);
+  // v189: MAJOR SIMPLIFICATION — councils gone, fields gone, dual microtrend tracks.
+  // Permanent (no longer toggles): tempt mode, anti-lead, identities, flat turns.
+  // Removed entirely: strictComparativeMode, contractsMode, agentMicrotrendClaim,
+  // agent effects (were tied to councils), preRoundArtistDraws.
+  // Two remaining toggles: 4-year mode (with 6/7/8/8 schedule) + stage-open fame bonus.
+  const [stageOpenFameBonus, setStageOpenFameBonus] = useState(false); // v189: default OFF (was ON)
+  const [temptMode, setTemptMode] = useState(true); // permanent — kept as state var so refs still work
+  const [antiLeadMechanics, setAntiLeadMechanics] = useState(true); // permanent
+  const [identitiesMode, setIdentitiesMode] = useState(true); // v189: default ON, permanent
+  const identitiesModeRef = useRef(true);
   useEffect(() => { identitiesModeRef.current = identitiesMode; }, [identitiesMode]);
-  // v155: stage-opening mode. Default "trends" — 3 cumulative microtrend claims OR
-  // 1 trending lineup 1st-place claim → grants 1 stage-open credit. Credits are banked
-  // in playerData.stageOpenCredits and can be spent on the player's turn to open a new
-  // stage (max 3). Alternative "objectives" mode uses the legacy artist objectives system.
+  // Stage-open mode — trends only now (councils gone means no alternative path).
   const [stageOpenMode, setStageOpenMode] = useState("trends");
   const stageOpenModeRef = useRef("trends");
   useEffect(() => { stageOpenModeRef.current = stageOpenMode; }, [stageOpenMode]);
-  // v157: flat 6/6/6/6 turn schedule toggle. Default OFF — original 6/7/8/9 escalating
-  // schedule. On → every year gets 6 turns. Trims late-game amenity spam without hurting
-  // total scoring (simulation showed near-identical tickets under both schedules).
-  const [flatTurnsMode, setFlatTurnsMode] = useState(false);
-  const flatTurnsModeRef = useRef(false);
+  // v189: flat turn schedule is now default for 3-year games. 4-year mode uses 6/7/8/8.
+  const [flatTurnsMode, setFlatTurnsMode] = useState(true);
+  const flatTurnsModeRef = useRef(true);
   useEffect(() => { flatTurnsModeRef.current = flatTurnsMode; }, [flatTurnsMode]);
-  // v158: Council Contracts mode. When ON, councils become a SHARED pool that all players
-  // race to satisfy. Each year, N-1 (min 2) contracts appear on the shared table. When a
-  // player satisfies a contract's condition on any of their fields, they get the option to
-  // CLAIM it (permanently attaches to that field, reward fires each year while satisfied).
-  // Fields start empty of councils under this mode — no setup draft. Unclaimed contracts
-  // discard at year end and a fresh batch is dealt.
-  // Also suppresses trending lineups when ON (contracts replace both as the interactive
-  // objective layer).
-  const [contractsMode, setContractsMode] = useState(false);
-  const contractsModeRef = useRef(false);
-  useEffect(() => { contractsModeRef.current = contractsMode; }, [contractsMode]);
-  // Shared contracts pool — array of council IDs currently up for grabs.
-  const [sharedContracts, setSharedContracts] = useState([]);
-  // Pending claim modal — set when a player just satisfied a contract on a specific field.
-  //   { pid, contractId, fieldIdx }
-  const [pendingContractClaim, setPendingContractClaim] = useState(null);
   // Per-player: which identity did they pick? { pid: identityId }
   const [playerIdentities, setPlayerIdentities] = useState({});
   const playerIdentitiesRef = useRef({});
   useEffect(() => { playerIdentitiesRef.current = playerIdentities; }, [playerIdentities]);
   // Per-player log of every ticket/fame movement caused by their identity.
-  //   { pid: [{ source, amount, year, kind: "ticket"|"fame" }] }
-  // Feeds the identity panel + shows up in ticketsLog/fameLog aggregated hovers.
   const [identityLog, setIdentityLog] = useState({});
   // Identity picker state — during phase "identityChoice", each player picks 1 of 3.
   const [identityDealt, setIdentityDealt] = useState({}); // { pid: [id, id, id] }
   const [identityPickerIdx, setIdentityPickerIdx] = useState(0);
-  const [totalYears, setTotalYears] = useState(4);
-  const totalYearsRef = useRef(4);
-  const stageOpenFameBonusRef = useRef(true);
+  const [totalYears, setTotalYears] = useState(3); // v189: default 3 (was 4)
+  const totalYearsRef = useRef(3);
+  const stageOpenFameBonusRef = useRef(false);
   const preRoundArtistDrawsRef = useRef(false);
-  const stagesProvideNoFameRef = useRef(false);
-  const agentEffectsEnabledRef = useRef(true);
+  // v189: retained as always-false constants (removed toggles) so downstream code that
+  // reads these refs continues to work without touching every callsite.
+  const preRoundArtistDraws = false;
+  const stagesProvideNoFame = false;
+  const agentEffectsEnabled = false;
+  const agentMicrotrendClaim = false;
+  const strictComparativeMode = false;
+  const contractsMode = false;
+  const contractsModeRef = useRef(false);
+  const strictComparativeModeRef = useRef(false);
   const agentMicrotrendClaimRef = useRef(false);
-  const strictComparativeModeRef = useRef(true);
+  const agentEffectsEnabledRef = useRef(false);
+  const stagesProvideNoFameRef = useRef(false);
+  // No-op setters so existing UI code doesn't crash if it references them
+  const setPreRoundArtistDraws = () => {};
+  const setStagesProvideNoFame = () => {};
+  const setAgentEffectsEnabled = () => {};
+  const setAgentMicrotrendClaim = () => {};
+  const setStrictComparativeMode = () => {};
+  const setContractsMode = () => {};
+  const [sharedContracts, setSharedContracts] = useState([]);
+  const [pendingContractClaim, setPendingContractClaim] = useState(null);
   const temptModeRef = useRef(true);
   const antiLeadMechanicsRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
-  useEffect(() => { preRoundArtistDrawsRef.current = preRoundArtistDraws; }, [preRoundArtistDraws]);
-  useEffect(() => { stagesProvideNoFameRef.current = stagesProvideNoFame; }, [stagesProvideNoFame]);
-  useEffect(() => { agentEffectsEnabledRef.current = agentEffectsEnabled; }, [agentEffectsEnabled]);
-  useEffect(() => { agentMicrotrendClaimRef.current = agentMicrotrendClaim; }, [agentMicrotrendClaim]);
-  useEffect(() => { strictComparativeModeRef.current = strictComparativeMode; setStrictCouncilMode(strictComparativeMode); }, [strictComparativeMode]);
   useEffect(() => { temptModeRef.current = temptMode; }, [temptMode]);
   useEffect(() => { antiLeadMechanicsRef.current = antiLeadMechanics; }, [antiLeadMechanics]);
   const [playerData, setPlayerData] = useState({});
@@ -2399,10 +2352,15 @@ export default function Headliners() {
   const [playerObjectives, setPlayerObjectives] = useState({}); // { playerId: [{ obj, completed, vpAwarded }] }
   const [pendingObjectiveChoice, setPendingObjectiveChoice] = useState(null); // { playerId, options: [obj, obj] }
   const [trendingObjective, setTrendingObjective] = useState(null);
-  const [microtrends, setMicrotrends] = useState([]); // [{ kind, genre|amenity, claimedBy }]
-  // Forecast — the microtrend that will replace the currently active one when it's claimed.
-  // Visible to all players so they can plan ahead and pre-position for the upcoming trend.
-  const [nextMicrotrend, setNextMicrotrend] = useState(null);
+  const [microtrends, setMicrotrends] = useState([]); // v189: always [amenity, genre] pair
+  // v189: two separate forecasts — one for amenity, one for genre. nextMicrotrend kept as
+  // an alias to nextAmenityMicrotrend for legacy code paths (most read it for genre logic
+  // and now we're clarifying which type they mean).
+  const [nextAmenityMicrotrend, setNextAmenityMicrotrend] = useState(null);
+  const [nextGenreMicrotrend, setNextGenreMicrotrend] = useState(null);
+  // Legacy alias — most callers use this for genre-based forecast logic
+  const nextMicrotrend = nextGenreMicrotrend;
+  const setNextMicrotrend = setNextGenreMicrotrend;
   // Microtrend bag — a shuffled deck of all 10 possible trends (6 genres + 4 amenities).
   // We pop from the top of this bag whenever we need a new trend. When the bag is empty,
   // we refill it with a fresh shuffle. This GUARANTEES every trend appears once before
@@ -3196,9 +3154,13 @@ export default function Headliners() {
     }, 120);
   };
 
-  // ─── Microtrend bag (shuffled deck) ───
-  // Builds a fresh 10-item bag containing every genre + every amenity, shuffled.
-  // Each item appears once per bag cycle — strong variety guarantee.
+  // ─── Microtrend bags (v189: split into amenity + genre) ───
+  // Two separate shuffled bags so amenity-microtrends and genre-microtrends can be
+  // drawn independently. The amenity bag holds all 4 amenity types; the genre bag
+  // holds all 6 genres. Each bag guarantees no repeats within a cycle.
+  const buildAmenityBag = () => shuffle(["campsite", "security", "catering", "portaloo"].map(a => ({ kind: "amenity", amenity: a })));
+  const buildGenreBag = () => shuffle(ALL_GENRES.map(g => ({ kind: "genre", genre: g })));
+  // Legacy: buildMicrotrendBag returns the union — kept for any code that references it.
   const buildMicrotrendBag = () => {
     const all = [
       ...ALL_GENRES.map(g => ({ kind: "genre", genre: g })),
@@ -3213,24 +3175,42 @@ export default function Headliners() {
     if (a.kind === "genre") return a.genre === b.genre;
     return a.amenity === b.amenity;
   };
-  // Pops a fresh trend from the bag, refilling if needed. Optional avoidEntry guards
-  // the bag-boundary case: if the bag was just refilled and the new top happens to
-  // match the most-recently-shown trend, we swap with the next item to prevent the
-  // visual repeat across the cycle boundary.
-  const popMicrotrendFromBag = (avoidEntry) => {
-    if (microtrendBagRef.current.length === 0) {
-      microtrendBagRef.current = buildMicrotrendBag();
-      if (avoidEntry && microtrendBagRef.current.length >= 2) {
-        if (trendsMatch(microtrendBagRef.current[0], avoidEntry)) {
-          const bag = [...microtrendBagRef.current];
-          [bag[0], bag[1]] = [bag[1], bag[0]];
-          microtrendBagRef.current = bag;
-        }
+  // v189: separate pop functions per bag so genre and amenity trends refill independently.
+  const amenityBagRef = useRef([]);
+  const genreBagRef = useRef([]);
+  const popAmenityFromBag = (avoidEntry) => {
+    if (amenityBagRef.current.length === 0) {
+      amenityBagRef.current = buildAmenityBag();
+      if (avoidEntry && amenityBagRef.current.length >= 2 && trendsMatch(amenityBagRef.current[0], avoidEntry)) {
+        const bag = [...amenityBagRef.current];
+        [bag[0], bag[1]] = [bag[1], bag[0]];
+        amenityBagRef.current = bag;
       }
     }
-    const top = microtrendBagRef.current[0];
-    microtrendBagRef.current = microtrendBagRef.current.slice(1);
+    const top = amenityBagRef.current[0];
+    amenityBagRef.current = amenityBagRef.current.slice(1);
     return { ...top, claimedBy: null };
+  };
+  const popGenreFromBag = (avoidEntry) => {
+    if (genreBagRef.current.length === 0) {
+      genreBagRef.current = buildGenreBag();
+      if (avoidEntry && genreBagRef.current.length >= 2 && trendsMatch(genreBagRef.current[0], avoidEntry)) {
+        const bag = [...genreBagRef.current];
+        [bag[0], bag[1]] = [bag[1], bag[0]];
+        genreBagRef.current = bag;
+      }
+    }
+    const top = genreBagRef.current[0];
+    genreBagRef.current = genreBagRef.current.slice(1);
+    return { ...top, claimedBy: null };
+  };
+  // Legacy popMicrotrendFromBag — kept in case any code path still calls it.
+  // Uses the right sub-bag based on avoidEntry's kind if provided.
+  const popMicrotrendFromBag = (avoidEntry) => {
+    if (avoidEntry?.kind === "amenity") return popAmenityFromBag(avoidEntry);
+    if (avoidEntry?.kind === "genre") return popGenreFromBag(avoidEntry);
+    // No hint — flip a coin
+    return Math.random() < 0.5 ? popAmenityFromBag() : popGenreFromBag();
   };
 
   // Place agent on the active microtrend — immediate resolution. Grants the placer
@@ -5671,7 +5651,9 @@ export default function Headliners() {
     const data = {}; players.forEach((p, idx) => {
       const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 1, baseFame: 1, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: dealt, councils: [null, null, null], councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
+      // v189: councils gone. `councils` and `councilsDealt` remain in the shape (all null / empty)
+      // so downstream code that reads them keeps working without touching every callsite.
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 1, baseFame: 1, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: [], councils: [null], councilDiceGrantedThisYear: [false], councilAmenityGrantedThisYear: [false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -5787,13 +5769,8 @@ export default function Headliners() {
     const newR5 = draftRemaining5;
     setDraftRemaining0(newR0); setDraftRemaining5(newR5);
     setSetupDraftOptions([]); setSetupDraftSelected([]);
-    // v158: under contracts mode, skip council draft/assign entirely — fields start blank
-    // and councils appear as shared contracts.
-    if (contractsModeRef.current) {
-      setSetupStep("pickAmenity");
-    } else {
-      setSetupStep("councilDraft");
-    }
+    // v189: councils removed entirely — always go straight from artist draft to amenity placement.
+    setSetupStep("pickAmenity");
   };
 
   // ─── Council Draft + Assign ───
@@ -5966,21 +5943,23 @@ export default function Headliners() {
     const poolSize = STAR_DICE_POOL_BY_PLAYER_COUNT[players.length] || 12;
     setDicePool(poolSize);
     setNegStarFacesAvoidedThisYear({});
-    // Init microtrends — fresh bag, pop the first trend (active) and the second (forecast).
-    // Each game gets a freshly shuffled 10-trend deck. The bag guarantees no repeats until
-    // all 10 trends have been used, and the boundary guard prevents repeats across refills.
-    microtrendBagRef.current = buildMicrotrendBag();
-    const active = popMicrotrendFromBag();
-    const forecast = popMicrotrendFromBag(active); // boundary-safe avoidance
-    const mt = [active];
+    // v189: two microtrend tracks — one amenity trend (Council Incentives) and one genre
+    // trend (Trending Genres). Each has its own active + upcoming (forecast).
+    amenityBagRef.current = buildAmenityBag();
+    genreBagRef.current = buildGenreBag();
+    microtrendBagRef.current = []; // legacy unused
+    const activeAmenity = popAmenityFromBag();
+    const forecastAmenity = popAmenityFromBag(activeAmenity);
+    const activeGenre = popGenreFromBag();
+    const forecastGenre = popGenreFromBag(activeGenre);
+    const mt = [activeAmenity, activeGenre];
     setMicrotrends(mt);
-    setNextMicrotrend(forecast);
-    // Legacy history seed kept for any code that still reads microtrendHistory — empty
-    // since the bag drives everything now.
+    setNextAmenityMicrotrend(forecastAmenity);
+    setNextGenreMicrotrend(forecastGenre);
     setMicrotrendHistory([]);
     microtrendHistoryRef.current = [];
     const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
-    addLog("🎵 Microtrend", `${mt.map(describeMt).join(" • ")} (coming up: ${describeMt(forecast)})`);
+    addLog("🎵 Microtrend", `Council Incentives: ${describeMt(activeAmenity)} (next: ${describeMt(forecastAmenity)}) • Trending Genres: ${describeMt(activeGenre)} (next: ${describeMt(forecastGenre)})`);
     // v135: When Alternative Artist Objectives is on, the old +3-tickets objectives are
     // replaced entirely — skip the old picker flow and only hand out alt-objective starters.
     if (altObjectivesModeRef.current) {
@@ -6372,50 +6351,15 @@ export default function Headliners() {
         setTimeout(() => { confirmSetupDraft(); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
         return;
       }
-      if (setupStep === "councilDraft") {
-        // Smart AI: rank councils by score (reward value − condition difficulty), keep top 3
-        const pid = currentSetupPlayer.id;
-        const dealt = playerData[pid]?.councilsDealt || [];
-        if (dealt.length < 3) { aiProcessing.current = false; return; }
-        const picks = aiPickCouncilsToKeep(dealt);
-        setSetupCouncilSelected(picks);
-        aiProcessing.current = false;
-        setTimeout(() => { setSetupStep("councilAssign"); aiTimer.current = setTimeout(() => aiStep(), 500); }, 400);
-        return;
-      }
-      if (setupStep === "councilAssign") {
-        // Smart AI: assign councils to fields by pickup order (highest-scoring on F0)
-        const ids = setupCouncilSelected;
-        if (ids.length !== 3) { aiProcessing.current = false; return; }
-        const assignments = aiAssignCouncilsToFields(ids);
-        setSetupCouncilAssignments(assignments);
-        aiProcessing.current = false;
-        setTimeout(() => {
-          // Manually finalize since confirmCouncilAssign reads state which may not have flushed yet
-          const councilsByField = [null, null, null];
-          ids.forEach(cid => {
-            const fIdx = assignments[cid];
-            if (fIdx != null) councilsByField[fIdx] = getCouncilById(cid);
-          });
-          const pid = currentSetupPlayer.id;
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], councils: councilsByField, councilsDealt: [] } }));
-          addLog(currentSetupPlayer.festivalName, `🤖 assigned councils: ${councilsByField.map((c, i) => `F${i + 1}=${c.name}`).join(", ")}`);
-          setSetupCouncilSelected([]); setSetupCouncilAssignments({});
-          setSetupStep("pickAmenity");
-          aiTimer.current = setTimeout(() => aiStep(), 500);
-        }, 500);
-        return;
-      }
       if (setupStep === "pickAmenity") {
-        // Smart AI: pick amenity that progresses the most councils, then best field for it
+        // v189: council-informed pick removed; use fame-scarcity heuristic. Only one field now.
         const pid = currentSetupPlayer.id;
         const pd = playerData[pid];
         const amenityChoice = aiPickSetupAmenityWithCouncils(pd);
-        const fieldChoice = aiPickFieldForAmenity(pd, amenityChoice, year || 1);
         setSetupSelectedAmenity(amenityChoice);
-        setSetupSelectedField(fieldChoice);
+        setSetupSelectedField(0);
         aiProcessing.current = false;
-        setTimeout(() => { confirmSetupAmenity(amenityChoice, fieldChoice); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
+        setTimeout(() => { confirmSetupAmenity(amenityChoice, 0); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
         return;
       }
       if (setupStep === "confirm") { confirmSetupPlacement(); scheduleNext(600); return; }
@@ -6834,6 +6778,7 @@ export default function Headliners() {
 
   const claimAmenityMicrotrend = (pid, amenityType) => {
     const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    let claimedActive = false;
     setMicrotrends(prev => prev.map(mt => {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "amenity") return mt;
@@ -6841,23 +6786,39 @@ export default function Headliners() {
       // v165: microtrend claims are fame-only. Tempt mode grants +2, agent mode +1.
       const isTempt = temptModeRef.current;
       const fameGain = isTempt ? 2 : 1;
-      logFameGain(pid, fameGain, "Matching a Microtrend");
+      logFameGain(pid, fameGain, "Matching a Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
         baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
-      addLog("🎵 Microtrend", `${festival} claimed "${AMENITY_LABELS[amenityType]}" microtrend → +${fameGain} 🔥 Fame!`);
-      showFloatingBonus(`🎵 ${AMENITY_LABELS[amenityType]} Microtrend!`, "#fbbf24");
+      addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
+      showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]}!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
-      // v180: bug fix — amenity microtrends were missing the stage-progress grant that
-      // genre microtrends have. Every microtrend claim (genre OR amenity) should push
-      // the player toward opening a new stage under trends mode. Same call the genre
-      // path uses at line ~5419.
       checkMicrotrendCredit(pid);
+      claimedActive = true;
       return { ...mt, claimedBy: pid };
     }));
+    // v189: anti-lead amenity-forecast claim. Non-leaders can claim the upcoming amenity
+    // microtrend if their placement matches it, giving trailing players an early advantage.
+    if (!claimedActive && canClaimForecast(pid) && nextAmenityMicrotrend && nextAmenityMicrotrend.amenity === amenityType) {
+      const isTempt = temptModeRef.current;
+      const fameGain = isTempt ? 2 : 1;
+      const claimedTrend = nextAmenityMicrotrend;
+      logFameGain(pid, fameGain, "Matching a Forecast Council Incentive");
+      setPlayerData(p => ({ ...p, [pid]: {
+        ...p[pid],
+        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+        microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+      } }));
+      addLog("🏛️ Council Incentive", `${festival} matched the forecast "${AMENITY_LABELS[amenityType]}" (anti-lead) → +${fameGain} 🔥 Fame!`);
+      showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
+      setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+      checkMicrotrendCredit(pid);
+      const fresh = popAmenityFromBag(claimedTrend);
+      setNextAmenityMicrotrend(fresh);
+    }
   };
 
   const placeAmenityCounter = (amenityType, fieldIdx = 0) => {
@@ -6901,10 +6862,11 @@ export default function Headliners() {
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       return;
     }
-    // v166: compound faces (catering_or_portaloo, security_or_campsite) no longer exist.
-    // Every die face is a single amenity type (or fame / stage handled above).
-    setSelectedDie(idx);
-    setPickingFieldFor(dv);
+    // v189: single field per player — auto-place, no field picker step
+    const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
+    placeAmenityCounter(dv, 0);
+    setSelectedDie(null);
+    setPickingFieldFor(null);
   };
   // v166: handleChoiceSelect removed — compound faces no longer exist.
   // Called when user clicks a field on PlayerBoard while pickingFieldFor is set
@@ -7201,38 +7163,29 @@ export default function Headliners() {
     // Evaluate council objectives for current player before moving on
     evaluateCouncils(currentPlayerId);
 
-    // Microtrend overhaul: any claimed microtrend is replaced by the FORECAST microtrend
-    // at the end of the claimer's turn — so the previously-shown "Coming Up Next" becomes
-    // the new active trend, and a fresh forecast is rolled. This gives players advance
-    // notice of what's coming and lets them position to contest the next trend.
-    // Find the trend being retired (the just-claimed one) so the boundary-guard inside
-    // popMicrotrendFromBag can prevent it from showing up again immediately if the bag
-    // happens to refill on this pop.
-    const justRetired = microtrends.find(mt => mt.claimedBy !== null);
-    setMicrotrends(prev => {
-      let anyReplaced = false;
-      const next = prev.map(mt => {
+    // v189: two-track microtrend replacement. Each claimed trend gets replaced by the
+    // matching-type forecast (amenity → amenity forecast, genre → genre forecast), and a
+    // fresh forecast is drawn from that type's bag.
+    const claimedAmenity = microtrends.find(mt => mt.claimedBy !== null && mt.kind === "amenity");
+    const claimedGenre = microtrends.find(mt => mt.claimedBy !== null && mt.kind === "genre");
+    if (claimedAmenity || claimedGenre) {
+      setMicrotrends(prev => prev.map(mt => {
         if (mt.claimedBy === null) return mt;
-        anyReplaced = true;
-        return nextMicrotrend || popMicrotrendFromBag();
-      });
-      return anyReplaced ? next : prev;
-    });
-    // Pop a new forecast from the shuffled bag. The bag guarantees every trend appears
-    // once before any repeat, so back-to-back same-genre microtrends are impossible within
-    // a bag cycle. The boundary guard (passing `promoted` as avoidEntry) prevents the
-    // edge case where a bag refill puts a fresh copy of the just-promoted trend at the
-    // top of the new deck.
-    if (justRetired) {
-      const promoted = nextMicrotrend;
-      if (promoted) {
-        const fresh = popMicrotrendFromBag(promoted);
-        setNextMicrotrend(fresh);
-        if (fresh.kind === "genre") {
-          addLog("🎵 Forecast", `Next microtrend: book a ${fresh.genre} artist`);
-        } else {
-          addLog("🎵 Forecast", `Next microtrend: place a ${AMENITY_LABELS[fresh.amenity]}`);
-        }
+        if (mt.kind === "amenity" && nextAmenityMicrotrend) return nextAmenityMicrotrend;
+        if (mt.kind === "genre" && nextGenreMicrotrend) return nextGenreMicrotrend;
+        return mt.kind === "amenity" ? popAmenityFromBag() : popGenreFromBag();
+      }));
+      if (claimedAmenity && nextAmenityMicrotrend) {
+        const promoted = nextAmenityMicrotrend;
+        const fresh = popAmenityFromBag(promoted);
+        setNextAmenityMicrotrend(fresh);
+        addLog("🎵 Council Incentive", `Next: place a ${AMENITY_LABELS[fresh.amenity]}`);
+      }
+      if (claimedGenre && nextGenreMicrotrend) {
+        const promoted = nextGenreMicrotrend;
+        const fresh = popGenreFromBag(promoted);
+        setNextGenreMicrotrend(fresh);
+        addLog("🎵 Trending Genre", `Next: book a ${fresh.genre} artist`);
       }
     }
 
@@ -8763,94 +8716,26 @@ export default function Headliners() {
           </div></div>)}
         <button onClick={startSetup} disabled={!canStartSetup} style={{ ...bp, width: "100%", marginTop: 16, padding: "14px 24px", fontSize: 16, opacity: canStartSetup ? 1 : 0.4 }}>Start Setup →</button>
       </div>
-      {/* ── Game Options ── */}
+      {/* ── Game Options — v189: dramatically simplified ── */}
       <div style={{ ...card, maxWidth: 520, width: "100%", marginTop: 12 }}>
         <div style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>⚙️ Game Options</div>
-        {/* Game length */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ color: "#a78bfa", fontWeight: 600, fontSize: 12, display: "block", marginBottom: 6 }}>Game Length</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            {[3, 4].map(n => <button key={n} onClick={() => setTotalYears(n)} style={{ ...bs, background: totalYears === n ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "rgba(124,58,237,0.15)", flex: 1, padding: "10px 12px", fontSize: 13 }}>{n} Years</button>)}
-          </div>
-          <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>{totalYears === 3 ? "Shorter game — faster, fewer rounds to build" : "Standard length"}</div>
+        <div style={{ padding: 10, borderRadius: 8, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.2)", marginBottom: 12, fontSize: 11, color: "#86efac", lineHeight: 1.5 }}>
+          <div style={{ fontWeight: 700, color: "#4ade80", marginBottom: 4 }}>Standard rules</div>
+          3 years · 6 turns per year · Tempt function · Festival Identities · Anti-Lead Mechanics · Council Incentives (amenity trends) & Trending Genres (genre trends)
         </div>
-        {/* Two independent gameplay toggles — were previously bundled as "Tactical Mode" */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label onClick={() => setStageOpenFameBonus(!stageOpenFameBonus)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !stageOpenFameBonus ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !stageOpenFameBonus ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenFameBonus ? "#22c55e" : "#fbbf24"}`, background: stageOpenFameBonus ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenFameBonus ? "✓" : ""}</div>
+          <label onClick={() => setTotalYears(totalYears === 3 ? 4 : 3)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: totalYears === 4 ? "2px solid #a78bfa" : "1px solid #4c1d95", background: totalYears === 4 ? "rgba(167,139,250,0.10)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${totalYears === 4 ? "#a78bfa" : "#4c1d95"}`, background: totalYears === 4 ? "#a78bfa" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{totalYears === 4 ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ color: stageOpenFameBonus ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>+1 Fame when opening a new stage</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenFameBonus ? "Standard — opening a stage during the pre-round grants +1 Fame." : "Off — opening a stage costs the action but gives no Fame. Fame is scarcer."}</div>
+              <div style={{ color: totalYears === 4 ? "#c4b5fd" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎪 4-Year Mode (6/7/8/8 turn schedule)</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{totalYears === 4 ? "On — a longer game with escalating turn counts. 29 turns per player total." : "Off — standard 3-year game, 6 turns per year (18 turns total)."}</div>
             </div>
           </label>
-          <label onClick={() => setPreRoundArtistDraws(!preRoundArtistDraws)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !preRoundArtistDraws ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !preRoundArtistDraws ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${preRoundArtistDraws ? "#22c55e" : "#fbbf24"}`, background: preRoundArtistDraws ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{preRoundArtistDraws ? "✓" : ""}</div>
+          <label onClick={() => setStageOpenFameBonus(!stageOpenFameBonus)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stageOpenFameBonus ? "2px solid #22c55e" : "1px solid #4c1d95", background: stageOpenFameBonus ? "rgba(34,197,94,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenFameBonus ? "#22c55e" : "#4c1d95"}`, background: stageOpenFameBonus ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenFameBonus ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ color: preRoundArtistDraws ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>Free artist draws between years</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{preRoundArtistDraws ? "On — players get one free artist draw per stage in the pre-round." : "Default (v143) — artists only come from turn actions. Tighter card economy."}</div>
-            </div>
-          </label>
-          <label onClick={() => setStagesProvideNoFame(!stagesProvideNoFame)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stagesProvideNoFame ? "2px solid #fbbf24" : "1px solid #4c1d95", background: stagesProvideNoFame ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stagesProvideNoFame ? "#fbbf24" : "#4c1d95"}`, background: stagesProvideNoFame ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stagesProvideNoFame ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: stagesProvideNoFame ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Stages provide no base Fame</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stagesProvideNoFame ? "On — master switch: no Fame can come from stages regardless of the toggle above. Fame must come from artists, microtrends, dice, councils." : "Off — stage Fame follows the toggle above. Default."}</div>
-            </div>
-          </label>
-          <label onClick={() => setAgentEffectsEnabled(!agentEffectsEnabled)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !agentEffectsEnabled ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !agentEffectsEnabled ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agentEffectsEnabled ? "#22c55e" : "#fbbf24"}`, background: agentEffectsEnabled ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{agentEffectsEnabled ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: agentEffectsEnabled ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🕵️ Agent-booking effects</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentEffectsEnabled ? "Standard — 8 artists have bonus effects when booked via an agent (encourages agent play and contests)." : "Off — those artists have only their base effects. Costs stay the same either way."}</div>
-            </div>
-          </label>
-          <label onClick={() => setAgentMicrotrendClaim(!agentMicrotrendClaim)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: !agentMicrotrendClaim ? "2px solid #fbbf24" : "1px solid #4c1d95", background: !agentMicrotrendClaim ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agentMicrotrendClaim ? "#22c55e" : "#fbbf24"}`, background: agentMicrotrendClaim ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{agentMicrotrendClaim ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: agentMicrotrendClaim ? "#86efac" : "#fbbf24", fontWeight: 700, fontSize: 13 }}>🎵 Agents can claim microtrends</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{agentMicrotrendClaim ? "On — agents can be placed on the active microtrend for +1 Fame, advancing to the next trend. Solves the year-1 stuck-at-zero problem." : "Default (v143) — agents/tempts can only target pool artists. Microtrends only claimable via booking/amenity match."}</div>
-            </div>
-          </label>
-          <label onClick={() => setContractsMode(!contractsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: contractsMode ? "2px solid #a855f7" : "1px solid #4c1d95", background: contractsMode ? "rgba(168,85,247,0.10)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${contractsMode ? "#a855f7" : "#4c1d95"}`, background: contractsMode ? "#a855f7" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{contractsMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: contractsMode ? "#a855f7" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>📜 Council Contracts (shared)</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{contractsMode ? "On (v158) — councils are a SHARED pool. Each year, N-1 (min 2) contracts appear on the table. First to satisfy on one of their fields can claim it permanently. Skips council draft phase. Trending lineups disabled." : "Off — legacy per-player council draft. Each player drafts 3 of 5 dealt at setup."}</div>
-            </div>
-          </label>
-          <label onClick={() => setFlatTurnsMode(!flatTurnsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: flatTurnsMode ? "2px solid #4ade80" : "1px solid #4c1d95", background: flatTurnsMode ? "rgba(74,222,128,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${flatTurnsMode ? "#4ade80" : "#4c1d95"}`, background: flatTurnsMode ? "#4ade80" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{flatTurnsMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: flatTurnsMode ? "#4ade80" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>⏱️ Flat turn schedule (6/6/6/6)</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{flatTurnsMode ? "On (v157) — every year has 6 turns. Tightens the endgame and cuts down late-year amenity spam." : "Off — original 6/7/8/9 escalating schedule. Later years have more turns."}</div>
-            </div>
-          </label>
-          <label onClick={() => setIdentitiesMode(!identitiesMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: identitiesMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: identitiesMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${identitiesMode ? "#fbbf24" : "#4c1d95"}`, background: identitiesMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{identitiesMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: identitiesMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎭 Festival Identities</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{identitiesMode ? "On — each player picks 1 of 3 dealt identities before setup. Their identity fires benefits/penalties on plays, tempts, or year-end throughout the game." : "Off — no identity layer. All players play the same base scoring rules."}</div>
-            </div>
-          </label>
-          <label onClick={() => setAntiLeadMechanics(!antiLeadMechanics)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: antiLeadMechanics ? "2px solid #fbbf24" : "1px solid #4c1d95", background: antiLeadMechanics ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${antiLeadMechanics ? "#fbbf24" : "#4c1d95"}`, background: antiLeadMechanics ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{antiLeadMechanics ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: antiLeadMechanics ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎯 Anti-Lead Mechanics</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{antiLeadMechanics ? "Default (v153) — from Year 2 onwards, non-leaders can also claim the FORECAST microtrend (not just the active one). The current leader is locked out of the forecast until they lose the lead. Ties = no leader." : "Off — only the active microtrend is claimable. Simpler, but no rubber-band mechanism."}</div>
-            </div>
-          </label>
-          <label onClick={() => setStrictComparativeMode(!strictComparativeMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: strictComparativeMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: strictComparativeMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${strictComparativeMode ? "#fbbf24" : "#4c1d95"}`, background: strictComparativeMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{strictComparativeMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: strictComparativeMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>📋 Strict comparative councils</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{strictComparativeMode ? "Default (v143) — comparative councils (\"X > Y\") require the lesser amenity to also be present. Min 3 amenities in the field to qualify." : "Off — comparative councils qualify with just one amenity (e.g. 1 catering > 0 security). Easier to satisfy."}</div>
-            </div>
-          </label>
-          <label onClick={() => setTemptMode(!temptMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: temptMode ? "2px solid #fbbf24" : "1px solid #4c1d95", background: temptMode ? "rgba(251,191,36,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${temptMode ? "#fbbf24" : "#4c1d95"}`, background: temptMode ? "#fbbf24" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{temptMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: temptMode ? "#fbbf24" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>💫 Implement tempt function</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{temptMode ? "Default (v143) — agents are replaced. Spend 1 Fame to Tempt a pool artist (up to 1/turn). Contests need ≥1 Fame; both players refunded on resolution. Microtrends grant +2 Fame instead of +1 Fame + 1 ticket. Hand capped at 8." : "Off — traditional agent economy. Deploy agents to court pool artists. Microtrends give +1 Fame + 1 ticket."}</div>
+              <div style={{ color: stageOpenFameBonus ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🔥 +1 Fame when opening a new stage</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenFameBonus ? "On — opening a stage grants +1 Fame at the start of the next year." : "Off — opening a stage is free of Fame reward. Fame is scarcer overall."}</div>
             </div>
           </label>
         </div>
@@ -8988,115 +8873,13 @@ export default function Headliners() {
           <button onClick={confirmSetupDraft} disabled={(setupDraftSelected || []).length !== 2} style={{ ...bp, width: "100%", opacity: (setupDraftSelected || []).length === 2 ? 1 : 0.4 }}>Draft 2 Artists →</button>
         </div>}
 
-        {setupStep === "councilDraft" && (() => {
-          const dealt = playerData[currentSetupPlayer.id]?.councilsDealt || [];
-          return <div style={{ ...card, maxWidth: 760, width: "100%", textAlign: "center" }}>
-            <h3 style={{ color: "#e9d5ff", marginBottom: 4 }}>Choose your Council Objectives</h3>
-            <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Keep <strong style={{ color: "#fbbf24" }}>3</strong> of these 5. The other 2 are out of the game.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 14 }}>
-              {dealt.map(c => {
-                const sel = setupCouncilSelected.includes(c.id);
-                return <div key={c.id} onClick={() => toggleCouncilKeep(c.id)} style={{
-                  padding: 12, borderRadius: 10,
-                  border: sel ? "2px solid #fbbf24" : "2px solid #2a2a4a",
-                  background: sel ? "rgba(251,191,36,0.12)" : "#1a1a2e",
-                  cursor: "pointer", textAlign: "left",
-                  boxShadow: sel ? "0 0 12px rgba(251,191,36,0.3)" : "none",
-                  transition: "all 0.15s",
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: sel ? "#fbbf24" : "#c4b5fd", marginBottom: 6 }}>{sel ? "✓ " : ""}{c.name}</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>📋 {formatCouncilCondition(c)}</div>
-                  <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 600 }}>🎁 {formatCouncilReward(c)}</div>
-                </div>;
-              })}
-            </div>
-            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 10 }}>{setupCouncilSelected.length}/3 kept</p>
-            <button onClick={confirmCouncilDraft} disabled={setupCouncilSelected.length !== 3} style={{ ...bp, width: "100%", opacity: setupCouncilSelected.length === 3 ? 1 : 0.4 }}>Continue →</button>
-          </div>;
-        })()}
-
-        {setupStep === "councilAssign" && (() => {
-          const kept = setupCouncilSelected.map(id => getCouncilById(id)).filter(Boolean);
-          const allAssigned = setupCouncilSelected.every(id => setupCouncilAssignments[id] != null);
-          return <div style={{ ...card, maxWidth: 760, width: "100%", textAlign: "center" }}>
-            <h3 style={{ color: "#e9d5ff", marginBottom: 4 }}>Assign each Council to a field</h3>
-            <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 14 }}>One council per field. The amenities you build in that field count toward this council.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
-              {kept.map(c => {
-                const assignedField = setupCouncilAssignments[c.id];
-                return <div key={c.id} style={{ padding: 12, borderRadius: 10, border: "1px solid #2a2a4a", background: "#1a1a2e", textAlign: "left" }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#c4b5fd", marginBottom: 6 }}>{c.name}</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>📋 {formatCouncilCondition(c)}</div>
-                  <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 600, marginBottom: 8 }}>🎁 {formatCouncilReward(c)}</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {[0, 1, 2].map(fIdx => {
-                      const isAssigned = assignedField === fIdx;
-                      // Field is taken by another council if any other id maps to it
-                      const takenByOther = Object.entries(setupCouncilAssignments).some(([id, f]) => id !== c.id && f === fIdx);
-                      return <button key={fIdx} onClick={() => assignCouncilToField(c.id, fIdx)} disabled={takenByOther && !isAssigned} style={{
-                        flex: 1,
-                        padding: "8px 4px",
-                        borderRadius: 8,
-                        border: isAssigned ? "2px solid #a78bfa" : (takenByOther ? "2px solid #2a2a4a" : "2px solid #4c1d95"),
-                        background: isAssigned ? "rgba(167,139,250,0.18)" : "#0f0e1a",
-                        color: isAssigned ? "#fbbf24" : (takenByOther ? "#475569" : "#c4b5fd"),
-                        cursor: (takenByOther && !isAssigned) ? "not-allowed" : "pointer",
-                        fontSize: 11, fontWeight: 700,
-                        opacity: (takenByOther && !isAssigned) ? 0.4 : 1,
-                      }}>F{fIdx + 1}{isAssigned ? " ✓" : (takenByOther ? " 🚫" : "")}</button>;
-                    })}
-                  </div>
-                </div>;
-              })}
-            </div>
-            <button onClick={confirmCouncilAssign} disabled={!allAssigned} style={{ ...bp, width: "100%", opacity: allAssigned ? 1 : 0.4 }}>Lock in Councils →</button>
-          </div>;
-        })()}
         {setupStep === "pickAmenity" && (() => {
           const pd = playerData[currentSetupPlayer.id] || {};
-          const councils = pd.councils || [];
-          return <div style={{ ...card, maxWidth: 720, width: "100%", textAlign: "center" }}>
+          return <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
             <h3 style={{ color: "#e9d5ff", marginBottom: 12 }}>Choose your starting amenity</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => setSetupSelectedAmenity(t)} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
-            {setupSelectedAmenity && <>
-              <div style={{ fontSize: 12, color: "#fbbf24", marginBottom: 8, fontWeight: 700 }}>Now pick which field to place it in:</div>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${FIELD_COUNT}, 1fr)`, gap: 10, marginBottom: 12 }}>
-                {Array.from({ length: FIELD_COUNT }).map((_, fIdx) => {
-                  const c = councils[fIdx];
-                  // We're checking what the field WOULD look like AFTER placement of the selected amenity
-                  const fieldNow = pd.fields?.[fIdx] || { campsite: 0, security: 0, catering: 0, portaloo: 0 };
-                  const fieldHypothetical = setupSelectedAmenity ? { ...fieldNow, [setupSelectedAmenity]: (fieldNow[setupSelectedAmenity] || 0) + 1 } : fieldNow;
-                  const wouldQualify = c ? councilQualifies(c, fieldHypothetical, 1) : false;
-                  const isSelected = setupSelectedField === fIdx;
-                  return <button key={fIdx} onClick={() => setSetupSelectedField(fIdx)} style={{
-                    padding: 12,
-                    borderRadius: 10,
-                    border: isSelected ? "2px solid #a78bfa" : "2px solid #2a2a4a",
-                    background: isSelected ? "rgba(167,139,250,0.18)" : "#1a1a2e",
-                    color: "#e9d5ff",
-                    cursor: "pointer",
-                    fontWeight: 700,
-                    fontSize: 13,
-                    textAlign: "left",
-                    boxShadow: isSelected ? "0 0 12px rgba(167,139,250,0.3)" : "none",
-                  }}>
-                    <div style={{ textAlign: "center", color: isSelected ? "#fbbf24" : "#c4b5fd", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 11 }}>Field {fIdx + 1}</div>
-                    {c ? <div style={{
-                      padding: 6,
-                      borderRadius: 6,
-                      background: wouldQualify ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.06)",
-                      border: wouldQualify ? "1px solid #22c55e80" : "1px solid #ef444440",
-                      boxShadow: wouldQualify ? "0 0 8px rgba(34,197,94,0.25)" : "none",
-                    }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: wouldQualify ? "#86efac" : "#fca5a5", marginBottom: 3 }}>{wouldQualify ? "✓" : "✗"} {c.name}</div>
-                      <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.3, marginBottom: 2 }}>{formatCouncilCondition(c)}</div>
-                      <div style={{ fontSize: 9, color: wouldQualify ? "#4ade80" : "#94a3b8", lineHeight: 1.3, opacity: wouldQualify ? 1 : 0.7 }}>{formatCouncilReward(c)}</div>
-                    </div> : <div style={{ fontSize: 10, color: "#475569", textAlign: "center", fontStyle: "italic" }}>(no council)</div>}
-                  </button>;
-                })}
-              </div>
-            </>}
-            <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity || setupSelectedField == null} style={{ ...bp, marginTop: 12, width: "100%", opacity: (setupSelectedAmenity && setupSelectedField != null) ? 1 : 0.4 }}>Confirm →</button>
+            <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 16 }}>This will be placed in your festival grounds to help you court artists.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>{AMENITY_TYPES.map(t => <button key={t} onClick={() => { setSetupSelectedAmenity(t); setSetupSelectedField(0); }} style={{ padding: 16, borderRadius: 12, border: setupSelectedAmenity === t ? `2px solid ${AMENITY_COLORS[t]}` : "2px solid #2a2a4a", background: setupSelectedAmenity === t ? "rgba(124,58,237,0.2)" : "#1a1a2e", color: "#e2e8f0", cursor: "pointer", textAlign: "center" }}><div style={{ fontSize: 28 }}>{AMENITY_ICONS[t]}</div><div style={{ fontWeight: 600, marginTop: 4 }}>{AMENITY_LABELS[t]}</div></button>)}</div>
+            <button onClick={() => confirmSetupAmenity()} disabled={!setupSelectedAmenity} style={{ ...bp, marginTop: 12, width: "100%", opacity: setupSelectedAmenity ? 1 : 0.4 }}>Confirm →</button>
           </div>;
         })()}
         {setupStep === "confirm" && <div style={{ ...card, maxWidth: 520, width: "100%", textAlign: "center" }}>
@@ -10469,32 +10252,43 @@ export default function Headliners() {
               {!altObjectivesMode && <div style={{ padding: 6, borderRadius: 6, background: "rgba(251,191,36,0.08)", fontSize: 10, color: "#fbbf24" }}>🔥 Fame {currentPD.fame || 0} → {FAME_VP[Math.min(5, currentPD.fame || 0)]} VP</div>}
             </div>}
             {sidebarTab === "trending" && <div style={{ marginTop: 6 }}>
-              {microtrends.length > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: "#e9d5ff", marginBottom: 4, textTransform: "uppercase" }}>🎵 Microtrend</div>}
-              {microtrends.map((mt, i) => {
-                const claimed = mt.claimedBy !== null;
-                const claimer = claimed ? players.find(p => p.id === mt.claimedBy)?.festivalName : null;
-                const isAmenity = mt.kind === "amenity";
-                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[mt.genre] || "#fbbf24");
-                const action = isAmenity ? `Place ${AMENITY_ICONS[mt.amenity]} ${AMENITY_LABELS[mt.amenity]}` : `Book a ${mt.genre} artist`;
-                return <div key={i} style={{ padding: 4, borderRadius: 6, marginBottom: 3, background: claimed ? "rgba(107,114,128,0.1)" : `${accent}15`, opacity: claimed ? 0.5 : 1 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: claimed ? "#6b7280" : accent }}>{claimed ? "✓" : "🔥"} {action}</div>
-                  {claimed && <div style={{ fontSize: 8, color: "#6b7280" }}>Claimed by {claimer}</div>}
-                  {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to match → +{temptMode ? 2 : 1} Fame</div>}
-                </div>;
-              })}
-              {nextMicrotrend && (() => {
-                const nmt = nextMicrotrend;
-                const isAmenity = nmt.kind === "amenity";
-                const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[nmt.genre] || "#fbbf24");
-                const action = isAmenity ? `Place ${AMENITY_ICONS[nmt.amenity]} ${AMENITY_LABELS[nmt.amenity]}` : `Book a ${nmt.genre} artist`;
-                // v153: anti-lead indicator. Genre-kind forecasts are claimable by the
-                // current player if they're a non-leader from Y2 onwards. Show a badge.
-                const canClaim = !isAmenity && canClaimForecast(currentPlayerId);
-                return <div style={{ marginTop: 6, padding: 4, borderRadius: 6, background: canClaim ? "rgba(74,222,128,0.10)" : "rgba(15,14,26,0.5)", border: canClaim ? `1px solid ${accent}` : `1px dashed ${accent}60` }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: canClaim ? "#4ade80" : "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{canClaim ? "🎯 Anti-Lead: Claimable" : "⏭ Coming up next"}</div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: accent, opacity: canClaim ? 1 : 0.85 }}>{action}</div>
-                  {canClaim && <div style={{ fontSize: 8, color: "#94a3b8", marginTop: 2 }}>You're not the leader — match to claim early → +{temptMode ? 2 : 1} Fame</div>}
-                </div>;
+              {(() => {
+                // v189: two-track display — Trending Genres + Council Incentives, each with active + upcoming
+                const activeAmenity = microtrends.find(mt => mt.kind === "amenity");
+                const activeGenre = microtrends.find(mt => mt.kind === "genre");
+                const renderTrack = (title, active, forecast) => {
+                  if (!active && !forecast) return null;
+                  return <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#e9d5ff", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>{title}</div>
+                    {active && (() => {
+                      const claimed = active.claimedBy !== null;
+                      const claimer = claimed ? players.find(p => p.id === active.claimedBy)?.festivalName : null;
+                      const isAmenity = active.kind === "amenity";
+                      const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[active.genre] || "#fbbf24");
+                      const action = isAmenity ? `Place ${AMENITY_ICONS[active.amenity]} ${AMENITY_LABELS[active.amenity]}` : `Book a ${active.genre} artist`;
+                      return <div style={{ padding: 4, borderRadius: 6, marginBottom: 3, background: claimed ? "rgba(107,114,128,0.1)" : `${accent}15`, opacity: claimed ? 0.5 : 1 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: claimed ? "#6b7280" : accent }}>{claimed ? "✓" : "🔥"} {action}</div>
+                        {claimed && <div style={{ fontSize: 8, color: "#6b7280" }}>Claimed by {claimer}</div>}
+                        {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to match → +{temptMode ? 2 : 1} Fame</div>}
+                      </div>;
+                    })()}
+                    {forecast && (() => {
+                      const isAmenity = forecast.kind === "amenity";
+                      const accent = isAmenity ? "#fbbf24" : (GENRE_COLORS[forecast.genre] || "#fbbf24");
+                      const action = isAmenity ? `Place ${AMENITY_ICONS[forecast.amenity]} ${AMENITY_LABELS[forecast.amenity]}` : `Book a ${forecast.genre} artist`;
+                      // Both amenity and genre forecasts are claimable under anti-lead now
+                      const canClaim = canClaimForecast(currentPlayerId);
+                      return <div style={{ marginTop: 3, padding: 4, borderRadius: 6, background: canClaim ? "rgba(74,222,128,0.10)" : "rgba(15,14,26,0.5)", border: canClaim ? `1px solid ${accent}` : `1px dashed ${accent}60` }}>
+                        <div style={{ fontSize: 8, fontWeight: 700, color: canClaim ? "#4ade80" : "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{canClaim ? "🎯 Anti-Lead: Claimable" : "⏭ Coming up next"}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: accent, opacity: canClaim ? 1 : 0.85 }}>{action}</div>
+                      </div>;
+                    })()}
+                  </div>;
+                };
+                return <>
+                  {renderTrack("🎸 Trending Genres", activeGenre, nextGenreMicrotrend)}
+                  {renderTrack("🏛️ Council Incentives", activeAmenity, nextAmenityMicrotrend)}
+                </>;
               })()}
             </div>}
             {sidebarTab === "goals" && <div style={{ marginTop: 6 }}>
@@ -11932,7 +11726,7 @@ export default function Headliners() {
               setPlayerObjectives({}); setYearEvents({}); setDicePool(0); setTurnOrder([]);
               setCurrentPlayerIdx(0); setTurnsLeft({}); setActionTaken(false); setTurnAction(null);
               setAgentBookedThisYear({}); setAgentExhausted({}); setShowTurnStart(false);
-              setSetupIndex(0); setSetupStep("viewObjective"); setMicrotrends([]); setNextMicrotrend(null);
+              setSetupIndex(0); setSetupStep("viewObjective"); setMicrotrends([]); setNextAmenityMicrotrend(null); setNextGenreMicrotrend(null);
               setMicrotrendHistory([]); setFameGainQueue([]); setFloatingBonuses([]);
               setYearEndEffectsList([]); setYearEndEffectIdx(0); setYearEndEffectsPlayer(0);
               setRevealIndex(0); setLeaderboardRevealed(false); setTurnNumber(0);
