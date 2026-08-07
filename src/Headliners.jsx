@@ -2229,6 +2229,13 @@ export default function Headliners() {
   // to play an artist. Used by Eminem's "inherit tickets from previous player's last artist" effect.
   const [lastArtistByPid, setLastArtistByPid] = useState({}); // { pid: artistCard }
   const [lastArtistPid, setLastArtistPid] = useState(null); // pid of who just played
+  // v170: hard cap of 2 artist plays per turn. Increments on every bookArtistToStage
+  // call; gates chain-play effects (Sadchild, Lil Angry, Clairo tempt, Wolf Alice,
+  // Rage Against, Ms Banks) so a "play another" effect from the SECOND play cannot
+  // trigger a third.
+  const [playsThisTurn, setPlaysThisTurn] = useState(0);
+  const playsThisTurnRef = useRef(0);
+  useEffect(() => { playsThisTurnRef.current = playsThisTurn; }, [playsThisTurn]);
 
   // Artist action sub-states
   const [artistAction, setArtistAction] = useState(null); // "bookFromPool","bookFromHand","reserveFromPool","reserveFromDeck","pickStage"
@@ -4450,18 +4457,25 @@ export default function Headliners() {
       }
 
       // --- "Play another artist from your hand" (Sadchild, Lil Angry, Wolf Alice, Rage, Ms Banks, Clairo tempt) ---
-      // Sets a pending state so the player can pick an artist from hand + a stage.
+      // v170: capped at 2 plays per turn total. If the player has already played 2 artists
+      // this turn (e.g., they normal-played, then chain-played, and the SECOND artist also
+      // has a chain-play effect), the third chain is blocked — no cascade.
       // Ms Banks variant: "for free. Their effect does not activate" — mark to skip effect + bypass costs.
       if (el.includes("play another artist from your hand")) {
-        const isFree = el.includes("for free") && el.includes("effect does not activate");
-        setPendingEffect({
-          type: "playFromHand",
-          artistName: artist.name,
-          free: isFree,
-          suppressEffect: isFree,
-        });
-        setPendingEffectPid(pid);
-        addLog("Effect", `${artist.name}: play another artist from your hand${isFree ? " for free (effect suppressed)" : ""}`);
+        const playsSoFar = playsThisTurnRef.current || 0;
+        if (playsSoFar >= 2) {
+          addLog("Effect", `${artist.name}: chain-play blocked (2-plays-per-turn cap reached)`);
+        } else {
+          const isFree = el.includes("for free") && el.includes("effect does not activate");
+          setPendingEffect({
+            type: "playFromHand",
+            artistName: artist.name,
+            free: isFree,
+            suppressEffect: isFree,
+          });
+          setPendingEffectPid(pid);
+          addLog("Effect", `${artist.name}: play another artist from your hand${isFree ? " for free (effect suppressed)" : ""}`);
+        }
       }
 
       // --- "Draw up to N artists from the deck" (Eve compound) ---
@@ -4788,6 +4802,11 @@ export default function Headliners() {
     // one currently happening). We snapshot into a ref inside applyEffect via closure.
     const _prevArtistPid = lastArtistPid;
     const _prevArtist = _prevArtistPid !== null ? lastArtistByPid[_prevArtistPid] : null;
+
+    // v170: increment plays counter BEFORE applyEffect runs, so a chain-artist's
+    // own "play another" effect sees the correct count and can be gated at 2.
+    setPlaysThisTurn(n => n + 1);
+    playsThisTurnRef.current = (playsThisTurnRef.current || 0) + 1;
 
     // Show the booking popup (headliner popup takes priority if headliner)
     if (isHeadliner) {
@@ -5527,6 +5546,15 @@ export default function Headliners() {
         scheduleNext(300); return;
       }
       if (pe.type === "playFromHand") {
+        // v170: safety guard — if we've already played 2 this turn, cancel the pending
+        // chain-play rather than executing it. (The primary gate is in applyEffect, but
+        // this covers race cases where a pending effect landed and then a state update
+        // pushed us over.)
+        if ((playsThisTurnRef.current || 0) >= 2) {
+          addLog("🤖 AI", `chain-play cancelled (2-plays-per-turn cap)`);
+          setPendingEffect(null); setPendingEffectPid(null);
+          scheduleNext(300); return;
+        }
         // v169: chain-play effect. AI picks the highest-value playable artist from hand.
         const hand = pd.hand || [];
         const stages = pd.stages || [];
@@ -6415,6 +6443,7 @@ export default function Headliners() {
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
     setTurnAction(null); setSelectedDie(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0);
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
+    setPlaysThisTurn(0); // v170: reset the per-turn play counter
 
     // Evaluate council objectives for current player before moving on
     evaluateCouncils(currentPlayerId);
@@ -7231,11 +7260,13 @@ export default function Headliners() {
 
   const beginStarDicePhase = () => {
     // v168: star dice removed from the game. This function is preserved because
-    // multiple year-end code paths still call it, but it now just fires final
-    // council evaluations and advances to the next year immediately. No rolling,
-    // no dice reveal, no UI.
+    // multiple year-end code paths still call it, but it now bypasses the roll UI
+    // and goes directly to the leaderboard reveal + year-end scoring.
+    // v171: previously jumped straight to startNextYear, which bypassed the
+    // game-over check (year >= totalYears). Now goes through beginRoundEnd, which
+    // shows the leaderboard AND enforces the year cap via proceedFromRoundEnd.
     players.forEach(p => evaluateCouncils(p.id));
-    setTimeout(() => startNextYear(), 100);
+    setTimeout(() => beginRoundEnd(), 100);
   };
 
   // Roll N dice — returns array of face strings: "star" | "blank" | amenityType
@@ -7820,11 +7851,17 @@ export default function Headliners() {
   </div> : null;
   const leaderboardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowLeaderboard(true)} title="Leaderboard" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251,191,36,0.2)", color: "#fbbf24", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🏆</button> : null;
   const leaderboardModal = showLeaderboard ? (() => {
-    // v126: sorted by tickets (unified score). Fame tiebreaks.
+    // v171: fixed to match the rest of the game.
+    // - Tickets shown as raw count (not × 100) so they match the HUD everywhere else.
+    // - Star dice column removed (they're deleted from the game as of v168).
+    // - Councils/contracts count now shows claimed contracts under contracts mode,
+    //   or qualifying legacy councils otherwise.
     const ranked = [...players].map(p => {
       const pd = playerData[p.id] || {};
-      const activeCouncils = (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
-      return { p, pd, tickets: pd.tickets || 0, fame: pd.fame || 0, dice: pd.heldDice || 0, activeCouncils, microtrends: pd.microtrendsCompletedCount || 0 };
+      const councilCount = contractsModeRef.current
+        ? (pd.claimedContracts || []).length
+        : (pd.councils || []).filter((c, i) => c && councilQualifies(c, (pd.fields || [])[i], year || 1)).length;
+      return { p, pd, tickets: pd.tickets || 0, fame: pd.fame || 0, councilCount, microtrends: pd.microtrendsCompletedCount || 0 };
     }).sort((a, b) => (b.tickets - a.tickets) || (b.fame - a.fame));
     return <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
@@ -7847,12 +7884,11 @@ export default function Headliners() {
                 <span style={{ fontSize: 18, fontWeight: 800 }}>{medal}</span>
                 <span style={{ fontSize: 16, fontWeight: 700, color: onFire ? "#fde68a" : (yellowed ? "#fbbf24" : "#e9d5ff") }}>{onFire ? "🔥 " : ""}{r.p.festivalName}{r.p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}</span>
               </div>
-              <span style={{ fontSize: 22, fontWeight: 900, color: "#60a5fa" }}>🎟️ {(r.tickets * 100).toLocaleString()}</span>
+              <span style={{ fontSize: 22, fontWeight: 900, color: "#60a5fa" }}>🎟️ {r.tickets}</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, fontSize: 11, color: "#94a3b8" }}>
-              <div style={{ color: onFire ? "#fb923c" : "#94a3b8", animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥 {r.fame}</div>
-              <div><span style={{ color: "#a78bfa" }}>🎲</span> {r.dice}</div>
-              <div><span style={{ color: "#86efac" }}>📋</span> {r.activeCouncils}/3</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 4, fontSize: 11, color: "#94a3b8" }}>
+              <div style={{ color: onFire ? "#fb923c" : "#94a3b8", animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥 Fame: {r.fame}</div>
+              <div><span style={{ color: "#86efac" }}>📋</span> {contractsModeRef.current ? "Contracts claimed" : "Active councils"}: {r.councilCount}</div>
             </div>
             <div style={{ marginTop: 6, padding: "4px 8px", borderRadius: 6, background: "rgba(124,58,237,0.08)", fontSize: 10, color: "#e9d5ff" }}>
               📢 {r.microtrends} microtrend{r.microtrends === 1 ? "" : "s"} completed
@@ -10418,7 +10454,7 @@ export default function Headliners() {
               return <div key={p.id} style={{ padding: 14, borderRadius: 12, background: rev ? "rgba(124,58,237,0.12)" : "rgba(15,14,26,0.4)", border: rev ? "1px solid #7c3aed" : "1px solid #2a2a4a", opacity: rev ? 1 : 0.25, transition: "all 0.5s", textAlign: "left" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: rev ? 10 : 0 }}>
                   <span style={{ fontWeight: 700, fontSize: 15, color: rev ? "#e9d5ff" : "#4a4568" }}>{rev ? p.festivalName : "???"}{p.isAI ? " 🤖" : ""}</span>
-                  <span style={{ fontWeight: 800, fontSize: 18, color: rev ? "#60a5fa" : "#4a4568" }}>{rev ? `🎟️ ${((pd.tickets || 0) * 100).toLocaleString()}` : "?"}</span>
+                  <span style={{ fontWeight: 800, fontSize: 18, color: rev ? "#60a5fa" : "#4a4568" }}>{rev ? `🎟️ ${pd.tickets || 0}` : "?"}</span>
                 </div>
                 {rev && <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
