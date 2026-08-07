@@ -1151,11 +1151,17 @@ function aiPickAmenityType(pd) {
   });
   const headlinerGaps = aiTargetHeadlinerGaps(pd);
   const gapWeight = 10; // higher than council since it's about being able to PLAY the headliner
+  // v191: soft cap on amenity accumulation. When the AI already has ≥3 of a type,
+  // any further pick of that type is heavily deprioritized (huge negative bonus).
+  // Doesn't hard-block picks — if the wanted die simply isn't available, aiPickDie
+  // still falls back correctly. But drops the AI's tendency to spam campsites past
+  // the point of usefulness.
+  const overCapPenalty = (t) => c(t) >= 3 ? -20 : 0;
   const needs = [
-    { type: "security", need: Math.max(0, 3 - c("security")) * 4 + councilBonus.security + (headlinerGaps?.gaps.security || 0) * gapWeight + Math.random() * 2 },
-    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 3 + councilBonus.campsite + (headlinerGaps?.gaps.campsite || 0) * gapWeight + Math.random() * 2 },
-    { type: "catering", need: Math.max(0, 2 - c("catering")) * 3 + councilBonus.catering + (headlinerGaps?.gaps.catering || 0) * gapWeight + Math.random() * 2 },
-    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 3 + councilBonus.portaloo + (headlinerGaps?.gaps.portaloo || 0) * gapWeight + Math.random() * 2 },
+    { type: "security", need: Math.max(0, 3 - c("security")) * 4 + councilBonus.security + (headlinerGaps?.gaps.security || 0) * gapWeight + overCapPenalty("security") + Math.random() * 2 },
+    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 3 + councilBonus.campsite + (headlinerGaps?.gaps.campsite || 0) * gapWeight + overCapPenalty("campsite") + Math.random() * 2 },
+    { type: "catering", need: Math.max(0, 2 - c("catering")) * 3 + councilBonus.catering + (headlinerGaps?.gaps.catering || 0) * gapWeight + overCapPenalty("catering") + Math.random() * 2 },
+    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 3 + councilBonus.portaloo + (headlinerGaps?.gaps.portaloo || 0) * gapWeight + overCapPenalty("portaloo") + Math.random() * 2 },
   ];
   needs.sort((a, b) => b.need - a.need);
   return needs[0].type;
@@ -1634,6 +1640,11 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   if (activeAmenity && neededForArtists[activeAmenity] !== undefined) {
     neededForArtists[activeAmenity] += 4;
   }
+  // v191: apply the ≥3 soft-cap penalty here too so preferredType agrees with the
+  // amenity-picker cap. If we already have 3+ of a type, we don't want more.
+  ["campsite", "security", "catering", "portaloo"].forEach(t => {
+    if ((counts[t] || 0) >= 3) neededForArtists[t] = (neededForArtists[t] || 0) - 20;
+  });
 
   return { action: "amenity", preferredType: Object.entries(neededForArtists).sort((a, b) => b[1] - a[1])[0]?.[0], wantsFameThisTurn };
 }
@@ -1829,8 +1840,41 @@ export default function Headliners() {
   // each player's stat row for spectators. Updated on each of the three main action types
   // (book artist, build amenity, tempt). Cleared on new year.
   //   Shape: { pid: string }
+  // v190: last-turn action tracker upgraded from single-string to per-turn-array.
+  // `lastAction[pid]` — array of strings from that player's most-recently-completed turn.
+  // Displayed on OTHER players' turns so everyone can catch up on what each opponent did.
+  // `currentTurnActions[pid]` — working array of actions during the player's active turn.
+  // On endTurn, currentTurnActions[pid] snapshots to lastAction[pid] and clears.
   const [lastAction, setLastAction] = useState({});
-  const setLastActionFor = (pid, text) => setLastAction(prev => ({ ...prev, [pid]: text }));
+  const [currentTurnActions, setCurrentTurnActions] = useState({});
+  // v190: per-year, per-player statistics for the game data table. Populated
+  // incrementally through the year for counter-type stats (microtrends, tempts),
+  // and snapshotted at year end for state-type stats (artists on stages, stage count,
+  // bonus tickets from artist effects).
+  //   yearlyStats[pid][year] = {
+  //     microtrends, temptsPlaced, temptsWon,
+  //     artistsOnStages, stageCount, ticketsFromArtists,
+  //   }
+  const [yearlyStats, setYearlyStats] = useState({});
+  const bumpYearlyStat = (pid, key, delta = 1) => {
+    const y = yearRef.current || year || 1;
+    setYearlyStats(prev => {
+      const perP = prev[pid] || {};
+      const perY = perP[y] || {};
+      return { ...prev, [pid]: { ...perP, [y]: { ...perY, [key]: (perY[key] || 0) + delta } } };
+    });
+  };
+  // Append an action to the current player's turn log. Callers use this for ALL trackable
+  // actions: tempts, plays, amenity picks, pool draws (with artist names), deck draws
+  // (count only — hidden info), microtrend claims, etc.
+  const setLastActionFor = (pid, text) => {
+    setCurrentTurnActions(prev => {
+      const cur = prev[pid] || [];
+      // Guard against literal duplicates (e.g. React StrictMode double-fires)
+      if (cur[cur.length - 1] === text) return prev;
+      return { ...prev, [pid]: [...cur, text] };
+    });
+  };
   // v133: fame-gain popup queue. Every fame gain enqueues an entry the player must
   // click through — a deliberate friction so the impact of gaining Fame is felt viscerally
   // instead of scrolling past in the log. Only queues for human players (AI gains are
@@ -1887,17 +1931,20 @@ export default function Headliners() {
     setPlayerData(prev => {
       const cur = prev[pid] || {};
       const newProgress = (cur.stageProgress || 0) + 1;
-      if (newProgress >= 2) {
+      // v191: threshold raised from 2 to 3 progress. Combined with the +1 Fame
+      // microtrend reduction, this slows the pace of stage-2/stage-3 opening
+      // (players need 3 microtrend/stage-die claims per new stage instead of 2).
+      if (newProgress >= 3) {
         // Cross the threshold — bank a credit and roll progress back
         setTimeout(() => grantStageCredit(pid, reason), 40);
-        return { ...prev, [pid]: { ...cur, stageProgress: newProgress - 2 } };
+        return { ...prev, [pid]: { ...cur, stageProgress: newProgress - 3 } };
       }
       return { ...prev, [pid]: { ...cur, stageProgress: newProgress } };
     });
   };
   // Legacy shim: keeps existing microtrend-claim call sites working. All they need
   // to know is "this claim just fired, credit the progress." The threshold change
-  // (from 3 to 2) is handled inside grantStageProgress.
+  // (v191: now 3, was 2, was 3 originally) is handled inside grantStageProgress.
   const checkMicrotrendCredit = (pid) => {
     if (stageOpenModeRef.current !== "trends") return;
     grantStageProgress(pid, "Microtrend claim");
@@ -3066,6 +3113,7 @@ export default function Headliners() {
       addLog("💫 Tempt", `${pName} spent 1 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
       showFloatingBonus(`💫 Tempting ${artist.name}`, "#fbbf24");
       setLastActionFor(pid, `is tempting ${artist.name}`);
+      bumpYearlyStat(pid, "temptsPlaced");
       return true;
     }
     setAgentPlacements(prev => ({ ...prev, [pid]: { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber } }));
@@ -3477,6 +3525,12 @@ export default function Headliners() {
     addLog("💫 Tempt", `${name} gained +2 🔥 Fame for winning an uncontested tempt!`);
     showFloatingBonus("+2 🔥 uncontested!", "#f97316");
     sfx.gainFame();
+    bumpYearlyStat(pid, "temptsWon");
+    // v190: `pd.fame` is a derived value (computed from baseFame in computeTicketsForPlayer).
+    // Without a recalc, `setPlayerData` above updates baseFame but the displayed fame stays
+    // stale until the next recalc fires elsewhere — which caused the "I had 4 Fame but the
+    // display showed 2 until my turn ended" bug. Recalcing here surfaces the gain immediately.
+    setTimeout(() => recalcTickets(), 50);
   };
 
   const commitAgentContest = (contest) => {
@@ -3583,6 +3637,12 @@ export default function Headliners() {
     } else {
       addLog("🕵️ Agent Contest", `${winnerName} won ${artist.name} on the ${faceLabel.label} roll (${winnerValue}). All contestants gained +1 🔥 Fame (industry buzz).`);
     }
+    // v190: last-turn tracker — record contest wins and losses per contestant
+    setLastActionFor(winnerId, `won a contest for ${artist.name}`);
+    contestantData.forEach(c => {
+      if (c.pid !== winnerId) setLastActionFor(c.pid, `lost a contest for ${artist.name} (Fame refunded)`);
+    });
+    bumpYearlyStat(winnerId, "temptsWon");
     // v135: alt-objectives event — Popularity Contest tracks contest wins for the winner.
     bumpYearEvent(winnerId, "contestWinsThisYear");
     setTimeout(() => checkMidYearAchievements(winnerId), 80);
@@ -4829,6 +4889,7 @@ export default function Headliners() {
           setArtistPool(prev => { const np = [...prev]; const idx = np.findIndex(a => a.name === chosen.name); if (idx >= 0) np.splice(idx, 1); return np; });
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
           addLog("Effect", `${artist.name}: gained ${chosen.name} from the pool (lower Fame)`);
+          setLastActionFor(pid, `pulled ${chosen.name} from the pool (${artist.name} effect)`);
           showFloatingBonus(`🎁 ${chosen.name} to hand`, "#c4b5fd");
         } else {
           addLog("Effect", `${artist.name}: no eligible lower-Fame artist in pool (tempted artists excluded)`);
@@ -4918,6 +4979,7 @@ export default function Headliners() {
             setArtistPool(prev => { const np = [...prev]; np.splice(bestIdx, 1); return np; });
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
             addLog("Effect", `${artist.name}: took ${chosen.name} into hand`);
+            setLastActionFor(pid, `pulled ${chosen.name} from the pool (${artist.name} effect)`);
           } else {
             // Human: queue a picker modal. Uses the same pendingEffect scaffold so the UI
             // that resolves it lives alongside other effect modals.
@@ -5027,6 +5089,7 @@ export default function Headliners() {
         if (drawn.length > 0) {
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
           addLog("Effect", `${artist.name}: drew ${drawn.length} artist${drawn.length === 1 ? "" : "s"}`);
+          setLastActionFor(pid, `drew ${drawn.length} artist${drawn.length === 1 ? "" : "s"} from deck (${artist.name} effect)`);
           showFloatingBonus(`+${drawn.length} 🎴`, "#c4b5fd");
         }
       }
@@ -5040,6 +5103,7 @@ export default function Headliners() {
           const newPool = [...currentPool]; newPool.splice(idx, 1); setArtistPool(newPool);
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), drawn] } }));
           addLog("Effect", `${artist.name}: drew ${drawn.name} from pool`);
+          setLastActionFor(pid, `pulled ${drawn.name} from the pool (${artist.name} effect)`);
           showFloatingBonus(`+1 🎴 from pool!`, "#c4b5fd");
         }
       }
@@ -5437,8 +5501,8 @@ export default function Headliners() {
       if (getGenres(artist.genre).includes(mt.genre)) {
         claimedActive = true;
         const isTempt = temptModeRef.current;
-        // v165: microtrend claims are fame-only now. Tempt mode grants +2, agent mode +1.
-        const fameGain = isTempt ? 2 : 1;
+        // v165: microtrend claims are fame-only. v191: reduced to flat +1 (was +2 under tempt).
+        const fameGain = 1; // v191: reduced from 2 to 1 — Fame was becoming too easy from Year 2 onward
         logFameGain(pid, fameGain, "Matching a Microtrend");
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
@@ -5446,6 +5510,8 @@ export default function Headliners() {
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
         addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
+        setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
+        bumpYearlyStat(pid, "microtrends");
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
@@ -5468,7 +5534,7 @@ export default function Headliners() {
     if (!claimedActive && canClaimForecast(pid) && nextMicrotrend && nextMicrotrend.kind === "genre") {
       if (getGenres(artist.genre).includes(nextMicrotrend.genre)) {
         const isTempt = temptModeRef.current;
-        const fameGain = isTempt ? 2 : 1;
+        const fameGain = 1; // v191: reduced from 2 to 1 — Fame was becoming too easy from Year 2 onward
         const claimedTrend = nextMicrotrend;
         // v165: microtrend claims are fame-only, forecast included.
         logFameGain(pid, fameGain, "Matching a Forecast Microtrend");
@@ -5478,6 +5544,8 @@ export default function Headliners() {
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
         addLog("🎵 Microtrend", `${festival} claimed the forecast "${claimedTrend.genre}" microtrend (anti-lead) → +${fameGain} 🔥 Fame!`);
+        setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
+        bumpYearlyStat(pid, "microtrends");
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
         setTimeout(() => checkMidYearAchievements(pid), 80);
@@ -6098,6 +6166,7 @@ export default function Headliners() {
         setArtistPool(prev => { const idx = prev.findIndex(x => x.name === picked.a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked.a] } }));
         addLog("🤖 AI", `${pe.artistName}: picked ${picked.a.name} from pool`);
+        setLastActionFor(pid, `pulled ${picked.a.name} from the pool (${pe.artistName} effect)`);
         if (remaining > 1) {
           setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
         } else {
@@ -6152,11 +6221,13 @@ export default function Headliners() {
             setArtistPool(prev => { const idx = prev.findIndex(x => x.name === picked.a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked.a] } }));
             addLog("🤖 AI", `${pe.artistName}: picked ${picked.a.name} from pool`);
+            setLastActionFor(pid, `pulled ${picked.a.name} from the pool (${pe.artistName} effect)`);
           } else {
             const drawn = drawFromDeck(1);
             if (drawn.length > 0) {
               setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), drawn[0]] } }));
               addLog("🤖 AI", `${pe.artistName}: drew ${drawn[0].name} from deck`);
+              setLastActionFor(pid, `drew 1 artist from deck (${pe.artistName} effect)`);
             }
           }
         } else {
@@ -6164,6 +6235,7 @@ export default function Headliners() {
           if (drawn.length > 0) {
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), drawn[0]] } }));
             addLog("🤖 AI", `${pe.artistName}: drew ${drawn[0].name} from deck`);
+            setLastActionFor(pid, `drew 1 artist from deck (${pe.artistName} effect)`);
           }
         }
         if (remaining > 1) {
@@ -6689,13 +6761,14 @@ export default function Headliners() {
       // v172: broader stage-progress hunger. AI wants stage progress whenever it has
       // < 3 stages AND doesn't already have a credit banked (banked credits waste
       // stage dice). If it has < 2 stages, wants it aggressively regardless.
+      // v191: after the +2→+1 microtrend cut AND the 2→3 credit threshold change,
+      // stage progress is scarcer. AI needs to be MORE aggressive on stage dice
+      // to keep opening stages at a healthy rate — pursue them any time credits are 0
+      // and stages < 3, regardless of amenity total.
       const aiPdSnap = playerData[currentPlayerId] || {};
       const aiStages = (aiPdSnap.stages || []).length;
       const aiCredits = aiPdSnap.stageOpenCredits || 0;
-      const aiAmen = aiPdSnap.amenities || {};
-      const aiTotalAm = (aiAmen.campsite || 0) + (aiAmen.portaloo || 0) + (aiAmen.security || 0) + (aiAmen.catering || 0);
-      const wantsStageProgress = aiStages < 3 && aiCredits === 0
-        && (aiStages < 2 || aiTotalAm >= 4);
+      const wantsStageProgress = aiStages < 3 && aiCredits === 0;
       const pick = aiPickDie(currentDice, pd, decision.preferredType, wantsStageProgress, decision.wantsFameThisTurn);
       const dieVal = currentDice[pick.idx];
 
@@ -6783,9 +6856,9 @@ export default function Headliners() {
       if (mt.claimedBy !== null) return mt;
       if (mt.kind !== "amenity") return mt;
       if (mt.amenity !== amenityType) return mt;
-      // v165: microtrend claims are fame-only. Tempt mode grants +2, agent mode +1.
+      // v165: microtrend claims are fame-only. v191: reduced to flat +1 (was +2 under tempt).
       const isTempt = temptModeRef.current;
-      const fameGain = isTempt ? 2 : 1;
+      const fameGain = 1; // v191: reduced from 2 to 1
       logFameGain(pid, fameGain, "Matching a Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
@@ -6793,6 +6866,8 @@ export default function Headliners() {
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
+      setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} Council Incentive (+${fameGain} Fame)`);
+      bumpYearlyStat(pid, "microtrends");
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]}!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -6804,7 +6879,7 @@ export default function Headliners() {
     // microtrend if their placement matches it, giving trailing players an early advantage.
     if (!claimedActive && canClaimForecast(pid) && nextAmenityMicrotrend && nextAmenityMicrotrend.amenity === amenityType) {
       const isTempt = temptModeRef.current;
-      const fameGain = isTempt ? 2 : 1;
+      const fameGain = 1; // v191: reduced from 2 to 1
       const claimedTrend = nextAmenityMicrotrend;
       logFameGain(pid, fameGain, "Matching a Forecast Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
@@ -6813,6 +6888,8 @@ export default function Headliners() {
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched the forecast "${AMENITY_LABELS[amenityType]}" (anti-lead) → +${fameGain} 🔥 Fame!`);
+      setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} forecast Council Incentive (+${fameGain} Fame)`);
+      bumpYearlyStat(pid, "microtrends");
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
@@ -6993,6 +7070,7 @@ export default function Headliners() {
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, artist] } }));
     setArtistPool(newPool);
     addLog(currentPlayer.festivalName, `picked up ${artist.name} from pool`);
+    setLastActionFor(currentPlayerId, `pulled ${artist.name} from the pool`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
     // Council reward: drawArtists councils give +N additional artists from the deck
     applyDrawArtistsBonus(currentPlayerId);
@@ -7018,6 +7096,7 @@ export default function Headliners() {
     const newPicks = [...draw2Picks, artist];
     setDraw2Picks(newPicks);
     addLog(currentPlayer.festivalName, `drew ${artist.name} from pool (${newPicks.length}/2)`);
+    setLastActionFor(currentPlayerId, `pulled ${artist.name} from the pool`);
     if (newPicks.length >= 2) finishDraw2(newPicks);
   };
   const draw2PickFromDeck = () => {
@@ -7028,6 +7107,7 @@ export default function Headliners() {
     const newPicks = [...draw2Picks, drawn[0]];
     setDraw2Picks(newPicks);
     addLog(currentPlayer.festivalName, `drew ${drawn[0].name} from deck (${newPicks.length}/2)`);
+    setLastActionFor(currentPlayerId, `drew 1 artist from the deck`);
     if (newPicks.length >= 2) finishDraw2(newPicks);
   };
   const finishDraw2 = (picks) => {
@@ -7156,6 +7236,10 @@ export default function Headliners() {
   const endTurn = () => {
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
+    // v190: freeze current turn actions as the "last turn" record for this player, then
+    // clear the working buffer so their next turn starts fresh.
+    setLastAction(prev => ({ ...prev, [currentPlayerId]: currentTurnActions[currentPlayerId] || [] }));
+    setCurrentTurnActions(prev => ({ ...prev, [currentPlayerId]: [] }));
     setTurnAction(null); setSelectedDie(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0);
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
     setPlaysThisTurn(0); // v170: reset the per-turn play counter
@@ -8386,6 +8470,28 @@ export default function Headliners() {
     setAgentBookedThisYear({});
     // Apply artist objective rewards from last year's lineups (BEFORE clearing stages)
     applyObjectiveRewards();
+    // v190: snapshot per-year state stats BEFORE clearing stages. Captures:
+    //   - artists booked on stages that year (names, tickets, vp, genre)
+    //   - stage count that year
+    //   - bonus tickets from artist effects (before it resets to 0)
+    // This data feeds the game data table export.
+    const snapshotYear = yearRef.current || year || 1;
+    setYearlyStats(prev => {
+      const next = { ...prev };
+      for (const p of players) {
+        const pd = playerDataRef.current?.[p.id] || playerData[p.id] || {};
+        const perP = { ...(next[p.id] || {}) };
+        const perY = { ...(perP[snapshotYear] || {}) };
+        perY.artistsOnStages = (pd.stageArtists || []).flat().map(a => ({
+          name: a.name, genre: a.genre, tickets: a.tickets, vp: a.vp, fame: a.fame,
+        }));
+        perY.stageCount = (pd.stages || []).length;
+        perY.ticketsFromArtists = pd.bonusTickets || 0;
+        perP[snapshotYear] = perY;
+        next[p.id] = perP;
+      }
+      return next;
+    });
     // Capture pre-round baseFame (from opening stages) BEFORE resetting
     const preRoundFame = {};
     players.forEach(p => { preRoundFame[p.id] = playerData[p.id]?.baseFame || 0; });
@@ -9363,6 +9469,7 @@ export default function Headliners() {
                       setArtistPool(prev => { const idx = prev.findIndex(x => x.name === a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
                       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
                       addLog("Effect", `${pe.artistName}: picked ${a.name} from the pool`);
+                      setLastActionFor(pid, `pulled ${a.name} from the pool (${pe.artistName} effect)`);
                       if (remaining > 1) setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
                       else { setPendingEffect(null); setPendingEffectPid(null); }
                     }} style={{ cursor: "pointer" }}>
@@ -9558,6 +9665,7 @@ export default function Headliners() {
                     setArtistPool(prev => { const idx = prev.findIndex(x => x.name === a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
                     setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
                     addLog("Effect", `${pe.artistName}: picked ${a.name} from the pool`);
+                    setLastActionFor(pid, `pulled ${a.name} from the pool (${pe.artistName} effect)`);
                     if (remaining > 1) setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
                     else { setPendingEffect(null); setPendingEffectPid(null); }
                   }} style={{ cursor: "pointer" }}>
@@ -10138,7 +10246,16 @@ export default function Headliners() {
                 💫 {p.festivalName} is tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}
               </div>}
               {/* v132: last-action line for spectator awareness */}
-              {lastAction[p.id] && !ic && <div style={{ marginTop: 4, fontSize: 10, color: "#8b5cf6", fontStyle: "italic" }}>Last: {p.festivalName} {lastAction[p.id]}</div>}
+              {(() => {
+                const acts = lastAction[p.id];
+                if (!acts || ic) return null;
+                const arr = Array.isArray(acts) ? acts : [acts];
+                if (arr.length === 0) return null;
+                return <div style={{ marginTop: 4, fontSize: 10, color: "#8b5cf6", fontStyle: "italic" }}>
+                  <div style={{ fontWeight: 700, color: "#a78bfa", marginBottom: 2 }}>Last turn ({p.festivalName}):</div>
+                  {arr.map((a, i) => <div key={i} style={{ marginLeft: 6 }}>• {a}</div>)}
+                </div>;
+              })()}
               {/* v135: alt-objectives — objectives are HIDDEN info; only the current player
                   sees their own. Opponents' objective panels stay hidden so nobody can
                   reverse-engineer what they're trying for. v138: completed objectives are
@@ -10184,7 +10301,7 @@ export default function Headliners() {
                 return <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
                   <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎪 Stage Progress</div>
                   <div style={{ fontSize: 10, color: "#e2e8f0" }}>Stages: <strong style={{ color: "#86efac" }}>{stages}/3</strong></div>
-                  {stages < 3 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>Progress: <strong style={{ color: "#c4b5fd" }}>{progress}/2</strong> (microtrends + stage dice)</div>}
+                  {stages < 3 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>Progress: <strong style={{ color: "#c4b5fd" }}>{progress}/3</strong> (microtrends + stage dice)</div>}
                   {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 11, fontWeight: 700, cursor: "pointer", width: "100%" }}>🎪 Open a Stage ({credits} credit{credits === 1 ? "" : "s"})</button>}
                   {credits > 0 && stages >= 3 && <div style={{ fontSize: 9, color: "#f87171", marginTop: 3 }}>{credits} credit{credits === 1 ? "" : "s"} banked (max stages reached)</div>}
                 </div>;
@@ -10269,7 +10386,7 @@ export default function Headliners() {
                       return <div style={{ padding: 4, borderRadius: 6, marginBottom: 3, background: claimed ? "rgba(107,114,128,0.1)" : `${accent}15`, opacity: claimed ? 0.5 : 1 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: claimed ? "#6b7280" : accent }}>{claimed ? "✓" : "🔥"} {action}</div>
                         {claimed && <div style={{ fontSize: 8, color: "#6b7280" }}>Claimed by {claimer}</div>}
-                        {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to match → +{temptMode ? 2 : 1} Fame</div>}
+                        {!claimed && <div style={{ fontSize: 8, color: "#94a3b8" }}>First to match → +1 Fame</div>}
                       </div>;
                     })()}
                     {forecast && (() => {
@@ -10344,7 +10461,16 @@ export default function Headliners() {
                   <span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
                 {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 3, padding: "2px 5px", borderRadius: 5, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>💫 tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}</div>}
-                {lastAction[p.id] && !ic && <div style={{ marginTop: 3, fontSize: 9, color: "#8b5cf6", fontStyle: "italic" }}>Last: {lastAction[p.id]}</div>}
+                {(() => {
+                  const acts = lastAction[p.id];
+                  if (!acts || ic) return null;
+                  const arr = Array.isArray(acts) ? acts : [acts];
+                  if (arr.length === 0) return null;
+                  return <div style={{ marginTop: 3, fontSize: 9, color: "#8b5cf6", fontStyle: "italic" }}>
+                    <div style={{ fontWeight: 700, color: "#a78bfa" }}>Last turn:</div>
+                    {arr.map((a, i) => <div key={i} style={{ marginLeft: 4 }}>• {a}</div>)}
+                  </div>;
+                })()}
                 {altObjectivesMode && p.id === currentPlayerId && ((activeObjectives[p.id] || []).length > 0 || (completedObjectives[p.id] || []).length > 0) && <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
                   <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎯 Your Objectives</div>
                   {(activeObjectives[p.id] || []).map(e => { const obj = getAltObjective(e.id); return obj ? <div key={e.id} style={{ fontSize: 8, color: "#e2e8f0", cursor: "help" }} title={obj.req}>◇ {obj.name}</div> : null; })}
@@ -10372,7 +10498,7 @@ export default function Headliners() {
                   if (stages >= 3 && credits === 0) return null;
                   return <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
                     <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎪 Stages: {stages}/3</div>
-                    {stages < 3 && <div style={{ fontSize: 8, color: "#94a3b8" }}>Progress: {progress}/2 to next credit</div>}
+                    {stages < 3 && <div style={{ fontSize: 8, color: "#94a3b8" }}>Progress: {progress}/3 to next credit</div>}
                     {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 4, padding: "4px 8px", borderRadius: 5, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 9, fontWeight: 700, cursor: "pointer", width: "100%" }}>Open Stage ({credits})</button>}
                   </div>;
                 })()}
@@ -10462,7 +10588,7 @@ export default function Headliners() {
                     {claimed ? "✓" : "🔥"} {action}
                   </div>
                   {claimed && <div style={{ fontSize: 11, color: "#6b7280" }}>Claimed by {claimer}</div>}
-                  {!claimed && <div style={{ fontSize: 11, color: "#94a3b8" }}>First to match → +{temptMode ? 2 : 1} Fame</div>}
+                  {!claimed && <div style={{ fontSize: 11, color: "#94a3b8" }}>First to match → +1 Fame</div>}
                 </div>;
               })}
               {nextMicrotrend && (() => {
@@ -10474,7 +10600,7 @@ export default function Headliners() {
                 return <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 8, background: canClaim ? "rgba(74,222,128,0.10)" : "rgba(15,14,26,0.5)", border: canClaim ? `1px solid ${accent}` : `1px dashed ${accent}60` }}>
                   <div style={{ fontSize: 9, fontWeight: 700, color: canClaim ? "#4ade80" : "#64748b", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 2 }}>{canClaim ? "🎯 Anti-Lead: Claimable" : "⏭ Coming up next"}</div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: accent, opacity: canClaim ? 1 : 0.85 }}>{action}</div>
-                  {canClaim && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>Match to claim early → +{temptMode ? 2 : 1} Fame</div>}
+                  {canClaim && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>Match to claim early → +1 Fame</div>}
                 </div>;
               })()}
             </div>}
@@ -11557,70 +11683,188 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   // RENDER: GAME OVER
   // ═══════════════════════════════════════════════════════════
+  // v190: game data table — replaces the old CSV export with the format River
+  // requested. Structure: win condition, per-player year-by-year breakdown
+  // (tickets/fame/microtrends/stages/tempts/artist tickets/artist names/identity/
+  // genres played), then a global genre-averages block (mean/median/mode of tickets
+  // per genre across all players, sorted highest first).
   const exportGameData = () => {
     const rows = [];
-    rows.push(["HEADLINERS — Game Summary"]);
-    rows.push([`Winner: ${winner?.festivalName || "N/A"}`, `Tickets Sold: ${winner ? (playerData[winner.id]?.tickets || 0) * 100 : 0}`]);
+    const totalYearsPlayed = totalYears || 3;
+    const yearRange = Array.from({ length: totalYearsPlayed }, (_, i) => i + 1);
+
+    // ── HEADER: win condition ──
+    const winConditionLabel = ({
+      following: "Following (cumulative tickets)",
+      consistency: "Consistency (most year-leads)",
+      "talk-of-town": "Talk of the Town (highest single-year peak)",
+    }[winCondition] || winCondition || "N/A");
+    rows.push(["HEADLINERS — Game Data Table"]);
+    rows.push([`Date: ${new Date().toISOString().slice(0, 10)}`]);
+    rows.push([`Win Condition: ${winConditionLabel}`]);
     rows.push([]);
 
-    // Scoreboard — v126: tickets is the unified score
-    const headers = ["Festival", "AI?"];
-    for (let y = 1; y <= 4; y++) headers.push(`Yr${y} Tickets (raw)`, `Yr${y} Tickets (×100)`, `Yr${y} Fame`);
-    headers.push("Final Tickets (raw)", "Final Tickets (×100)");
-    rows.push(headers);
-
-    players.forEach(p => {
-      const pd = playerData[p.id] || {};
-      const row = [p.festivalName, p.isAI ? "Yes" : "No"];
-      for (let y = 1; y <= 4; y++) {
-        const td = allTickets[p.id]?.[y];
-        if (td && typeof td === "object") { row.push(td.raw || 0, (td.raw || 0) * 100, td.fame || 0); }
-        else { row.push(td || 0, (td || 0) * 100, "?"); }
-      }
-      row.push(pd.tickets || 0, (pd.tickets || 0) * 100);
-      rows.push(row);
+    // ── Determine placement order per win condition ──
+    // Reuse the same logic the game-over screen uses.
+    const perPlayer = players.map(p => {
+      const byYear = allTickets[p.id] || {};
+      const yearTickets = yearRange.map(y => byYear[y]?.raw || 0);
+      const total = yearTickets.reduce((s, t) => s + t, 0);
+      const peak = Math.max(...yearTickets, 0);
+      return { player: p, total, peak, yearTickets, byYear };
     });
+    // years-led per player (for Consistency)
+    const yearsLed = {}; players.forEach(p => { yearsLed[p.id] = 0; });
+    yearRange.forEach(y => {
+      let best = -1; let leaders = [];
+      players.forEach(p => {
+        const t = allTickets[p.id]?.[y]?.raw || 0;
+        if (t > best) { best = t; leaders = [p.id]; }
+        else if (t === best && t > 0) leaders.push(p.id);
+      });
+      if (leaders.length === 1 && best > 0) yearsLed[leaders[0]] += 1;
+    });
+    let ordered;
+    if (winCondition === "consistency") {
+      ordered = [...perPlayer].sort((a, b) => (yearsLed[b.player.id] - yearsLed[a.player.id]) || (b.total - a.total));
+    } else if (winCondition === "talk-of-town") {
+      ordered = [...perPlayer].sort((a, b) => (b.peak - a.peak) || (b.total - a.total));
+    } else {
+      ordered = [...perPlayer].sort((a, b) => b.total - a.total);
+    }
+    const placeOrdinal = (i) => ["1st", "2nd", "3rd", "4th", "5th"][i] || `${i + 1}th`;
 
-    rows.push([]); rows.push(["— Festival Details —"]); rows.push([]);
+    // ── Per-player block ──
+    ordered.forEach((entry, placeIdx) => {
+      const p = entry.player;
+      const pid = p.id;
+      const pd = playerData[pid] || {};
+      const yStats = yearlyStats[pid] || {};
 
-    players.forEach(p => {
-      const pd = playerData[p.id] || {};
-      rows.push([`Festival: ${p.festivalName}`, p.isAI ? "(AI)" : ""]);
-      rows.push(["Final Tickets", (pd.tickets || 0) * 100, "Final Fame", pd.fame || 0, "Stages", (pd.stages || []).length]);
-      rows.push([]);
-      rows.push(["Amenity", "Count"]);
-      AMENITY_TYPES.forEach(t => rows.push([AMENITY_LABELS[t], (pd.amenities?.[t]) || 0]));
-      rows.push([]);
+      rows.push([`═══════ ${p.festivalName}${p.isAI ? " (AI)" : ""} — ${placeOrdinal(placeIdx).toUpperCase()} PLACE ═══════`]);
 
-      (pd.stages || []).forEach((_, si) => {
-        const sName = (pd.stageNames || [])[si] || `Stage ${si + 1}`;
-        const sa = (pd.stageArtists || [])[si] || [];
-        rows.push([`${sName} Lineup`]);
-        if (sa.length === 0) { rows.push(["  (empty)"]); }
-        else {
-          rows.push(["  Artist", "Genre", "Fame", "Tickets", "VP", "Effect", "Role"]);
-          sa.forEach((a, ai) => rows.push(["  " + a.name, a.genre, a.fame, a.tickets, a.vp, a.effect || "", ai === 2 ? "HEADLINER" : `Slot ${ai + 1}`]));
-        }
-        rows.push([]);
+      // Year headers
+      const yearHeader = ["Metric", ...yearRange.map(y => `Year ${y}`)];
+      rows.push(yearHeader);
+
+      // Tickets per year
+      rows.push(["Tickets", ...yearRange.map(y => allTickets[pid]?.[y]?.raw || 0)]);
+      // Fame per year (end-of-year fame from snapshot)
+      rows.push(["Fame (year-end)", ...yearRange.map(y => allTickets[pid]?.[y]?.fame ?? "")]);
+      // Microtrends per year
+      rows.push(["Microtrends claimed", ...yearRange.map(y => (yStats[y]?.microtrends) || 0)]);
+      // Stage quantity per year
+      rows.push(["Stage count", ...yearRange.map(y => {
+        // Fall back to current stage count for the final year if snapshot missed
+        return (yStats[y]?.stageCount) ?? (y === yearRange[yearRange.length - 1] ? (pd.stages || []).length : "");
+      })]);
+      // Tempts successful / total per year
+      rows.push(["Tempts won / placed", ...yearRange.map(y => {
+        const won = (yStats[y]?.temptsWon) || 0;
+        const placed = (yStats[y]?.temptsPlaced) || 0;
+        return `${won} / ${placed}`;
+      })]);
+      // Tickets from artists per year — base (from artist tickets+vp) and effect tickets separately.
+      // "Tickets from artists" = sum of a.tickets + a.vp for each artist on stage that year.
+      // "Effect tickets" = pd.bonusTickets snapshot at year end.
+      rows.push(["Tickets from artists (effect tickets)", ...yearRange.map(y => {
+        const arts = yStats[y]?.artistsOnStages || [];
+        const artistBase = arts.reduce((s, a) => s + (a.tickets || 0) + (a.vp || 0), 0);
+        const effectTickets = yStats[y]?.ticketsFromArtists || 0;
+        return `${artistBase} (${effectTickets})`;
+      })]);
+      // Artist names on stage per year
+      yearRange.forEach(y => {
+        const arts = yStats[y]?.artistsOnStages || [];
+        // Final year isn't snapshotted (game ends before endTurn's year snapshot on the final year end)
+        // — fall back to current stageArtists on the final year if empty
+        let names;
+        if (arts.length > 0) names = arts.map(a => a.name);
+        else if (y === yearRange[yearRange.length - 1]) {
+          names = (pd.stageArtists || []).flat().map(a => a.name);
+        } else names = [];
+        rows.push([`Year ${y} Artists on Stage`, names.length > 0 ? names.join(", ") : "(none)"]);
       });
 
-      if ((pd.hand || []).length > 0) {
-        rows.push(["Remaining Hand"]); rows.push(["  Artist", "Genre", "Fame", "VP"]);
-        pd.hand.forEach(a => rows.push(["  " + a.name, a.genre, a.fame, a.vp]));
-        rows.push([]);
-      }
-      const objs = playerObjectives[p.id] || [];
-      if (objs.length > 0) { rows.push(["Artist Objectives"]); objs.forEach(entry => rows.push(["  " + entry.obj.name, entry.obj.req, entry.completed ? "Completed" : "Incomplete", entry.obj.reward])); }
-      // Council objectives removed
-      rows.push([]); rows.push(["───────────"]); rows.push([]);
+      // Identity + total gain/loss
+      const idId = playerIdentities[pid];
+      const identityName = idId ? (ALL_IDENTITIES.find(i => i.id === idId)?.name || idId) : "None";
+      const iLog = identityLog[pid] || [];
+      const totalGain = iLog.filter(e => e.amount > 0).reduce((s, e) => s + e.amount, 0);
+      const totalLoss = iLog.filter(e => e.amount < 0).reduce((s, e) => s + Math.abs(e.amount), 0);
+      rows.push(["Identity", `${identityName} — total gain ${totalGain} (total loss ${totalLoss})`]);
+
+      // Genres played breakdown (whole game, aggregated from year-end snapshots + final-year fallback)
+      const genreCounts = { Pop: { count: 0, tickets: 0 }, Rock: { count: 0, tickets: 0 }, "Hip Hop": { count: 0, tickets: 0 }, Electronic: { count: 0, tickets: 0 }, Indie: { count: 0, tickets: 0 }, Funk: { count: 0, tickets: 0 } };
+      yearRange.forEach(y => {
+        let arts = yStats[y]?.artistsOnStages;
+        if ((!arts || arts.length === 0) && y === yearRange[yearRange.length - 1]) {
+          // Final-year fallback: read current stageArtists (game ended before snapshot)
+          arts = (pd.stageArtists || []).flat();
+        }
+        (arts || []).forEach(a => {
+          const genres = getGenres(a.genre || "");
+          const per = ((a.tickets || 0) + (a.vp || 0)) / Math.max(1, genres.length);
+          genres.forEach(g => {
+            if (!genreCounts[g]) genreCounts[g] = { count: 0, tickets: 0 };
+            genreCounts[g].count += 1 / Math.max(1, genres.length); // split multi-genre artists across genres
+            genreCounts[g].tickets += per;
+          });
+        });
+      });
+      const genreLine = Object.entries(genreCounts)
+        .filter(([_, v]) => v.count > 0)
+        .map(([g, v]) => `${g} (${Math.round(v.count * 10) / 10} artists / ${Math.round(v.tickets)} tickets)`)
+        .join(" · ");
+      rows.push(["Genres played", genreLine || "(none)"]);
+
+      rows.push([]);
     });
 
-    rows.push(["— Game Log —"]);
-    gameLog.forEach(e => {
-      if (e.type === "header") rows.push([`[${(e.ht || "").toUpperCase()}] ${e.text}`]);
-      else rows.push(["", e.label, e.text]);
+    // ── Global genre averages ──
+    rows.push(["═══════ GLOBAL GENRE AVERAGES ═══════"]);
+    rows.push(["Across all players — tickets contributed per genre (mean / median / mode), sorted by mean descending"]);
+    // Collect per-player per-genre ticket contributions
+    const perGenreSamples = {}; // { genre: [ticketAmountPerPlayer] }
+    ordered.forEach(entry => {
+      const pid = entry.player.id;
+      const pd = playerData[pid] || {};
+      const yStats = yearlyStats[pid] || {};
+      const pgTotals = {}; // per player, per genre
+      yearRange.forEach(y => {
+        let arts = yStats[y]?.artistsOnStages;
+        if ((!arts || arts.length === 0) && y === yearRange[yearRange.length - 1]) {
+          arts = (pd.stageArtists || []).flat();
+        }
+        (arts || []).forEach(a => {
+          const genres = getGenres(a.genre || "");
+          const per = ((a.tickets || 0) + (a.vp || 0)) / Math.max(1, genres.length);
+          genres.forEach(g => { pgTotals[g] = (pgTotals[g] || 0) + per; });
+        });
+      });
+      Object.entries(pgTotals).forEach(([g, t]) => {
+        if (!perGenreSamples[g]) perGenreSamples[g] = [];
+        perGenreSamples[g].push(t);
+      });
     });
+    // Compute stats
+    const stats = Object.entries(perGenreSamples).map(([g, samples]) => {
+      const sorted = [...samples].sort((a, b) => a - b);
+      const mean = samples.reduce((s, v) => s + v, 0) / samples.length;
+      const mid = Math.floor(sorted.length / 2);
+      const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+      // Mode — round to nearest integer for meaningful mode
+      const buckets = {};
+      samples.forEach(v => { const k = Math.round(v); buckets[k] = (buckets[k] || 0) + 1; });
+      const maxFreq = Math.max(...Object.values(buckets));
+      const modes = Object.entries(buckets).filter(([_, c]) => c === maxFreq).map(([k]) => parseInt(k));
+      return { genre: g, mean, median, mode: modes.join("/"), samples };
+    });
+    stats.sort((a, b) => b.mean - a.mean);
+    rows.push(["Genre", "Mean tickets", "Median tickets", "Mode tickets", "Sample count"]);
+    stats.forEach(s => rows.push([s.genre, Math.round(s.mean * 10) / 10, Math.round(s.median * 10) / 10, s.mode, s.samples.length]));
 
+    // ── Serialize + download ──
     const csv = rows.map(r => r.map(c => { const s = String(c ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; }).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -11730,7 +11974,7 @@ export default function Headliners() {
               setMicrotrendHistory([]); setFameGainQueue([]); setFloatingBonuses([]);
               setYearEndEffectsList([]); setYearEndEffectIdx(0); setYearEndEffectsPlayer(0);
               setRevealIndex(0); setLeaderboardRevealed(false); setTurnNumber(0);
-              setLastAction({}); setUndoSnapshot(null); setPendingDiceRoll(null);
+              setLastAction({}); setCurrentTurnActions({}); setYearlyStats({}); setUndoSnapshot(null); setPendingDiceRoll(null);
             }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
