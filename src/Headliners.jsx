@@ -3120,6 +3120,10 @@ export default function Headliners() {
       const resolution = resolvePoolAgents(pid);
       if (!resolution) return;
       if (resolution.type === "uncontested") {
+        // v179: winner gets +2 Fame for uncontested tempt (net +1 after -1 tempt cost).
+        // Fires here (at resolution) so it applies regardless of what the winner does
+        // next (book directly, book via modal, send to hand).
+        grantUncontestedTemptBonus(resolution.pid);
         // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
         // modal renders during the AI's turn and the human user ends up picking a stage
         // for the AI (with no amenity check per-stage, which is how Kendrick landed on
@@ -3142,10 +3146,10 @@ export default function Headliners() {
             addLog("💫 Tempt", `${winner.festivalName} booked ${artist.name} (uncontested)`);
           } else {
             // No playable stage — send to hand.
-            // v169: mark with _tempted so when this card is later played from hand,
-            // its [TEMPT] effect still fires.
-            const tempted = { ...artist, _tempted: true };
-            setPlayerData(prev => ({ ...prev, [resolution.pid]: { ...prev[resolution.pid], hand: [...(prev[resolution.pid]?.hand || []), tempted] } }));
+            // v177: no longer marks with _tempted. TEMPT effects fire only on direct
+            // pool→stage placements. If the artist lands in hand, the TEMPT trigger
+            // is lost forever.
+            setPlayerData(prev => ({ ...prev, [resolution.pid]: { ...prev[resolution.pid], hand: [...(prev[resolution.pid]?.hand || []), artist] } }));
             const newPool = [...(artistPool || [])]; const idx = newPool.findIndex(a => a.name === artist.name);
             if (idx >= 0) { newPool.splice(idx, 1); setArtistPool(newPool); }
             setTemptPlacements(prev => ({ ...prev, [resolution.pid]: (prev[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
@@ -3450,6 +3454,23 @@ export default function Headliners() {
   // artist. No "+1 industry buzz" fame is added under tempt (the refund IS the payoff for
   // contesting; the industry-buzz reward would double-dip). Under standard agent mode the
   // buzz reward still fires as before.
+  // v179: helper — award the +2 Fame bonus for winning an uncontested tempt.
+  // Under tempt mode, an uncontested tempt win nets the player +1 Fame overall
+  // (they paid 1 to tempt, get 2 back on winning solo). This fires at the point
+  // of resolution, before the artist is booked or sent to hand.
+  const grantUncontestedTemptBonus = (pid) => {
+    if (!temptModeRef.current) return;
+    setPlayerData(p => {
+      const opd = p[pid] || {};
+      return { ...p, [pid]: { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 2) } };
+    });
+    const name = players.find(p => p.id === pid)?.festivalName || "?";
+    logFameGain(pid, 2, "Uncontested tempt win");
+    addLog("💫 Tempt", `${name} gained +2 🔥 Fame for winning an uncontested tempt!`);
+    showFloatingBonus("+2 🔥 uncontested!", "#f97316");
+    sfx.gainFame();
+  };
+
   const commitAgentContest = (contest) => {
     const { artist, contestantData, winnerId } = contest;
     const isTempt = temptModeRef.current;
@@ -3459,10 +3480,44 @@ export default function Headliners() {
     setArtistPool(newPool);
     const winPd = playerDataRef.current?.[winnerId] || playerData[winnerId] || {};
     const openStages = (winPd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+    // v177: fame-refund timing bug fix. Under tempt mode, every contestant paid 1 Fame
+    // upfront to place their tempt. The refund happens at the END of this function
+    // (after the play/hand decision). Without adjustment, canPlayNow would check
+    // against fame that STILL has the tempt cost deducted — so a player who had
+    // exactly enough Fame to play the artist BEFORE tempting would fail the check
+    // and their artist would go to hand (losing the TEMPT effect entirely since we
+    // no longer treat tempted-to-hand as tempt-play; see v177 change below).
+    // Fix: for the play-eligibility check, mentally credit back the 1 Fame refund.
+    const winPdForCheck = isTempt
+      ? { ...winPd, fame: (winPd.fame || 0) + 1, baseFame: (winPd.baseFame || 0) + 1 }
+      : winPd;
+    // v177: apply the actual Fame refund BEFORE the play-or-hand decision, so that
+    // by the time bookArtistToStage fires (and applyEffect reads player state), the
+    // refund is already in the state stream. Previously the refund fired at the end
+    // of this function — a Fame 5 headliner (Lady Gaga) played from a contested tempt
+    // would see fame 4 during effect resolution.
+    if (isTempt) {
+      setTemptPlacements(prev => {
+        const next = { ...prev };
+        contestantData.forEach(c => {
+          const list = next[c.pid] || [];
+          next[c.pid] = list.filter(p => !(p.type === "pool" && p.artistName === artist.name));
+        });
+        return next;
+      });
+      setPlayerData(p => {
+        const next = { ...p };
+        contestantData.forEach(c => {
+          const opd = next[c.pid] || {};
+          next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+        });
+        return next;
+      });
+    }
     // v131: under tempt mode, also verify the winner can actually PLAY the artist right now.
     // If not (fame or amenities short, no genre-match slot), the artist goes to hand.
     const canPlayNow = isTempt
-      ? (openStages.length > 0 && canBookArtistAnywhere(artist, winPd))
+      ? (openStages.length > 0 && canBookArtistAnywhere(artist, winPdForCheck))
       : (openStages.length > 0);
     if (canPlayNow) {
       // v147: winner picks their stage. If it's their turn, open the modal now. If not,
@@ -3472,12 +3527,14 @@ export default function Headliners() {
         // v150: filter to stages the artist can actually be booked to (amenity or genre-match).
         // Previously trusted openStages[0] which may not meet amenity reqs — allowed AI to
         // land a Fame-5 headliner on a barebones stage.
-        const bookable = openStages.filter(si => canBookArtistOnStage(artist, winPd, si));
+        // v177: use winPdForCheck (fame-refund-adjusted) so the AI's bookability check
+        // matches the human canPlayNow check.
+        const bookable = openStages.filter(si => canBookArtistOnStage(artist, winPdForCheck, si));
         if (bookable.length === 0) {
           // No legal placement — hand.
-          // v169: if this was a tempt, preserve the tempt origin for the [TEMPT] handler
-          const toHand = (isTempt) ? { ...artist, _tempted: true } : artist;
-          setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...(p[winnerId].hand || []), toHand] } }));
+          // v177: no longer preserves _tempted flag. TEMPT effect is lost when the
+          // artist lands in hand.
+          setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...(p[winnerId].hand || []), artist] } }));
           addLog("💫 Contest", `${players.find(p => p.id === winnerId)?.festivalName} won ${artist.name} but has no legal stage — sent to hand`);
         } else {
           const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
@@ -3495,9 +3552,8 @@ export default function Headliners() {
         addLog("💫 Contest", `${wName} won ${artist.name} — will place on their next turn`);
       }
     } else {
-      // v169: preserve tempt-origin flag when going to hand from a tempt path
-      const toHand = (isTempt) ? { ...artist, _tempted: true } : artist;
-      setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...p[winnerId].hand, toHand] } }));
+      // v177: tempted-to-hand no longer preserves _tempted flag.
+      setPlayerData(p => ({ ...p, [winnerId]: { ...p[winnerId], hand: [...p[winnerId].hand, artist] } }));
       if (isTempt) {
         addLog("💫 Tempt", `${players.find(p => p.id === winnerId)?.festivalName} can't play ${artist.name} yet — added to hand`);
       }
@@ -3509,28 +3565,8 @@ export default function Headliners() {
       // v165: "industry buzz" fame bonus removed as part of the fame-sources prune.
       // Under agent mode, contest still resolves (winner's agent exhausts, losers'
       // returned) — just no fame side-effect anymore.
-    } else {
-      // Tempt mode: refund the 1 Fame each contestant paid, and remove ONLY the placement
-      // on this specific artist from each contestant's array (they may still have another
-      // pending tempt on a different artist that resolves separately).
-      setTemptPlacements(prev => {
-        const next = { ...prev };
-        contestantData.forEach(c => {
-          const list = next[c.pid] || [];
-          next[c.pid] = list.filter(p => !(p.type === "pool" && p.artistName === artist.name));
-        });
-        return next;
-      });
-      // Refund only — no popup (refunds aren't celebrations).
-      setPlayerData(p => {
-        const next = { ...p };
-        contestantData.forEach(c => {
-          const opd = next[c.pid] || {};
-          next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
-        });
-        return next;
-      });
     }
+    // v177: tempt-mode fame refund now happens BEFORE the play-or-hand decision (above).
     const winnerName = players.find(p => p.id === winnerId)?.festivalName;
     const faceLabel = getContestFaceLabel(contest.rolledFace);
     const winnerValue = contestantData.find(c => c.pid === winnerId).value;
@@ -3632,6 +3668,73 @@ export default function Headliners() {
       const activeGenre = activeMicrotrend?.kind === "genre" ? activeMicrotrend.genre : null;
       // v153: non-leader AIs also chase the forecast microtrend under anti-lead default.
       const forecastGenre = (canClaimForecast(pid) && nextMicrotrend?.kind === "genre") ? nextMicrotrend.genre : null;
+
+      // ═══════════════════════════════════════════════════════════
+      // v179 — AI own-game vs disruption prioritization
+      // ═══════════════════════════════════════════════════════════
+      // Compute "spare Fame" — how much Fame the AI has beyond what's needed for
+      // artists in hand. If they're Fame-tight (0 spare), disruption tempts are
+      // heavily suppressed — the AI focuses on its own game. If they have spare
+      // Fame (≥1), they're free to contest opponents.
+      const handMaxFameNeed = ((pd.hand || []).length > 0)
+        ? Math.max(0, ...(pd.hand || []).map(a => (a.fame || 0)))
+        : 0;
+      const currentFame = pd.fame || 0;
+      const spareFame = Math.max(0, currentFame - Math.max(1, handMaxFameNeed));
+      // Identity: read from ref (both for scoring the AI's own preferences and later
+      // for identity-based contest boosts).
+      const aiIdentity = getIdentity(playerIdentitiesRef.current?.[pid]);
+      const aiIdentityGenres = aiIdentity?.inGenres || [];
+      // Build a lookup of opponent play-history: how many of each genre they've booked
+      // to stages over the game. A "dominant" genre (3+ plays) signals the opponent is
+      // building around that genre — worth disrupting.
+      const opponentDominance = {}; // { otherPid: { genre: count } }
+      players.forEach(op => {
+        if (op.id === pid) return;
+        const oPd = playerData[op.id] || {};
+        const counts = {};
+        (oPd.stageArtists || []).flat().forEach(bkArtist => {
+          (bkArtist.genre || "").split(",").map(g => g.trim()).forEach(g => {
+            counts[g] = (counts[g] || 0) + 1;
+          });
+        });
+        opponentDominance[op.id] = counts;
+      });
+      // For a given artist, does contesting them meaningfully disrupt an opponent?
+      // Returns an integer boost score (0 = no disruption, higher = more valuable).
+      const contestDisruptionScore = (artistCard) => {
+        // Only meaningful if this artist is ALREADY tempted by an opponent
+        const placements = getPlacementsOnArtist(artistCard.name);
+        const opponentPlacements = placements.filter(pl => pl.pid !== pid);
+        if (opponentPlacements.length === 0) return 0;
+        let disruption = 0;
+        const artistGenres = (artistCard.genre || "").split(",").map(g => g.trim());
+        for (const opl of opponentPlacements) {
+          const oPid = opl.pid;
+          const oPd = playerData[oPid] || {};
+          const oFame = oPd.fame || 0;
+          // 1. Fame-swing signal: if the +1 net Fame from uncontested win would put them
+          //    at fame ≥ artist.fame (i.e. they'd unlock playing this or another headliner
+          //    they've been building toward), that's a threat worth disrupting.
+          //    Check: current fame + 1 (net gain) >= artist.fame → they'd be able to play.
+          const wouldReachThreshold = (oFame + 1) >= (artistCard.fame || 0) && (artistCard.fame || 0) >= 3;
+          if (wouldReachThreshold) disruption += 6;
+          // 2. Genre-dominance signal: if the artist's genre is one this opponent has
+          //    consistently played (3+ prior plays), the opponent is building around it.
+          //    Contesting suppresses that build.
+          const dom = opponentDominance[oPid] || {};
+          const dominantGenres = artistGenres.filter(g => (dom[g] || 0) >= 3);
+          if (dominantGenres.length > 0) disruption += 5;
+          // 3. Identity match: if the artist matches the AI's OWN identity (in-genre),
+          //    we get double value — contest denies the opponent AND wins us an
+          //    identity-boost play if we secure them.
+          if (aiIdentityGenres.length > 0 && artistGenres.some(g => aiIdentityGenres.includes(g))) {
+            disruption += 4;
+          }
+        }
+        return disruption;
+      };
+
       const scored = artistPool.map(a => {
         const iAlreadyTempted = (temptPlacements[pid] || []).some(pl => pl.artistName === a.name);
         if (iAlreadyTempted) return { a, score: -999 };
@@ -3670,8 +3773,25 @@ export default function Headliners() {
           : 0;
         const objBonus = scoreArtistForObjectives(a, pid);
         const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
-        const contestPenalty = alreadyTempted ? -1 : 0;
-        return { a, score: base + affBonus + reachPenalty + targetBonus + microBonus + objBonus + contestPenalty };
+        // v179: replace the old flat -1 contestPenalty with disruption-based scoring.
+        // If the artist is already tempted:
+        //   - Compute the disruption value (fame-swing, genre-dominance, identity match)
+        //   - Scale by AI's spare Fame. If spareFame == 0, AI is fame-tight — contests
+        //     are heavily suppressed (score * 0.2). If spareFame >= 2, full disruption
+        //     value applies. If spareFame == 1, partial (score * 0.6).
+        //   - Still slightly penalize (-1) so all-else-equal, AI prefers uncontested
+        //     tempts (which now grant +2 Fame — much better for tempo).
+        let contestScore = 0;
+        if (alreadyTempted) {
+          const disruption = contestDisruptionScore(a);
+          const spareScale = spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.6 : 0.2;
+          contestScore = disruption * spareScale - 1;
+        }
+        // v179: uncontested tempts now yield +2 Fame (net +1 after cost). Add a small
+        // preference for artists NOT already tempted by others — the AI prefers going
+        // for solo tempts when the underlying artist value is comparable.
+        const uncontestedPref = alreadyTempted ? 0 : 2;
+        return { a, score: base + affBonus + reachPenalty + targetBonus + microBonus + objBonus + contestScore + uncontestedPref };
       }).sort((x, y) => y.score - x.score);
       const best = scored[0];
       if (!best || best.score < 5) { tryMicrotrend(); return; }
@@ -4563,6 +4683,11 @@ export default function Headliners() {
       // If the effect requires a specific die to be present in the amenity pool
       // ("Remove a X from the amenity dice") and that die is NOT present, abort the
       // entire effect for this iteration — no linked benefit fires either.
+      //
+      // v175: for HUMAN players, when a matching die IS present, intercept and show
+      // a picker modal so the player can (a) choose WHICH matching die to remove and
+      // (b) decline the removal entirely if the trade isn't worth it. AI keeps the
+      // existing auto-remove-first-match behavior.
       // ═══════════════════════════════════════════════════════════
       {
         const currentDice = dice || [];
@@ -4582,6 +4707,135 @@ export default function Headliners() {
           if (!has) {
             const faceLabel = requiredFace === "__anyAmenity__" ? "amenity" : requiredFace;
             addLog("Effect", `${artist.name}: no ${faceLabel} die on the pool — effect does not fire`);
+            // v177: for humans, surface this via an acknowledgment modal that shows
+            // the current dice pool so the player can see what was (and wasn't) there.
+            // AI just logs and moves on.
+            const isAIcheck = players.find(p => p.id === pid)?.isAI;
+            if (!isAIcheck) {
+              setPendingEffect({
+                type: "effectAborted",
+                artistName: artist.name,
+                reason: requiredFace === "__anyAmenity__"
+                  ? "No amenity die (Campsite / Portaloo / Security / Catering) was in the shared pool."
+                  : `No ${faceLabel === "fame" ? "🔥 Fame" : faceLabel === "stage" ? "🎪 Stage" : `${AMENITY_ICONS[faceLabel] || ""} ${AMENITY_LABELS[faceLabel] || faceLabel}`} die was in the shared pool.`,
+                diceSnapshot: [...currentDice],
+              });
+              setPendingEffectPid(pid);
+            }
+            continue;
+          }
+          // v175: die IS present. For humans, intercept and set a pending effect so
+          // they can choose which matching die to remove (or decline the trade).
+          // For AI, fall through — the specific die-removal handlers below will
+          // auto-remove the first match and the paired benefit handlers will fire.
+          const isAI = players.find(p => p.id === pid)?.isAI;
+          if (!isAI) {
+            // Parse the paired benefit from the effect string so we know what to
+            // fire if the player accepts.
+            let benefit = null;
+            const fameMatch = eff.match(/\+(\d+)\s+Fame\b/i);
+            const ticketMatch = eff.match(/\+(\d+)\s+ticket(?:\s+sales?|s?)?/i);
+            if (el.includes("play another artist from your hand")) {
+              benefit = { type: "chainPlay" };
+            } else if (fameMatch) {
+              benefit = { type: "fame", amount: parseInt(fameMatch[1]) };
+            } else if (ticketMatch) {
+              benefit = { type: "ticket", amount: parseInt(ticketMatch[1]) };
+            }
+            setPendingEffect({
+              type: "removeDieFromPool",
+              artistName: artist.name,
+              filterType: requiredFace,
+              benefit: benefit,
+            });
+            setPendingEffectPid(pid);
+            addLog("Effect", `${artist.name}: choose a die to remove from the pool (or decline)`);
+            continue; // Rest of the effect loop is skipped — pending flow handles benefit
+          }
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // v177 — HUMAN INTERCEPT: "You may remove X" sacrifice effects
+      // For Eve (catering), Missy Elliott (security), and De La Soul (any amenity),
+      // route human players through an interactive picker so they choose which
+      // amenity slot to sacrifice. On decline, no sacrifice and NO benefit fires.
+      // AI keeps the inline auto-accept behavior in the sacrifice-patterns block
+      // later in the loop.
+      // Ms Banks is already handled separately (its 2-amenity variant lives below).
+      // ═══════════════════════════════════════════════════════════
+      {
+        const isAIsac = players.find(p => p.id === pid)?.isAI;
+        if (!isAIsac) {
+          const pdSnap = playerDataRef.current?.[pid] || playerData[pid] || {};
+          const am = pdSnap.amenities || {};
+          // Eve: "may remove 1 catering" → +2 Fame + draw up to 2 from deck
+          if (el.includes("may remove 1 catering")) {
+            const total = am.catering || 0;
+            if (total > 0) {
+              setPendingEffect({
+                type: "removeAmenities",
+                artistName: artist.name,
+                filterType: "catering",
+                removalsRemaining: 1,
+                benefit: { type: "fame", amount: 2, thenDrawDeck: 2 },
+              });
+              setPendingEffectPid(pid);
+              addLog("Effect", `${artist.name}: choose a Catering Van to sacrifice (or decline)`);
+            } else {
+              setPendingEffect({
+                type: "effectAborted",
+                artistName: artist.name,
+                reason: "You have no Catering Vans to sacrifice.",
+              });
+              setPendingEffectPid(pid);
+            }
+            continue;
+          }
+          // Missy Elliott: "may remove 1 security" → +5 tickets + draw 1 from pool
+          if (el.includes("may remove 1 security")) {
+            const total = am.security || 0;
+            if (total > 0) {
+              setPendingEffect({
+                type: "removeAmenities",
+                artistName: artist.name,
+                filterType: "security",
+                removalsRemaining: 1,
+                benefit: { type: "ticket", amount: 5, thenDrawPool: 1 },
+              });
+              setPendingEffectPid(pid);
+              addLog("Effect", `${artist.name}: choose a Security to sacrifice (or decline)`);
+            } else {
+              setPendingEffect({
+                type: "effectAborted",
+                artistName: artist.name,
+                reason: "You have no Security to sacrifice.",
+              });
+              setPendingEffectPid(pid);
+            }
+            continue;
+          }
+          // De La Soul: "may remove 1 amenity of your choice" → +3 Fame
+          if (el.includes("may remove 1 amenity of your choice")) {
+            const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+            if (total > 0) {
+              setPendingEffect({
+                type: "removeAmenities",
+                artistName: artist.name,
+                filterType: null, // any amenity
+                removalsRemaining: 1,
+                benefit: { type: "fame", amount: 3 },
+              });
+              setPendingEffectPid(pid);
+              addLog("Effect", `${artist.name}: choose an amenity to sacrifice (or decline)`);
+            } else {
+              setPendingEffect({
+                type: "effectAborted",
+                artistName: artist.name,
+                reason: "You have no amenities to sacrifice.",
+              });
+              setPendingEffectPid(pid);
+            }
             continue;
           }
         }
@@ -4966,10 +5220,14 @@ export default function Headliners() {
   // ─── Book artist to stage ───
   function bookArtistToStage(artist, stageIdx, pid, viaAgent = false, viaGenreMatch = false) {
     // v169: derive viaTempt from context. Under tempt mode, viaAgent=true means the
-    // artist was tempted onto the stage directly. If the artist was previously placed
-    // in hand via tempt (marked with `_tempted:true`) and is now being played, we
-    // also treat that as a tempt-play.
-    const viaTempt = (temptModeRef.current && viaAgent) || !!artist._tempted;
+    // artist was tempted onto the stage directly.
+    // v177: TEMPT effects fire ONLY when the artist is placed directly from the pool
+    // to a stage via a winning tempt. If a tempt loses (or wins but can't play now)
+    // and the artist goes to hand, subsequent play FROM hand no longer counts as a
+    // tempt-play — the TEMPT trigger is lost. The `_tempted` flag we previously set
+    // when routing to hand is no longer honored by viaTempt (kept in code as a
+    // historical marker but ignored).
+    const viaTempt = temptModeRef.current && viaAgent;
     // SYNCHRONOUS dupe check (using ref-fresh state) before we call setPlayerData.
     // Previously this lived inside the setPlayerData updater with a `bookingSucceeded`
     // flag — but React 18 state updaters aren't guaranteed to run synchronously inside
@@ -5778,6 +6036,63 @@ export default function Headliners() {
         setPendingEffect({ ...pe, chosenType: choice });
         scheduleNext(300); return;
       }
+      if (pe.type === "effectAborted") {
+        // v177: AI never sees this modal — the applyEffect guard only sets it for
+        // humans. Defensive fallback: clear and move on.
+        setPendingEffect(null); setPendingEffectPid(null);
+        scheduleNext(200); return;
+      }
+      if (pe.type === "drawFromPool") {
+        // v177: pool-only draw picker (Missy Elliott follow-up). AI picks the highest-
+        // value pool artist for each draw.
+        const remaining = pe.drawsRemaining || 1;
+        const currentPool = artistPoolRef.current || artistPool || [];
+        if (currentPool.length === 0) {
+          setPendingEffect(null); setPendingEffectPid(null);
+          scheduleNext(200); return;
+        }
+        const scored = currentPool.map((a, i) => ({ a, i, s: (a.vp || 0) + (a.tickets || 0) + Math.random() }));
+        scored.sort((x, y) => y.s - x.s);
+        const picked = scored[0];
+        const newPool = currentPool.filter((_, j) => j !== picked.i); setArtistPool(newPool);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked.a] } }));
+        addLog("🤖 AI", `${pe.artistName}: picked ${picked.a.name} from pool`);
+        if (remaining > 1) {
+          setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
+        } else {
+          setPendingEffect(null); setPendingEffectPid(null);
+        }
+        scheduleNext(400); return;
+      }
+      if (pe.type === "removeDieFromPool") {
+        // v175: defensive fallback — AI shouldn't normally land here (the applyEffect
+        // guard branches out for AI and runs the die-removal handlers inline). If we
+        // do arrive here, auto-remove the first matching die and fire the benefit.
+        const currentDice = dice || [];
+        const filterType = pe.filterType;
+        const isMatch = (face) => filterType === "__anyAmenity__" ? (face !== "fame" && face !== "stage") : face === filterType;
+        const dIdx = currentDice.findIndex(isMatch);
+        if (dIdx >= 0) {
+          setDice(prev => { const nd = [...prev]; nd.splice(dIdx, 1); return nd; });
+          addLog("🤖 AI", `${pe.artistName}: removed a ${currentDice[dIdx]} die from the pool`);
+          if (pe.benefit) {
+            if (pe.benefit.type === "fame") {
+              logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+            } else if (pe.benefit.type === "ticket") {
+              logTicketGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + pe.benefit.amount } }));
+            } else if (pe.benefit.type === "chainPlay") {
+              if ((playsThisTurnRef.current || 0) < 2) {
+                setPendingEffect({ type: "playFromHand", artistName: pe.artistName, free: false, suppressEffect: false });
+                scheduleNext(400); return;
+              }
+            }
+          }
+        }
+        setPendingEffect(null); setPendingEffectPid(null);
+        scheduleNext(400); return;
+      }
       if (pe.type === "drawFromPoolOrDeck") {
         // v172: AI auto-resolves the pool/deck picker. For each remaining draw:
         //   - If the pool has good artists (best score > threshold), pick pool
@@ -6106,6 +6421,8 @@ export default function Headliners() {
         // AI: resolve pool agent claims at turn start
         const resolution = resolvePoolAgents(currentPlayerId);
         if (resolution && resolution.type === "uncontested") {
+          // v179: +2 Fame for uncontested tempt win (fires at resolution, before book/hand branch)
+          grantUncontestedTemptBonus(currentPlayerId);
           // Auto-book uncontested agent/tempt claim.
           // v151: per-stage bookability check. Previously auto-booked to openStages[0]
           // with no amenity/fame validation — that let an AI who had tempted a Fame-5
@@ -8941,6 +9258,104 @@ export default function Headliners() {
           </div>;
         }
 
+        if (pe.type === "removeDieFromPool") {
+          // v175: pick a die from the shared pool to remove (optional). Matching
+          // dice are clickable; non-matching are shown grayed out for context. Skip
+          // button declines the whole trade (no die removed, no benefit).
+          const currentDice = dice || [];
+          const filterType = pe.filterType; // "stage" | "fame" | "campsite" | "__anyAmenity__"
+          const isMatch = (face) => filterType === "__anyAmenity__"
+            ? (face !== "fame" && face !== "stage")
+            : face === filterType;
+          const faceLabel = (face) => {
+            if (face === "fame") return "🔥 Fame";
+            if (face === "stage") return "🎪 Stage";
+            return `${AMENITY_ICONS[face] || "?"} ${AMENITY_LABELS[face] || face}`;
+          };
+          const targetLabel = filterType === "__anyAmenity__" ? "an amenity die (any)"
+            : filterType === "fame" ? "a 🔥 Fame die"
+            : filterType === "stage" ? "a 🎪 Stage die"
+            : `a ${AMENITY_ICONS[filterType] || ""} ${AMENITY_LABELS[filterType] || filterType} die`;
+          const benefitLabel = !pe.benefit ? "no bonus (effect check only)"
+            : pe.benefit.type === "fame" ? `+${pe.benefit.amount} Fame`
+            : pe.benefit.type === "ticket" ? `+${pe.benefit.amount} ticket sale${pe.benefit.amount === 1 ? "" : "s"}`
+            : pe.benefit.type === "chainPlay" ? "play another artist from your hand"
+            : "";
+          const fireBenefit = () => {
+            if (!pe.benefit) return;
+            if (pe.benefit.type === "fame") {
+              logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+              addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} Fame`);
+              showFloatingBonus(`+${pe.benefit.amount} 🔥`, "#f97316");
+              sfx.gainFame();
+            } else if (pe.benefit.type === "ticket") {
+              logTicketGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + pe.benefit.amount } }));
+              addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} ticket sale${pe.benefit.amount === 1 ? "" : "s"}`);
+              showFloatingBonus(`+${pe.benefit.amount} 🎟️`, "#fbbf24");
+            } else if (pe.benefit.type === "chainPlay") {
+              // Rage Against — respect 2-play cap.
+              if ((playsThisTurnRef.current || 0) >= 2) {
+                addLog("Effect", `${pe.artistName}: chain-play blocked (2-plays-per-turn cap)`);
+                return;
+              }
+              setPendingEffect({
+                type: "playFromHand",
+                artistName: pe.artistName,
+                free: false,
+                suppressEffect: false,
+              });
+              // Note: setPendingEffectPid stays pid — already set from before.
+              addLog("Effect", `${pe.artistName}: play another artist from your hand`);
+              return; // don't clear pending — new pending has replaced it
+            }
+          };
+          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%" }}>
+              <h3 style={{ color: "#c4b5fd", marginBottom: 8 }}>🎲 {pe.artistName}</h3>
+              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 6 }}>Remove {targetLabel} from the shared pool for <b>{benefitLabel}</b>?</p>
+              <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 12 }}>Click a matching die to remove it, or Decline to skip the whole trade.</p>
+              <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 14 }}>
+                {currentDice.map((face, di) => {
+                  const match = isMatch(face);
+                  return <button
+                    key={di}
+                    disabled={!match}
+                    onClick={() => {
+                      // Remove this die from the shared pool
+                      setDice(prev => {
+                        const nd = [...prev]; nd.splice(di, 1); return nd;
+                      });
+                      addLog("Effect", `${pe.artistName}: removed a ${faceLabel(face)} die from the pool`);
+                      showFloatingBonus(`${faceLabel(face)} removed`, "#c4b5fd");
+                      // Fire the benefit
+                      fireBenefit();
+                      // If benefit was chainPlay, it already set a new pending effect. Otherwise clear.
+                      if (!pe.benefit || pe.benefit.type !== "chainPlay") {
+                        setPendingEffect(null); setPendingEffectPid(null);
+                      }
+                    }}
+                    style={{
+                      padding: "10px 14px", borderRadius: 8,
+                      border: match ? "2px solid #4ade80" : "1px solid #2a2a4a",
+                      background: match ? "rgba(74,222,128,0.15)" : "rgba(15,14,26,0.4)",
+                      color: match ? "#e9d5ff" : "#475569",
+                      cursor: match ? "pointer" : "not-allowed",
+                      fontSize: 13, fontWeight: 600,
+                      opacity: match ? 1 : 0.4,
+                    }}
+                  >{faceLabel(face)}</button>;
+                })}
+              </div>
+              <button onClick={() => {
+                addLog("Effect", `${pe.artistName}: declined the trade — no die removed, no bonus`);
+                setPendingEffect(null); setPendingEffectPid(null);
+              }} style={{ ...bs, fontSize: 12 }}>Decline (skip effect)</button>
+            </div>
+          </div>;
+        }
+
         if (pe.type === "drawFromPoolOrDeck") {
           // v172: player picks 1 artist at a time from either the pool (visible) or
           // the deck (blind draw). Repeats until drawsRemaining == 0.
@@ -8981,33 +9396,85 @@ export default function Headliners() {
         }
 
         if (pe.type === "removeAmenities") {
-          // v172: picker for sacrifice effects (Ms Banks 2-amenity). Shows the player's
-          // amenity slots grouped by field; click one to remove. Chains to a followUp
-          // effect (playFromHand for Ms Banks) when done.
+          // v172: picker for sacrifice effects. v177 extended:
+          //   - filterType: null = any amenity (Ms Banks, De La Soul), or a specific
+          //     type ("catering" for Eve, "security" for Missy Elliott). Non-matching
+          //     types are hidden.
+          //   - benefit: fires on accept. { type: "fame"|"ticket", amount, thenDrawDeck?, thenDrawPool? }
+          //   - followUp: legacy chain-play (Ms Banks) — set as next pending effect when done.
+          //   - Decline button: aborts the whole trade (no sacrifice, no benefit).
           const fields = pd.fields || [{}, {}, {}];
           const remaining = pe.removalsRemaining || 0;
-          const advance = (updatedFieldsPlayerData) => {
-            if (remaining <= 1) {
-              // Done sacrificing — transition to follow-up (or clear if none)
-              if (pe.followUp) {
-                setPendingEffect(pe.followUp);
-              } else {
-                setPendingEffect(null); setPendingEffectPid(null);
+          const filterType = pe.filterType; // null = any, or a specific amenity type
+          const showType = (t) => filterType == null || t === filterType;
+          const benefitLabel = !pe.benefit ? ""
+            : pe.benefit.type === "fame" ? `+${pe.benefit.amount} Fame${pe.benefit.thenDrawDeck ? `, then draw up to ${pe.benefit.thenDrawDeck} from the deck` : ""}`
+            : pe.benefit.type === "ticket" ? `+${pe.benefit.amount} ticket sale${pe.benefit.amount === 1 ? "" : "s"}${pe.benefit.thenDrawPool ? `, then draw ${pe.benefit.thenDrawPool} from the pool` : ""}`
+            : "";
+          const fireBenefitAndAdvance = () => {
+            // Fire the immediate part of the benefit (fame or ticket)
+            if (pe.benefit) {
+              if (pe.benefit.type === "fame") {
+                logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+                setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+                addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} Fame`);
+                showFloatingBonus(`+${pe.benefit.amount} 🔥`, "#f97316"); sfx.gainFame();
+              } else if (pe.benefit.type === "ticket") {
+                logTicketGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
+                setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + pe.benefit.amount } }));
+                addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} ticket sale${pe.benefit.amount === 1 ? "" : "s"}`);
+                showFloatingBonus(`+${pe.benefit.amount} 🎟️`, "#fbbf24");
               }
+              // Chain follow-up draws
+              if (pe.benefit.thenDrawDeck) {
+                // Blind draw N from deck immediately (no picker — deck draws are blind)
+                const drawn = drawFromDeck(pe.benefit.thenDrawDeck);
+                if (drawn.length > 0) {
+                  setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
+                  addLog("Effect", `${pe.artistName}: drew ${drawn.length} artist${drawn.length === 1 ? "" : "s"} from the deck`);
+                  showFloatingBonus(`+${drawn.length} 🎴`, "#c4b5fd");
+                }
+                setPendingEffect(null); setPendingEffectPid(null);
+                return;
+              }
+              if (pe.benefit.thenDrawPool) {
+                // Set a follow-up pending effect: player picks N from the pool
+                setPendingEffect({
+                  type: "drawFromPool",
+                  artistName: pe.artistName,
+                  drawsRemaining: pe.benefit.thenDrawPool,
+                });
+                return;
+              }
+            }
+            // No further follow-up — check for legacy followUp (Ms Banks chain-play)
+            if (pe.followUp) {
+              setPendingEffect(pe.followUp);
+            } else {
+              setPendingEffect(null); setPendingEffectPid(null);
+            }
+          };
+          const advance = () => {
+            if (remaining <= 1) {
+              fireBenefitAndAdvance();
             } else {
               setPendingEffect({ ...pe, removalsRemaining: remaining - 1 });
             }
           };
+          const targetLabel = filterType
+            ? `${AMENITY_ICONS[filterType] || ""} ${AMENITY_LABELS[filterType] || filterType}`
+            : "any amenity";
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div style={{ ...card, textAlign: "center", maxWidth: 600, width: "100%" }}>
-              <h3 style={{ color: "#dc2626", marginBottom: 8 }}>💥 {pe.artistName}: Sacrifice {remaining} amenit{remaining === 1 ? "y" : "ies"}</h3>
-              <p style={{ color: "#c4b5fd", fontSize: 12, marginBottom: 14 }}>Click an amenity to remove it.</p>
+            <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%" }}>
+              <h3 style={{ color: "#dc2626", marginBottom: 6 }}>💥 {pe.artistName}: Sacrifice {remaining > 1 ? `${remaining} ` : ""}{targetLabel}</h3>
+              {benefitLabel && <p style={{ color: "#c4b5fd", fontSize: 12, marginBottom: 6 }}>Reward: <b>{benefitLabel}</b></p>}
+              <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 14 }}>Click an amenity to remove it, or Decline to skip the whole trade.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
                 {fields.map((f, fIdx) => {
-                  const amTypes = ["campsite", "security", "catering", "portaloo"].filter(t => (f?.[t] || 0) > 0);
+                  const amTypes = ["campsite", "security", "catering", "portaloo"].filter(t => (f?.[t] || 0) > 0 && showType(t));
                   return <div key={fIdx} style={{ padding: 10, borderRadius: 8, background: "rgba(15,14,26,0.6)", border: "1px solid #2a2a4a" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#c4b5fd", marginBottom: 6 }}>Field {fIdx + 1}</div>
-                    {amTypes.length === 0 && <div style={{ fontSize: 10, color: "#475569", fontStyle: "italic" }}>(empty)</div>}
+                    {amTypes.length === 0 && <div style={{ fontSize: 10, color: "#475569", fontStyle: "italic" }}>(no {filterType ? AMENITY_LABELS[filterType] : "amenities"})</div>}
                     {amTypes.map(t => <button key={t} onClick={() => {
                       setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, t, -1) }));
                       addLog("Effect", `${pe.artistName}: sacrificed 1 ${AMENITY_LABELS[t]} from Field ${fIdx + 1}`);
@@ -9018,6 +9485,71 @@ export default function Headliners() {
                   </div>;
                 })}
               </div>
+              <button onClick={() => {
+                addLog("Effect", `${pe.artistName}: declined the trade — no sacrifice, no bonus`);
+                setPendingEffect(null); setPendingEffectPid(null);
+              }} style={{ ...bs, fontSize: 12 }}>Decline (skip effect)</button>
+            </div>
+          </div>;
+        }
+
+        if (pe.type === "effectAborted") {
+          // v177: acknowledgment modal for effects that couldn't fire (e.g. required
+          // die not present in the shared pool). Shows a snapshot of the dice pool at
+          // that moment so the player can see what was actually available.
+          const snapshot = pe.diceSnapshot || [];
+          const faceLabel = (face) => {
+            if (face === "fame") return "🔥";
+            if (face === "stage") return "🎪";
+            return AMENITY_ICONS[face] || "?";
+          };
+          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 500, width: "100%" }}>
+              <h3 style={{ color: "#fbbf24", marginBottom: 8 }}>ℹ️ {pe.artistName}: effect could not fire</h3>
+              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>{pe.reason}</p>
+              {snapshot.length > 0 && <>
+                <p style={{ color: "#8b5cf6", fontSize: 11, marginBottom: 6 }}>The shared dice pool at that moment:</p>
+                <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 14 }}>
+                  {snapshot.map((face, di) => <div key={di} style={{
+                    padding: "8px 10px", borderRadius: 6, background: "rgba(15,14,26,0.6)",
+                    border: "1px solid #2a2a4a", fontSize: 20,
+                  }}>{faceLabel(face)}</div>)}
+                </div>
+              </>}
+              {snapshot.length === 0 && pe.diceSnapshot !== undefined && <p style={{ color: "#475569", fontSize: 11, fontStyle: "italic", marginBottom: 14 }}>(the pool was empty)</p>}
+              <button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bp, fontSize: 12 }}>OK</button>
+            </div>
+          </div>;
+        }
+
+        if (pe.type === "drawFromPool") {
+          // v177: pool-only picker (used by Missy Elliott's "draw 1 from the pool"
+          // follow-up). Similar to drawFromPoolOrDeck but without the deck option.
+          const remaining = pe.drawsRemaining || 1;
+          const pool = artistPool || [];
+          if (pool.length === 0) {
+            // Nothing to pick — auto-clear so we don't stall
+            setTimeout(() => { setPendingEffect(null); setPendingEffectPid(null); }, 0);
+            return null;
+          }
+          return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
+              <h3 style={{ color: "#c4b5fd", marginBottom: 8 }}>🎴 {pe.artistName}: Pick {remaining} from the pool</h3>
+              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Click an artist to add them to your hand.</p>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                {pool.map((a, i) => (
+                  <div key={i} onClick={() => {
+                    const newPool = pool.filter((_, j) => j !== i); setArtistPool(newPool);
+                    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
+                    addLog("Effect", `${pe.artistName}: picked ${a.name} from the pool`);
+                    if (remaining > 1) setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
+                    else { setPendingEffect(null); setPendingEffectPid(null); }
+                  }} style={{ cursor: "pointer" }}>
+                    <ArtistCard artist={a} showCost small />
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => { setPendingEffect(null); setPendingEffectPid(null); }} style={{ ...bs, fontSize: 11, marginTop: 8 }}>Skip remaining draws</button>
             </div>
           </div>;
         }
