@@ -4216,8 +4216,10 @@ export default function Headliners() {
       addLog("🎸 Genre-Match", `${festival}: placed bonus ${AMENITY_LABELS[amt]} in F${fIdx + 1}`);
     }
     // "Choose an indie artist from the artist pool" — auto-take first Indie from pool
+    // v186: exclude tempt/agent-protected artists from the auto-take.
     if (gl.includes("indie artist from the artist pool") || gl.includes("indie artist from the pool")) {
-      const idx = artistPool.findIndex(a => getGenres(a.genre).includes("Indie"));
+      const protectedNames = getAgentProtectedNames();
+      const idx = artistPool.findIndex(a => getGenres(a.genre).includes("Indie") && !protectedNames.has(a.name));
       if (idx >= 0) {
         const chosen = artistPool[idx];
         setArtistPool(prev => { const np = [...prev]; np.splice(idx, 1); return np; });
@@ -4331,310 +4333,19 @@ export default function Headliners() {
     // For effects that are cumulative (VP, fame, tickets, events), apply `times` iterations
     // For interactive effects (sign, draw, place), scale the amount instead of looping
     for (let t = 0; t < times; t++) {
-      // === Fame effects ===
-      if (el.includes("+fame") || (el.includes("+1 fame") && !el.includes("fame if"))) {
-        logFameGain(pid, 1, "Effect");
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-        addLog("Effect", `${artist.name}: +1 Fame`);
-        showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
-      }
-      // "+1 Fame if you have played 2 [Genre] artists this year"
-      if (el.includes("fame if you have played 2")) {
-        const genreMatch = eff.match(/played 2 (\w+) artists/i);
-        if (genreMatch) {
-          const targetGenre = genreMatch[1];
-          const pd = playerData[pid];
-          const count = (pd.stageArtists || []).flat().filter(a => getGenres(a.genre).includes(targetGenre)).length;
-          if (count >= 2) {
-            logFameGain(pid, 1, `${artist.name} effect`);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-            addLog("Effect", `${artist.name}: +1 Fame (2+ ${targetGenre} artists!)`);
-            showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
-          } else {
-            addLog("Effect", `${artist.name}: Need 2 ${targetGenre} artists (have ${count})`);
-          }
-        }
-      }
-      // === VP effects ===
-      if ((el.includes("+1 vp") || el.includes("+1vp")) && !el.includes("vp /") && !el.includes("vp per") && !el.includes("vp if")) {
-        logTicketGain(pid, 0  /* TODO: fill in amount */, "Effect (uncategorized)");
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
-        addLog("Effect", `${artist.name}: +1 🎟️ ticket`); showFloatingBonus("+1 ⭐", "#c4b5fd");
-      }
-      if (el.includes("gain 1vp per existing campsite")) {
-        const camps = (playerData[pid]?.amenities?.campsite) || 0;
-        logTicketGain(pid, camps, `${artist.name} effect (per campsite)`);
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + camps } }));
-        addLog("Effect", `${artist.name}: +${camps} 🎟️ tickets (1 per campsite)`);
-      }
-      // "+1 VP per other [Genre] act on this stage" (genre synergy)
-      {
-        const genreSynergyMatch = eff.match(/\+1 VP per other (\w+) (?:act|artist) on this stage/i);
-        if (genreSynergyMatch && stageIdx >= 0) {
-          const targetGenre = genreSynergyMatch[1];
-          const stageArtists = (playerData[pid]?.stageArtists || [])[stageIdx] || [];
-          const otherCount = stageArtists.filter(a => a.name !== artist.name && getGenres(a.genre).includes(targetGenre)).length;
-          if (otherCount > 0) {
-            logTicketGain(pid, otherCount, `${artist.name} effect (genre synergy)`);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + otherCount } }));
-            addLog("Effect", `${artist.name}: +${otherCount} 🎟️ tickets (${otherCount} other ${targetGenre} on stage)`);
-            showFloatingBonus(`+${otherCount} ⭐`, "#c4b5fd");
-          }
-        }
-      }
-      // "+1 VP per other artist on all of your stages" (Prince)
-      if (el.includes("vp per other artist on all")) {
-        const totalOthers = (playerData[pid]?.stageArtists || []).flat().filter(a => a.name !== artist.name).length;
-        if (totalOthers > 0) {
-          logTicketGain(pid, totalOthers, `${artist.name} effect (per other artist)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + totalOthers } }));
-          addLog("Effect", `${artist.name}: +${totalOthers} 🎟️ tickets (${totalOthers} other artists on stages)`);
-          showFloatingBonus(`+${totalOthers} ⭐`, "#c4b5fd");
-        }
-      }
-      // "+1 VP per other [Genre] artist on this stage" variant (covers Pop/Rock/etc)
-      {
-        const popSynergyMatch = eff.match(/\+1 VP per other (\w+) act on this stage/i);
-        // Already handled above — skip duplicate
-      }
-      // "Discard one artist from your hand to gain 3 tickets" (Teena Marie)
-      if (el.includes("discard one artist from your hand to gain 3 tickets")) {
-        setPendingEffect({ type: "discardHandForTickets", artistName: artist.name, discardCount: 1, ticketReward: 3 });
-        setPendingEffectPid(pid);
-        addLog("Effect", `${artist.name}: Discard 1 artist from hand for +3 tickets`);
-      }
-      // "Discard two artists from your hand to gain the ticket cost of one of them" (Rick James)
-      if (el.includes("discard two artists from your hand to gain the ticket cost")) {
-        setPendingEffect({ type: "discardHandForTicketValue", artistName: artist.name, discardCount: 2 });
-        setPendingEffectPid(pid);
-        addLog("Effect", `${artist.name}: Discard 2 artists, gain ticket value of one`);
-      }
-      // "Discard one amenity, gain 5 tickets" (Betty Davis)
-      if (el.includes("discard one amenity") && el.includes("gain 5 tickets")) {
-        setPendingEffect({ type: "discardAmenityForTickets", artistName: artist.name, ticketReward: 5 });
-        setPendingEffectPid(pid);
-        addLog("Effect", `${artist.name}: Discard 1 amenity for +5 tickets`);
-      }
-      // "Discard two artists from your hand, then draw the top artist from the deck and play it for free" (Silk Sonic)
-      if (el.includes("discard two artists from your hand") && el.includes("play it for free")) {
-        setPendingEffect({ type: "discardHandDrawFree", artistName: artist.name, discardCount: 2 });
-        setPendingEffectPid(pid);
-        addLog("Effect", `${artist.name}: Discard 2 artists, draw and play 1 for free!`);
-      }
-      // "Roll all amenity dice and gain 1 Fame if a Fame shows" (David Bowie)
-      if (el.includes("roll all amenity dice") && el.includes("gain 1 fame if a fame shows")) {
-        triggerDiceRoll(5, pid, artist.name,
-          (results) => { const hasFame = results.some(d => d === "fame"); return hasFame ? "🔥 Fame shown! +1 Fame" : "No fame shown"; },
-          (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
-        );
-      }
-      // v163: "draw an artist objective" (Missy Elliott) — the objective system was
-      // removed; the effect is a no-op now. Kept the -2 VP so the artist still has cost.
-      if (el.includes("draw an artist objective")) {
-        addLog("Effect", `${artist.name}: (no-op — objective system removed)`);
-      }
-      // === -VP effects (Hip Hop risk/reward) ===
-      // "-X VP" — generic VP loss patterns
-      {
-        const vpLossMatch = eff.match(/-(\d+)\s*(?:VP|tickets?)/i);
-        if (vpLossMatch) {
-          const vpLoss = parseInt(vpLossMatch[1]);
-          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) - vpLoss) } }));
-          addLog("Effect", `${artist.name}: -${vpLoss} 🎟️ tickets`);
-          showFloatingBonus(`-${vpLoss} ⭐`, "#ef4444");
-        }
-      }
-      // "Sell X tickets" — bonus tickets from -VP effects
-      {
-        const sellMatch = eff.match(/[Ss]ell\s+(\d+)\s+tickets?/i);
-        if (sellMatch) {
-          const tix = parseInt(sellMatch[1]);
-          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
-          addLog("Effect", `${artist.name}: +${tix} ticket sales`);
-          showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
-        }
-      }
-      // "+1 ticket / 2 amenities" (Flume)
-      if (el.includes("ticket / 2 amenities") || el.includes("ticket/ 2 amenities")) {
-        const am = playerData[pid]?.amenities || {};
-        const amCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
-        const tix = Math.floor(amCount / 2);
-        if (tix > 0) {
-          logTicketGain(pid, tix, `${artist.name} effect (per 2 amenities)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
-          addLog("Effect", `${artist.name}: +${tix} tickets (1 per 2 amenities)`);
-          showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
-        }
-      }
-      // "+1 Fame if you have played 2 artists of either X or Y" (Charli XCX)
-      if (el.includes("fame if you have played 2 artists of either")) {
-        const genreMatch = eff.match(/either (\w+) or (\w+)/i);
-        if (genreMatch) {
-          const pd = playerData[pid];
-          const booked = (pd.stageArtists || []).flat();
-          const count = booked.filter(a => getGenres(a.genre).includes(genreMatch[1]) || getGenres(a.genre).includes(genreMatch[2])).length;
-          if (count >= 2) {
-            logFameGain(pid, 1, `${artist.name} effect`);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-            addLog("Effect", `${artist.name}: +1 Fame (2+ ${genreMatch[1]}/${genreMatch[2]} artists!)`);
-            showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
-          } else {
-            addLog("Effect", `${artist.name}: Need 2 ${genreMatch[1]}/${genreMatch[2]} artists (have ${count})`);
-          }
-        }
-      }
-      // "for X Fame" — gain fame as part of VP trade (Loyle Carner "-2 VP for 1 Fame")
-      {
-        const forFameMatch = eff.match(/for (\d+) Fame/i);
-        if (forFameMatch && el.includes("-") && el.includes("vp")) {
-          const fameGain = parseInt(forFameMatch[1]);
-          logFameGain(pid, 1, "Effect");
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain) } }));
-          addLog("Effect", `${artist.name}: +${fameGain} Fame`);
-          showFloatingBonus(`+${fameGain} 🔥`, "#f97316"); sfx.gainFame();
-        }
-      }
-      // "Roll 1 amenity dice and gain 1 Fame for each Fame shown" (Loyle Carner)
-      if (el.includes("roll 1 amenity dice") || el.includes("roll 1 amenity die")) {
-        triggerDiceRoll(1, pid, artist.name, "+1 Fame per Fame shown",
-          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logFameGain(pid, fameCount, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
-        );
-      }
-      // === Ticket effects ===
-      if (el.includes("+4 ticket sales")) {
-        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
-        addLog("Effect", `${artist.name}: +4 ticket sales`); showFloatingBonus("+4 🎟️", "#fbbf24");
-      }
-      if (el.includes("+5 ticket sales")) {
-        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
-        addLog("Effect", `${artist.name}: +5 ticket sales`); showFloatingBonus("+5 🎟️", "#fbbf24");
-      }
-      // "+1 ticket sale for all players"
-      if (el.includes("ticket sale for all players") || el.includes("ticket sales for all players")) {
-        players.forEach(p => {
-          logTicketGain(p.id, 1, `${artist.name} effect (all players)`);
-          setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: (prev[p.id].bonusTickets || 0) + 1 } }));
-        });
-        addLog("Effect", `${artist.name}: +1 ticket for ALL players!`);
-        showFloatingBonus("+1 🎟️ all!", "#fbbf24");
-      }
-      // "Gain an artist from the pool who's Fame cost is lower than this artist"
-      // (Sly & The Family Stone, Teena Marie). Auto-picks the highest-value eligible artist
-      // — pool card gets moved to the player's hand. No effect if pool has no eligible artists.
-      if (el.includes("artist from the pool who") || el.includes("pool who's fame cost is lower") || el.includes("pool whose fame cost is lower")) {
-        const eligible = artistPool
-          .filter(a => (a.fame || 0) < (artist.fame || 0))
-          .map(a => ({ a, score: (a.tickets || 0) + (a.vp || 0) }))
-          .sort((x, y) => y.score - x.score);
-        if (eligible.length > 0) {
-          const chosen = eligible[0].a;
-          setArtistPool(prev => { const np = [...prev]; const idx = np.findIndex(a => a.name === chosen.name); if (idx >= 0) np.splice(idx, 1); return np; });
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
-          addLog("Effect", `${artist.name}: gained ${chosen.name} from the pool (lower Fame)`);
-          showFloatingBonus(`🎁 ${chosen.name} to hand`, "#c4b5fd");
-        } else {
-          addLog("Effect", `${artist.name}: no eligible lower-Fame artist in pool`);
-        }
-      }
-      // "+1 ticket sale / Current Fame Level"
-      if (el.includes("ticket sale / current fame") || el.includes("ticket / current fame")) {
-        const fame = playerData[pid]?.fame || 0;
-        if (fame > 0) {
-          logTicketGain(pid, fame, `${artist.name} effect (per Fame Level)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + fame } }));
-          addLog("Effect", `${artist.name}: +${fame} tickets (1 per Fame level)`);
-          showFloatingBonus(`+${fame} 🎟️`, "#fbbf24");
-        }
-      }
-      // "+1 ticket / Negative Star Face avoided this year" (rethemed from event)
-      if (el.includes("ticket / negative event this year") || el.includes("ticket / negative event") || el.includes("ticket / negative star")) {
-        const avoidedCount = negStarFacesAvoidedThisYear[pid] || 0;
-        if (avoidedCount > 0) {
-          logTicketGain(pid, avoidedCount, `${artist.name} effect (avoided stars)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + avoidedCount } }));
-          addLog("Effect", `${artist.name}: +${avoidedCount} tickets (1 per neg. star avoided)`);
-          showFloatingBonus(`+${avoidedCount} 🎟️`, "#fbbf24");
-        }
-      }
-      // "+1 ticket / amenity adjacent to this artist's stage" (CHVRCHES, Peggy Gou)
-      if (el.includes("ticket / amenity adjacent") || el.includes("ticket/ amenity adjacent")) {
-        const pd = playerData[pid];
-        const am = pd.amenities || {};
-        // Total amenities the player has built (no longer spatial — flat sum)
-        const adjCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
-        if (adjCount > 0) {
-          logTicketGain(pid, adjCount, `${artist.name} effect (per amenity)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + adjCount } }));
-          addLog("Effect", `${artist.name}: +${adjCount} tickets (per amenity)`);
-          showFloatingBonus(`+${adjCount} 🎟️`, "#fbbf24");
-        }
-      }
-      // v137: Chainsmokers — "+1 ticket for each amenity on the field that has the highest
-      // number of amenities". Finds the fullest field, awards tickets equal to that field's
-      // total amenity count. Distinct from CHVRCHES/Peggy Gou which use total amenities.
-      if (el.includes("field that has the highest number of amenities") || el.includes("highest number of amenities")) {
-        const pd = playerData[pid];
-        const fields = pd.fields || [];
-        let maxCount = 0;
-        fields.forEach(f => {
-          const total = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-          if (total > maxCount) maxCount = total;
-        });
-        if (maxCount > 0) {
-          logTicketGain(pid, maxCount, `${artist.name} effect (highest field)`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + maxCount } }));
-          addLog("Effect", `${artist.name}: +${maxCount} tickets (from your fullest field)`);
-          showFloatingBonus(`+${maxCount} 🎟️`, "#fbbf24");
-        }
-      }
-      // === +1 Star Die — claim 1 die from the pool to this player ===
-      if (el.includes("+1 star die") || el.includes("+1 star dice")) {
-        const currentPool = dicePoolRef.current;
-        if (currentPool > 0) {
-          setDicePool(currentPool - 1);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], heldDice: (p[pid].heldDice || 0) + 1 } }));
-          addLog("Effect", `${artist.name}: +1 🎲 Star Die (${currentPool - 1} left in pool)`);
-          showFloatingBonus("+1 🎲 Star Die!", "#fbbf24");
-        } else {
-          addLog("Effect", `${artist.name}: would grant +1 Star Die, but pool is empty`);
-        }
-      }
-      // v140: "Choose an indie artist from the artist pool, if there is one."
-      // Fires as a BASE effect for Djo, Two Door Cinema Club, The Kooks. The same string
-      // also lives on Suki Waterhouse's genreMatchEffect, handled by applyGenreMatchEffect
-      // separately (both parsers are needed). For AI: auto-take highest-fame Indie in the
-      // pool. For humans: open a picker modal.
-      if ((el.includes("indie artist from the artist pool") || el.includes("indie artist from the pool")) && !el.includes("if you have")) {
-        const indieIdxes = artistPool.map((a, i) => getGenres(a.genre).includes("Indie") ? i : -1).filter(i => i >= 0);
-        if (indieIdxes.length === 0) {
-          addLog("Effect", `${artist.name}: no Indie artist in the pool — nothing to take`);
-        } else {
-          const player = players.find(pl => pl.id === pid);
-          if (player?.isAI) {
-            // AI: pick highest-fame indie (proxy for most valuable)
-            const bestIdx = indieIdxes.reduce((best, i) => (artistPool[i].fame > artistPool[best].fame ? i : best), indieIdxes[0]);
-            const chosen = artistPool[bestIdx];
-            setArtistPool(prev => { const np = [...prev]; np.splice(bestIdx, 1); return np; });
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
-            addLog("Effect", `${artist.name}: took ${chosen.name} into hand`);
-          } else {
-            // Human: queue a picker modal. Uses the same pendingEffect scaffold so the UI
-            // that resolves it lives alongside other effect modals.
-            setPendingEffect({ type: "pickIndieFromPool", artistName: artist.name, indieOptions: indieIdxes.map(i => artistPool[i].name) });
-            setPendingEffectPid(pid);
-          }
-        }
-      }
-      // === Event-draw effects (retired with the event system) — no-ops kept for log clarity ===
-      if (el.includes("+1 negative personal event") || el.includes("+1 negative global event") ||
-          (el.includes("+1 global event") && !el.includes("negative")) ||
-          (el.includes("+1 event") && !el.includes("personal") && !el.includes("negative") && !el.includes("global"))) {
-        addLog("Effect", `${artist.name}: (event-draw effect retired)`);
-      }
+      // ═══════════════════════════════════════════════════════════
+      // v184 — GUARD PHASE (moved from below for correct ordering)
+      // All positional, die-removal, sacrifice, and Ms Banks guards must run
+      // BEFORE any specific effect handlers (fame, ticket, VP, etc.) — otherwise
+      // those handlers fire once here and again when the interactive picker's
+      // accept flow fires the benefit, resulting in duplicate popups/logs.
+      // Positional guards also need to fire early to prevent Horsegiirl/Peggy Gou/
+      // Linkin Park/Chainsmokers/Fatboy Slim's ticket bonuses from firing on the
+      // wrong slot via the specific +N handlers.
+      // Guards use `continue` to skip the rest of the loop iteration when they
+      // intercept. AI-only paths (auto-sacrifice inline) still work via their
+      // branches inside the guard blocks.
+      // ═══════════════════════════════════════════════════════════
       // ═══════════════════════════════════════════════════════════
       // v173 — POSITIONAL TRIGGERS (Electronic)
       // Electronic artists have effects that fire only when they occupy a specific
@@ -4845,6 +4556,373 @@ export default function Headliners() {
             continue;
           }
         }
+      }
+      // Ms Banks: "may remove 2 amenities of your choice"
+      // v172: converted from auto-pick to interactive picker. Player selects which 2
+      // amenity slots to sacrifice via a modal showing amenities per field. When both
+      // are chosen, the chain-play (playFromHand) effect proceeds. If the player has
+      // 0 amenities, the sacrifice is skipped and chain-play still fires (per spec).
+      // AI: auto-picks the two most-abundant amenities (least painful loss).
+      // v172: also respect the 2-play cap — if the player has already played 2 this
+      // turn, the sacrifice+chain-play effect is skipped entirely (no cost, no benefit).
+      if (el.includes("may remove 2 amenities of your choice")) {
+        if ((playsThisTurnRef.current || 0) >= 2) {
+          addLog("Effect", `${artist.name}: chain-play blocked (2-plays-per-turn cap) — sacrifice skipped`);
+          continue;
+        }
+        const pdSnap = playerDataRef.current?.[pid] || playerData[pid] || {};
+        const am = pdSnap.amenities || {};
+        const totalAm = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+        const isAI = players.find(p => p.id === pid)?.isAI;
+        if (totalAm === 0) {
+          addLog("Effect", `${artist.name}: no amenities to sacrifice — proceeding to free chain-play`);
+        } else if (isAI) {
+          // AI: auto-pick (existing behavior)
+          for (let i = 0; i < 2; i++) {
+            const cur = playerDataRef.current?.[pid] || playerData[pid] || {};
+            const camList = cur.amenities || {};
+            const types = ["catering","security","portaloo","campsite"].filter(t => (camList[t] || 0) > 0);
+            if (types.length === 0) break;
+            types.sort((a, b) => (camList[b] || 0) - (camList[a] || 0));
+            const chosen = types[0];
+            const fields = cur.fields || [];
+            const fIdx = fields.findIndex(f => (f?.[chosen] || 0) > 0);
+            if (fIdx >= 0) {
+              setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, chosen, -1) }));
+              addLog("Effect", `${artist.name}: sacrificed 1 ${AMENITY_LABELS[chosen]} (${i+1}/2)`);
+            }
+          }
+        } else {
+          // Human: show a picker that consumes 2 removals, then chain-plays for free.
+          // The playFromHand handler below will still fire because 'el.includes' still
+          // matches — but we need to gate it so it doesn't fire immediately. We stash the
+          // "free chain-play after removals" intent in the pendingEffect so the picker's
+          // completion transitions to the play-from-hand step.
+          setPendingEffect({
+            type: "removeAmenities",
+            artistName: artist.name,
+            removalsRemaining: Math.min(2, totalAm),
+            followUp: { type: "playFromHand", artistName: artist.name, free: true, suppressEffect: true },
+          });
+          setPendingEffectPid(pid);
+          addLog("Effect", `${artist.name}: choose ${Math.min(2, totalAm)} amenit${Math.min(2, totalAm)===1?"y":"ies"} to sacrifice`);
+          // Return early so the play-another handler below doesn't ALSO set a pending
+          // effect — the picker's completion will set that follow-up itself.
+          continue;
+        }
+      }
+
+      // === Fame effects ===
+      if (el.includes("+fame") || (el.includes("+1 fame") && !el.includes("fame if"))) {
+        logFameGain(pid, 1, "Effect");
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+        addLog("Effect", `${artist.name}: +1 Fame`);
+        showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
+      }
+      // "+1 Fame if you have played 2 [Genre] artists this year"
+      if (el.includes("fame if you have played 2")) {
+        const genreMatch = eff.match(/played 2 (\w+) artists/i);
+        if (genreMatch) {
+          const targetGenre = genreMatch[1];
+          const pd = playerData[pid];
+          const count = (pd.stageArtists || []).flat().filter(a => getGenres(a.genre).includes(targetGenre)).length;
+          if (count >= 2) {
+            logFameGain(pid, 1, `${artist.name} effect`);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+            addLog("Effect", `${artist.name}: +1 Fame (2+ ${targetGenre} artists!)`);
+            showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
+          } else {
+            addLog("Effect", `${artist.name}: Need 2 ${targetGenre} artists (have ${count})`);
+          }
+        }
+      }
+      // === VP effects ===
+      if ((el.includes("+1 vp") || el.includes("+1vp")) && !el.includes("vp /") && !el.includes("vp per") && !el.includes("vp if")) {
+        logTicketGain(pid, 0  /* TODO: fill in amount */, "Effect (uncategorized)");
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
+        addLog("Effect", `${artist.name}: +1 🎟️ ticket`); showFloatingBonus("+1 ⭐", "#c4b5fd");
+      }
+      if (el.includes("gain 1vp per existing campsite")) {
+        const camps = (playerData[pid]?.amenities?.campsite) || 0;
+        logTicketGain(pid, camps, `${artist.name} effect (per campsite)`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + camps } }));
+        addLog("Effect", `${artist.name}: +${camps} 🎟️ tickets (1 per campsite)`);
+      }
+      // "+1 VP per other [Genre] act on this stage" (genre synergy)
+      {
+        const genreSynergyMatch = eff.match(/\+1 VP per other (\w+) (?:act|artist) on this stage/i);
+        if (genreSynergyMatch && stageIdx >= 0) {
+          const targetGenre = genreSynergyMatch[1];
+          const stageArtists = (playerData[pid]?.stageArtists || [])[stageIdx] || [];
+          const otherCount = stageArtists.filter(a => a.name !== artist.name && getGenres(a.genre).includes(targetGenre)).length;
+          if (otherCount > 0) {
+            logTicketGain(pid, otherCount, `${artist.name} effect (genre synergy)`);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + otherCount } }));
+            addLog("Effect", `${artist.name}: +${otherCount} 🎟️ tickets (${otherCount} other ${targetGenre} on stage)`);
+            showFloatingBonus(`+${otherCount} ⭐`, "#c4b5fd");
+          }
+        }
+      }
+      // "+1 VP per other artist on all of your stages" (Prince)
+      if (el.includes("vp per other artist on all")) {
+        const totalOthers = (playerData[pid]?.stageArtists || []).flat().filter(a => a.name !== artist.name).length;
+        if (totalOthers > 0) {
+          logTicketGain(pid, totalOthers, `${artist.name} effect (per other artist)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + totalOthers } }));
+          addLog("Effect", `${artist.name}: +${totalOthers} 🎟️ tickets (${totalOthers} other artists on stages)`);
+          showFloatingBonus(`+${totalOthers} ⭐`, "#c4b5fd");
+        }
+      }
+      // "+1 VP per other [Genre] artist on this stage" variant (covers Pop/Rock/etc)
+      {
+        const popSynergyMatch = eff.match(/\+1 VP per other (\w+) act on this stage/i);
+        // Already handled above — skip duplicate
+      }
+      // "Discard one artist from your hand to gain 3 tickets" (Teena Marie)
+      if (el.includes("discard one artist from your hand to gain 3 tickets")) {
+        setPendingEffect({ type: "discardHandForTickets", artistName: artist.name, discardCount: 1, ticketReward: 3 });
+        setPendingEffectPid(pid);
+        addLog("Effect", `${artist.name}: Discard 1 artist from hand for +3 tickets`);
+      }
+      // "Discard two artists from your hand to gain the ticket cost of one of them" (Rick James)
+      if (el.includes("discard two artists from your hand to gain the ticket cost")) {
+        setPendingEffect({ type: "discardHandForTicketValue", artistName: artist.name, discardCount: 2 });
+        setPendingEffectPid(pid);
+        addLog("Effect", `${artist.name}: Discard 2 artists, gain ticket value of one`);
+      }
+      // "Discard one amenity, gain 5 tickets" (Betty Davis)
+      if (el.includes("discard one amenity") && el.includes("gain 5 tickets")) {
+        setPendingEffect({ type: "discardAmenityForTickets", artistName: artist.name, ticketReward: 5 });
+        setPendingEffectPid(pid);
+        addLog("Effect", `${artist.name}: Discard 1 amenity for +5 tickets`);
+      }
+      // "Discard two artists from your hand, then draw the top artist from the deck and play it for free" (Silk Sonic)
+      if (el.includes("discard two artists from your hand") && el.includes("play it for free")) {
+        setPendingEffect({ type: "discardHandDrawFree", artistName: artist.name, discardCount: 2 });
+        setPendingEffectPid(pid);
+        addLog("Effect", `${artist.name}: Discard 2 artists, draw and play 1 for free!`);
+      }
+      // "Roll all amenity dice and gain 1 Fame if a Fame shows" (David Bowie)
+      if (el.includes("roll all amenity dice") && el.includes("gain 1 fame if a fame shows")) {
+        triggerDiceRoll(5, pid, artist.name,
+          (results) => { const hasFame = results.some(d => d === "fame"); return hasFame ? "🔥 Fame shown! +1 Fame" : "No fame shown"; },
+          (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+        );
+      }
+      // v163: "draw an artist objective" (Missy Elliott) — the objective system was
+      // removed; the effect is a no-op now. Kept the -2 VP so the artist still has cost.
+      if (el.includes("draw an artist objective")) {
+        addLog("Effect", `${artist.name}: (no-op — objective system removed)`);
+      }
+      // === -VP effects (Hip Hop risk/reward) ===
+      // "-X VP" — generic VP loss patterns
+      {
+        const vpLossMatch = eff.match(/-(\d+)\s*(?:VP|tickets?)/i);
+        if (vpLossMatch) {
+          const vpLoss = parseInt(vpLossMatch[1]);
+          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: Math.max(0, (p[pid].bonusTickets || 0) - vpLoss) } }));
+          addLog("Effect", `${artist.name}: -${vpLoss} 🎟️ tickets`);
+          showFloatingBonus(`-${vpLoss} ⭐`, "#ef4444");
+        }
+      }
+      // "Sell X tickets" — bonus tickets from -VP effects
+      {
+        const sellMatch = eff.match(/[Ss]ell\s+(\d+)\s+tickets?/i);
+        if (sellMatch) {
+          const tix = parseInt(sellMatch[1]);
+          logTicketGain(pid, -vpLoss, `${artist.name} effect (cost)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
+          addLog("Effect", `${artist.name}: +${tix} ticket sales`);
+          showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
+        }
+      }
+      // "+1 ticket / 2 amenities" (Flume)
+      if (el.includes("ticket / 2 amenities") || el.includes("ticket/ 2 amenities")) {
+        const am = playerData[pid]?.amenities || {};
+        const amCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+        const tix = Math.floor(amCount / 2);
+        if (tix > 0) {
+          logTicketGain(pid, tix, `${artist.name} effect (per 2 amenities)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + tix } }));
+          addLog("Effect", `${artist.name}: +${tix} tickets (1 per 2 amenities)`);
+          showFloatingBonus(`+${tix} 🎟️`, "#fbbf24");
+        }
+      }
+      // "+1 Fame if you have played 2 artists of either X or Y" (Charli XCX)
+      if (el.includes("fame if you have played 2 artists of either")) {
+        const genreMatch = eff.match(/either (\w+) or (\w+)/i);
+        if (genreMatch) {
+          const pd = playerData[pid];
+          const booked = (pd.stageArtists || []).flat();
+          const count = booked.filter(a => getGenres(a.genre).includes(genreMatch[1]) || getGenres(a.genre).includes(genreMatch[2])).length;
+          if (count >= 2) {
+            logFameGain(pid, 1, `${artist.name} effect`);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+            addLog("Effect", `${artist.name}: +1 Fame (2+ ${genreMatch[1]}/${genreMatch[2]} artists!)`);
+            showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
+          } else {
+            addLog("Effect", `${artist.name}: Need 2 ${genreMatch[1]}/${genreMatch[2]} artists (have ${count})`);
+          }
+        }
+      }
+      // "for X Fame" — gain fame as part of VP trade (Loyle Carner "-2 VP for 1 Fame")
+      {
+        const forFameMatch = eff.match(/for (\d+) Fame/i);
+        if (forFameMatch && el.includes("-") && el.includes("vp")) {
+          const fameGain = parseInt(forFameMatch[1]);
+          logFameGain(pid, 1, "Effect");
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain) } }));
+          addLog("Effect", `${artist.name}: +${fameGain} Fame`);
+          showFloatingBonus(`+${fameGain} 🔥`, "#f97316"); sfx.gainFame();
+        }
+      }
+      // "Roll 1 amenity dice and gain 1 Fame for each Fame shown" (Loyle Carner)
+      if (el.includes("roll 1 amenity dice") || el.includes("roll 1 amenity die")) {
+        triggerDiceRoll(1, pid, artist.name, "+1 Fame per Fame shown",
+          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logFameGain(pid, fameCount, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+        );
+      }
+      // === Ticket effects ===
+      if (el.includes("+4 ticket sales")) {
+        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
+        addLog("Effect", `${artist.name}: +4 ticket sales`); showFloatingBonus("+4 🎟️", "#fbbf24");
+      }
+      if (el.includes("+5 ticket sales")) {
+        logTicketGain(pid, 4, `${artist.name} effect (+4)`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 5 } }));
+        addLog("Effect", `${artist.name}: +5 ticket sales`); showFloatingBonus("+5 🎟️", "#fbbf24");
+      }
+      // "+1 ticket sale for all players"
+      if (el.includes("ticket sale for all players") || el.includes("ticket sales for all players")) {
+        players.forEach(p => {
+          logTicketGain(p.id, 1, `${artist.name} effect (all players)`);
+          setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: (prev[p.id].bonusTickets || 0) + 1 } }));
+        });
+        addLog("Effect", `${artist.name}: +1 ticket for ALL players!`);
+        showFloatingBonus("+1 🎟️ all!", "#fbbf24");
+      }
+      // "Gain an artist from the pool who's Fame cost is lower than this artist"
+      // (Sly & The Family Stone, Teena Marie). Auto-picks the highest-value eligible artist
+      // — pool card gets moved to the player's hand. No effect if pool has no eligible artists.
+      // v186: exclude tempt/agent-protected artists — an artist another player (or the
+      // player themselves) has tempted is locked in until the contest resolves, and
+      // cannot be snatched via a pool-grab effect.
+      if (el.includes("artist from the pool who") || el.includes("pool who's fame cost is lower") || el.includes("pool whose fame cost is lower")) {
+        const protectedNames = getAgentProtectedNames();
+        const eligible = artistPool
+          .filter(a => (a.fame || 0) < (artist.fame || 0))
+          .filter(a => !protectedNames.has(a.name))
+          .map(a => ({ a, score: (a.tickets || 0) + (a.vp || 0) }))
+          .sort((x, y) => y.score - x.score);
+        if (eligible.length > 0) {
+          const chosen = eligible[0].a;
+          setArtistPool(prev => { const np = [...prev]; const idx = np.findIndex(a => a.name === chosen.name); if (idx >= 0) np.splice(idx, 1); return np; });
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
+          addLog("Effect", `${artist.name}: gained ${chosen.name} from the pool (lower Fame)`);
+          showFloatingBonus(`🎁 ${chosen.name} to hand`, "#c4b5fd");
+        } else {
+          addLog("Effect", `${artist.name}: no eligible lower-Fame artist in pool (tempted artists excluded)`);
+        }
+      }
+      // "+1 ticket sale / Current Fame Level"
+      if (el.includes("ticket sale / current fame") || el.includes("ticket / current fame")) {
+        const fame = playerData[pid]?.fame || 0;
+        if (fame > 0) {
+          logTicketGain(pid, fame, `${artist.name} effect (per Fame Level)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + fame } }));
+          addLog("Effect", `${artist.name}: +${fame} tickets (1 per Fame level)`);
+          showFloatingBonus(`+${fame} 🎟️`, "#fbbf24");
+        }
+      }
+      // "+1 ticket / Negative Star Face avoided this year" (rethemed from event)
+      if (el.includes("ticket / negative event this year") || el.includes("ticket / negative event") || el.includes("ticket / negative star")) {
+        const avoidedCount = negStarFacesAvoidedThisYear[pid] || 0;
+        if (avoidedCount > 0) {
+          logTicketGain(pid, avoidedCount, `${artist.name} effect (avoided stars)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + avoidedCount } }));
+          addLog("Effect", `${artist.name}: +${avoidedCount} tickets (1 per neg. star avoided)`);
+          showFloatingBonus(`+${avoidedCount} 🎟️`, "#fbbf24");
+        }
+      }
+      // "+1 ticket / amenity adjacent to this artist's stage" (CHVRCHES, Peggy Gou)
+      if (el.includes("ticket / amenity adjacent") || el.includes("ticket/ amenity adjacent")) {
+        const pd = playerData[pid];
+        const am = pd.amenities || {};
+        // Total amenities the player has built (no longer spatial — flat sum)
+        const adjCount = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+        if (adjCount > 0) {
+          logTicketGain(pid, adjCount, `${artist.name} effect (per amenity)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + adjCount } }));
+          addLog("Effect", `${artist.name}: +${adjCount} tickets (per amenity)`);
+          showFloatingBonus(`+${adjCount} 🎟️`, "#fbbf24");
+        }
+      }
+      // v137: Chainsmokers — "+1 ticket for each amenity on the field that has the highest
+      // number of amenities". Finds the fullest field, awards tickets equal to that field's
+      // total amenity count. Distinct from CHVRCHES/Peggy Gou which use total amenities.
+      if (el.includes("field that has the highest number of amenities") || el.includes("highest number of amenities")) {
+        const pd = playerData[pid];
+        const fields = pd.fields || [];
+        let maxCount = 0;
+        fields.forEach(f => {
+          const total = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+          if (total > maxCount) maxCount = total;
+        });
+        if (maxCount > 0) {
+          logTicketGain(pid, maxCount, `${artist.name} effect (highest field)`);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + maxCount } }));
+          addLog("Effect", `${artist.name}: +${maxCount} tickets (from your fullest field)`);
+          showFloatingBonus(`+${maxCount} 🎟️`, "#fbbf24");
+        }
+      }
+      // === +1 Star Die — claim 1 die from the pool to this player ===
+      if (el.includes("+1 star die") || el.includes("+1 star dice")) {
+        const currentPool = dicePoolRef.current;
+        if (currentPool > 0) {
+          setDicePool(currentPool - 1);
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], heldDice: (p[pid].heldDice || 0) + 1 } }));
+          addLog("Effect", `${artist.name}: +1 🎲 Star Die (${currentPool - 1} left in pool)`);
+          showFloatingBonus("+1 🎲 Star Die!", "#fbbf24");
+        } else {
+          addLog("Effect", `${artist.name}: would grant +1 Star Die, but pool is empty`);
+        }
+      }
+      // v140: "Choose an indie artist from the artist pool, if there is one."
+      // Fires as a BASE effect for Djo, Two Door Cinema Club, The Kooks. The same string
+      // also lives on Suki Waterhouse's genreMatchEffect, handled by applyGenreMatchEffect
+      // separately (both parsers are needed). For AI: auto-take highest-fame Indie in the
+      // pool. For humans: open a picker modal.
+      // v186: exclude tempt/agent-protected artists from both AI auto-pick and the
+      // human picker options.
+      if ((el.includes("indie artist from the artist pool") || el.includes("indie artist from the pool")) && !el.includes("if you have")) {
+        const protectedNames = getAgentProtectedNames();
+        const indieIdxes = artistPool.map((a, i) => (getGenres(a.genre).includes("Indie") && !protectedNames.has(a.name)) ? i : -1).filter(i => i >= 0);
+        if (indieIdxes.length === 0) {
+          addLog("Effect", `${artist.name}: no eligible Indie artist in the pool (tempted artists excluded)`);
+        } else {
+          const player = players.find(pl => pl.id === pid);
+          if (player?.isAI) {
+            // AI: pick highest-fame indie (proxy for most valuable)
+            const bestIdx = indieIdxes.reduce((best, i) => (artistPool[i].fame > artistPool[best].fame ? i : best), indieIdxes[0]);
+            const chosen = artistPool[bestIdx];
+            setArtistPool(prev => { const np = [...prev]; np.splice(bestIdx, 1); return np; });
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), chosen] } }));
+            addLog("Effect", `${artist.name}: took ${chosen.name} into hand`);
+          } else {
+            // Human: queue a picker modal. Uses the same pendingEffect scaffold so the UI
+            // that resolves it lives alongside other effect modals.
+            setPendingEffect({ type: "pickIndieFromPool", artistName: artist.name, indieOptions: indieIdxes.map(i => artistPool[i].name) });
+            setPendingEffectPid(pid);
+          }
+        }
+      }
+      // === Event-draw effects (retired with the event system) — no-ops kept for log clarity ===
+      if (el.includes("+1 negative personal event") || el.includes("+1 negative global event") ||
+          (el.includes("+1 global event") && !el.includes("negative")) ||
+          (el.includes("+1 event") && !el.includes("personal") && !el.includes("negative") && !el.includes("global"))) {
+        addLog("Effect", `${artist.name}: (event-draw effect retired)`);
       }
 
       // === All players draw ===
@@ -5063,60 +5141,6 @@ export default function Headliners() {
             addLog("Effect", `${artist.name}: sacrificed 1 ${AMENITY_LABELS[chosen]}`);
             showFloatingBonus(`-1 ${AMENITY_ICONS[chosen]}`, "#dc2626");
           }
-        }
-      }
-      // Ms Banks: "may remove 2 amenities of your choice"
-      // v172: converted from auto-pick to interactive picker. Player selects which 2
-      // amenity slots to sacrifice via a modal showing amenities per field. When both
-      // are chosen, the chain-play (playFromHand) effect proceeds. If the player has
-      // 0 amenities, the sacrifice is skipped and chain-play still fires (per spec).
-      // AI: auto-picks the two most-abundant amenities (least painful loss).
-      // v172: also respect the 2-play cap — if the player has already played 2 this
-      // turn, the sacrifice+chain-play effect is skipped entirely (no cost, no benefit).
-      if (el.includes("may remove 2 amenities of your choice")) {
-        if ((playsThisTurnRef.current || 0) >= 2) {
-          addLog("Effect", `${artist.name}: chain-play blocked (2-plays-per-turn cap) — sacrifice skipped`);
-          continue;
-        }
-        const pdSnap = playerDataRef.current?.[pid] || playerData[pid] || {};
-        const am = pdSnap.amenities || {};
-        const totalAm = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
-        const isAI = players.find(p => p.id === pid)?.isAI;
-        if (totalAm === 0) {
-          addLog("Effect", `${artist.name}: no amenities to sacrifice — proceeding to free chain-play`);
-        } else if (isAI) {
-          // AI: auto-pick (existing behavior)
-          for (let i = 0; i < 2; i++) {
-            const cur = playerDataRef.current?.[pid] || playerData[pid] || {};
-            const camList = cur.amenities || {};
-            const types = ["catering","security","portaloo","campsite"].filter(t => (camList[t] || 0) > 0);
-            if (types.length === 0) break;
-            types.sort((a, b) => (camList[b] || 0) - (camList[a] || 0));
-            const chosen = types[0];
-            const fields = cur.fields || [];
-            const fIdx = fields.findIndex(f => (f?.[chosen] || 0) > 0);
-            if (fIdx >= 0) {
-              setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, chosen, -1) }));
-              addLog("Effect", `${artist.name}: sacrificed 1 ${AMENITY_LABELS[chosen]} (${i+1}/2)`);
-            }
-          }
-        } else {
-          // Human: show a picker that consumes 2 removals, then chain-plays for free.
-          // The playFromHand handler below will still fire because 'el.includes' still
-          // matches — but we need to gate it so it doesn't fire immediately. We stash the
-          // "free chain-play after removals" intent in the pendingEffect so the picker's
-          // completion transitions to the play-from-hand step.
-          setPendingEffect({
-            type: "removeAmenities",
-            artistName: artist.name,
-            removalsRemaining: Math.min(2, totalAm),
-            followUp: { type: "playFromHand", artistName: artist.name, free: true, suppressEffect: true },
-          });
-          setPendingEffectPid(pid);
-          addLog("Effect", `${artist.name}: choose ${Math.min(2, totalAm)} amenit${Math.min(2, totalAm)===1?"y":"ies"} to sacrifice`);
-          // Return early so the play-another handler below doesn't ALSO set a pending
-          // effect — the picker's completion will set that follow-up itself.
-          continue;
         }
       }
 
@@ -6051,8 +6075,11 @@ export default function Headliners() {
       if (pe.type === "drawFromPool") {
         // v177: pool-only draw picker (Missy Elliott follow-up). AI picks the highest-
         // value pool artist for each draw.
+        // v186: exclude tempt/agent-protected artists.
         const remaining = pe.drawsRemaining || 1;
-        const currentPool = artistPoolRef.current || artistPool || [];
+        const rawPool = artistPoolRef.current || artistPool || [];
+        const protectedNames = getAgentProtectedNames();
+        const currentPool = rawPool.filter(a => !protectedNames.has(a.name));
         if (currentPool.length === 0) {
           setPendingEffect(null); setPendingEffectPid(null);
           scheduleNext(200); return;
@@ -6060,7 +6087,8 @@ export default function Headliners() {
         const scored = currentPool.map((a, i) => ({ a, i, s: (a.vp || 0) + (a.tickets || 0) + Math.random() }));
         scored.sort((x, y) => y.s - x.s);
         const picked = scored[0];
-        const newPool = currentPool.filter((_, j) => j !== picked.i); setArtistPool(newPool);
+        // Remove by name from the RAW pool (our currentPool was filtered).
+        setArtistPool(prev => { const idx = prev.findIndex(x => x.name === picked.a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked.a] } }));
         addLog("🤖 AI", `${pe.artistName}: picked ${picked.a.name} from pool`);
         if (remaining > 1) {
@@ -6103,14 +6131,18 @@ export default function Headliners() {
         // v172: AI auto-resolves the pool/deck picker. For each remaining draw:
         //   - If the pool has good artists (best score > threshold), pick pool
         //   - Else draw blind from deck
+        // v186: exclude tempt/agent-protected artists from the pool picks.
         const remaining = pe.drawsRemaining || 1;
-        const currentPool = artistPoolRef.current || artistPool || [];
+        const rawPool = artistPoolRef.current || artistPool || [];
+        const protectedNames = getAgentProtectedNames();
+        const currentPool = rawPool.filter(a => !protectedNames.has(a.name));
         if (currentPool.length > 0) {
           const scored = currentPool.map((a, i) => ({ a, i, s: (a.vp || 0) + (a.tickets || 0) + Math.random() }));
           scored.sort((x, y) => y.s - x.s);
           if (scored[0].s > 5) {
             const picked = scored[0];
-            const newPool = currentPool.filter((_, j) => j !== picked.i); setArtistPool(newPool);
+            // Remove by name from the RAW pool.
+            setArtistPool(prev => { const idx = prev.findIndex(x => x.name === picked.a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked.a] } }));
             addLog("🤖 AI", `${pe.artistName}: picked ${picked.a.name} from pool`);
           } else {
@@ -6466,6 +6498,13 @@ export default function Headliners() {
           }
         }
         // AI: resolve pool agent claims at turn start
+        // v185: if a queued contest placement already opened a pendingAgentArtist,
+        // skip resolvePoolAgents — the AI dispatcher at line ~6541 will handle it
+        // on the next tick. Otherwise a fresh tempt result would clobber the queued
+        // one and the AI's contest win would be lost.
+        if (pendingAgentArtist) {
+          scheduleNext(400); return;
+        }
         const resolution = resolvePoolAgents(currentPlayerId);
         if (resolution && resolution.type === "uncontested") {
           // v179: +2 Fame for uncontested tempt win (fires at resolution, before book/hand branch)
@@ -6524,16 +6563,35 @@ export default function Headliners() {
       // (council-fame popup removed)
       
       // AI: handle pending agent artist booking
+      // v185: was auto-booking to openStages[0] with no per-stage validation, and if
+      // no open stages existed the artist was silently dropped (source of the "won a
+      // contest but the artist disappears" symptom for AI winners). Now:
+      //   - Filter to stages the artist can legally be booked on (amenities or genre-match)
+      //   - Prefer genre-match headliner stages when available
+      //   - If no bookable stage, send to hand as a fallback (never silently drop)
       if (pendingAgentArtist) {
         const pa = pendingAgentArtist;
         const pd2 = playerData[pa.pid] || {};
-        const openStages = (pd2.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-        if (openStages.length > 0) {
-          const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
-          if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-          bookArtistToStage(pa.artist, openStages[0], pa.pid, true);
+        const allOpen = (pd2.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
+        const bookable = allOpen.filter(si => canBookArtistOnStage(pa.artist, pd2, si));
+        // Pool removal is defensive — for contest paths, the artist was already removed
+        // at commitAgentContest time. For uncontested paths that route here, we still
+        // need to remove. findIndex/splice is safe either way.
+        const newPool = [...artistPool];
+        const idx = newPool.findIndex(a => a.name === pa.artist.name);
+        if (idx >= 0) { newPool.splice(idx, 1); setArtistPool(newPool); }
+        if (bookable.length > 0) {
+          const genreStage = bookable.find(si => canBookHeadlinerViaGenre(pa.artist, pd2, si));
+          const chosen = genreStage != null ? genreStage : bookable[0];
+          const viaGenre = genreStage != null && !canAffordArtist(pa.artist, pd2);
+          bookArtistToStage(pa.artist, chosen, pa.pid, true, viaGenre);
           exhaustAgent(pa.pid);
-          addLog("🕵️ AI Agent", `Booked ${pa.artist.name} (agent claim)`);
+          addLog("🤖 AI", `Booked ${pa.artist.name} (contest/agent claim)`);
+        } else {
+          // No legal stage — hand fallback prevents silent artist loss.
+          setPlayerData(p => ({ ...p, [pa.pid]: { ...p[pa.pid], hand: [...(p[pa.pid].hand || []), pa.artist] } }));
+          exhaustAgent(pa.pid);
+          addLog("🤖 AI", `${pa.artist.name} won but no legal stage — added to hand`);
         }
         setPendingAgentArtist(null);
         setTimeout(() => recalcTickets(), 50);
@@ -8394,7 +8452,16 @@ export default function Headliners() {
       }
     });
 
-    const sorted = [...players].sort((a, b) => (allTickets[a.id]?.[year] || 0) - (allTickets[b.id]?.[year] || 0));
+    // v183: bug fix — turn-order anti-lead sort was broken since the allTickets refactor
+    // that stored per-year entries as {raw, fame, ...} objects instead of numbers.
+    // The comparator `(allTickets[a.id]?.[year] || 0) - (allTickets[b.id]?.[year] || 0)`
+    // subtracted objects → NaN → sort returned 0 → turn order stayed the same every
+    // year, cementing player 0's first-mover advantage for the entire game. Under
+    // 1H+2AI setups this meant the last-in-order AI was disadvantaged on shared
+    // resources (microtrends, uncontested tempts, pool artists, dice) every single
+    // round, compounding over 3-4 years into large ticket gaps.
+    // Fix: read `.raw` so we actually sort by numeric tickets.
+    const sorted = [...players].sort((a, b) => ((allTickets[a.id]?.[year]?.raw) || 0) - ((allTickets[b.id]?.[year]?.raw) || 0));
     const no = sorted.map(p => p.id); setTurnOrder(no); setCurrentPlayerIdx(0);
     const tl = {}; const sch = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR; no.forEach(id => { tl[id] = sch[ny]; }); setTurnsLeft(tl);
     setDice(rollDice()); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
@@ -9286,7 +9353,9 @@ export default function Headliners() {
           // v140: modal for "Choose an indie artist from the artist pool, if there is one."
           // Filters the current pool to Indie-genre artists (name-matched against snapshot
           // in case the pool shifted). Player clicks one to take it to hand.
-          const indieArtists = artistPool.filter(a => getGenres(a.genre).includes("Indie"));
+          // v186: tempt/agent-protected artists are excluded from the choices.
+          const protectedNames = getAgentProtectedNames();
+          const indieArtists = artistPool.filter(a => getGenres(a.genre).includes("Indie") && !protectedNames.has(a.name));
           if (indieArtists.length === 0) {
             // Pool changed since queueing — nothing to pick anymore. Auto-close.
             setPendingEffect(null); setPendingEffectPid(null);
@@ -9454,12 +9523,14 @@ export default function Headliners() {
         if (pe.type === "drawFromPoolOrDeck") {
           // v172: player picks 1 artist at a time from either the pool (visible) or
           // the deck (blind draw). Repeats until drawsRemaining == 0.
+          // v186: tempt/agent-protected artists are excluded from the pool panel.
           const remaining = pe.drawsRemaining || 1;
-          const pool = artistPool || [];
+          const protectedNames = getAgentProtectedNames();
+          const pool = (artistPool || []).filter(a => !protectedNames.has(a.name));
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
               <h3 style={{ color: "#c4b5fd", marginBottom: 8 }}>🎴 {pe.artistName}: Draw {remaining} more</h3>
-              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Pick from the pool below, or draw blind from the deck.</p>
+              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Pick from the pool below, or draw blind from the deck.{protectedNames.size > 0 ? " Tempted artists are hidden." : ""}</p>
               <button onClick={() => {
                 const drawn = drawFromDeck(1);
                 if (drawn.length > 0) {
@@ -9474,7 +9545,8 @@ export default function Headliners() {
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 }}>
                   {pool.map((a, i) => (
                     <div key={i} onClick={() => {
-                      const newPool = pool.filter((_, j) => j !== i); setArtistPool(newPool);
+                      // v186: find by name in the FULL pool (display is filtered)
+                      setArtistPool(prev => { const idx = prev.findIndex(x => x.name === a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
                       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
                       addLog("Effect", `${pe.artistName}: picked ${a.name} from the pool`);
                       if (remaining > 1) setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
@@ -9652,8 +9724,10 @@ export default function Headliners() {
         if (pe.type === "drawFromPool") {
           // v177: pool-only picker (used by Missy Elliott's "draw 1 from the pool"
           // follow-up). Similar to drawFromPoolOrDeck but without the deck option.
+          // v186: tempt/agent-protected artists are excluded from the choices.
           const remaining = pe.drawsRemaining || 1;
-          const pool = artistPool || [];
+          const protectedNames = getAgentProtectedNames();
+          const pool = (artistPool || []).filter(a => !protectedNames.has(a.name));
           if (pool.length === 0) {
             // Nothing to pick — auto-clear so we don't stall
             setTimeout(() => { setPendingEffect(null); setPendingEffectPid(null); }, 0);
@@ -9662,11 +9736,12 @@ export default function Headliners() {
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%", maxHeight: "88vh", overflowY: "auto" }}>
               <h3 style={{ color: "#c4b5fd", marginBottom: 8 }}>🎴 {pe.artistName}: Pick {remaining} from the pool</h3>
-              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Click an artist to add them to your hand.</p>
+              <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Click an artist to add them to your hand.{protectedNames.size > 0 ? " Tempted artists are hidden." : ""}</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 }}>
                 {pool.map((a, i) => (
                   <div key={i} onClick={() => {
-                    const newPool = pool.filter((_, j) => j !== i); setArtistPool(newPool);
+                    // v186: find by name in the FULL pool (since our display is filtered)
+                    setArtistPool(prev => { const idx = prev.findIndex(x => x.name === a.name); if (idx < 0) return prev; const np = [...prev]; np.splice(idx, 1); return np; });
                     setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), a] } }));
                     addLog("Effect", `${pe.artistName}: picked ${a.name} from the pool`);
                     if (remaining > 1) setPendingEffect({ ...pe, drawsRemaining: remaining - 1 });
@@ -10101,6 +10176,14 @@ export default function Headliners() {
           <button onClick={() => {
             setShowTurnStart(false);
             setTurnNumber(prev => prev + 1);
+            // v185: if a queued contest placement from an earlier turn already opened
+            // a pendingAgentArtist for this player, DO NOT call resolvePoolAgents here.
+            // That call would overwrite the queued artist with a fresh tempt result,
+            // and the winner would silently lose their contest prize. The queued modal
+            // will show next — player resolves it — checkNextTempt fires afterward to
+            // chain-resolve any remaining tempts. This was the cause of the "won a
+            // contest but the artist disappears" bug.
+            if (pendingAgentArtist) return;
             // Check if this player has an agent on a pool artist to resolve
             const resolution = resolvePoolAgents(currentPlayerId);
             if (resolution && resolution.type === "uncontested") {
