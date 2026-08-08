@@ -6437,6 +6437,14 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   const aiProcessing = useRef(false);
   const aiTimer = useRef(null);
+  // v197.8: per-turn-start resolution lock. Set to a "playerId:turnNumber" key when the
+  // AI turn-start uncontested tempt-resolution block fires. Cleared when a NEW turn-start
+  // occurs. Prevents the "infinite duplicate glitch" that could recur if aiStep re-fires
+  // with a stale closure showing showTurnStart=true after setShowTurnStart(false) was
+  // queued but not yet committed. Without this lock, the block could re-enter, re-book
+  // the tempted artist, and duplicate them across every re-fire until React finally
+  // commits and useEffect reschedules aiStep with a fresh closure.
+  const aiTurnStartResolvedRef = useRef(null);
 
   const isCurrentPlayerAI = () => {
     if (phase === "setup") return players[setupIndex]?.isAI;
@@ -6865,6 +6873,18 @@ export default function Headliners() {
         scheduleNext(500); return;
       }
       if (showTurnStart) {
+        // v197.8: per-turn resolution lock. If we've ALREADY fired the resolution block
+        // for this specific (player, turn) pair, skip. This defends against aiStep
+        // re-entering with a stale closure showing showTurnStart=true after the earlier
+        // setShowTurnStart(false) was queued but not yet committed — the exact race
+        // condition that caused the "AI tempted Jamiroquai at end of year 2 and received
+        // him infinite duplicates on year 3 turn start" bug.
+        const turnStartKey = `${currentPlayerId}:${turnNumber}`;
+        if (aiTurnStartResolvedRef.current === turnStartKey) {
+          // Already resolved this turn-start; just schedule the next AI action and exit.
+          scheduleNext(500); return;
+        }
+        aiTurnStartResolvedRef.current = turnStartKey;
         setShowTurnStart(false);
         setTurnNumber(prev => prev + 1);
         // v167: AI stage-open policy. The AI wants to expand to a 2nd stage
