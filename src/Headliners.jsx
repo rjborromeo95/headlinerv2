@@ -1414,9 +1414,11 @@ function aiScoreArtistForCouncilProgress(artist, pd, year) {
 // v172: score how much an artist matches a player's identity bonus. Big positive
 // if the artist's genre is in the identity's inGenres pair (or fame ≤ 3 for counter
 // culture), and negative if the artist would trigger the identity penalty.
-function aiScoreArtistForIdentity(artist, identity) {
+function aiScoreArtistForIdentity(artist, identity, ctx) {
   if (!identity) return 0;
   const genres = (artist.genre || "").split(",").map(g => g.trim());
+  const playedThisYear = ctx?.playedThisYear || 0;
+  const stagesTwoFull = ctx?.stagesTwoFull || 0;
   if (identity.type === "genrePair") {
     const inPair = genres.some(g => (identity.inGenres || []).includes(g));
     if (inPair) return 12; // big boost for identity-matching plays
@@ -1429,12 +1431,40 @@ function aiScoreArtistForIdentity(artist, identity) {
   // localTalent — encourages low-fame plays
   if (identity.type === "localTalent") {
     if ((artist.fame || 0) <= 2) return 8;
-    return 0;
+    return -4; // penalty is -2 tickets per Fame 3+ play; nudge away
+  }
+  // v196.2: Curated — cap at 6 artists/year. Encourage high-ticket picks (since fewer
+  // plays overall means each play must count more) and STRONGLY discourage the 7th+ play.
+  //   - Already at 6 or above: massive -20 penalty (each play now costs -3 tickets).
+  //   - At 5: mild -3 penalty (one more play is still net +1, but any further is -3).
+  //   - Below 5: reward high-ticket artists proportional to their ticket value.
+  //     A 6-ticket play is worth much more when you only get 6 slots than when you have 12.
+  if (identity.type === "curated") {
+    if (playedThisYear >= 6) return -20; // over cap — every play is -3 tickets
+    if (playedThisYear === 5) return -3;  // last play — pick carefully; only high-value
+    // Ticket-value multiplier: high-fame/high-ticket picks matter more under Curated
+    const val = (artist.tickets || 0) + (artist.fame || 0);
+    return Math.round(val * 0.5); // scales 0-8ish
+  }
+  // v196.2: Confetti Cannons — +2 per effect artist, -1 per non-effect.
+  if (identity.type === "effectMatch") {
+    return (artist.effect && artist.effect.trim().length > 0) ? 6 : -2;
+  }
+  // v196.2: Full of Surprises — encourage playing to make 2/3-full stages (so special-guest
+  // opportunities fire), avoid filling the third slot normally (that triggers the penalty).
+  //   - Stages with 2 already: reward for other artists (would fill last slot for -3 penalty)
+  //     → mild penalty here
+  //   - Stages with 1 or 0: reward for artists that would leave the stage at 2/3
+  //     → reward for these
+  if (identity.type === "fullOfSurprises") {
+    // Simple heuristic: if there are stages at 2/3, playing another would fill = penalty.
+    // Playing on an empty/1-artist stage does not trigger the fill penalty.
+    return stagesTwoFull > 0 ? -3 : 2;
   }
   return 0;
 }
 
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
@@ -1550,12 +1580,12 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
       const lineupWeight = 4 + (trendsBoost * 4);
       const xLineup = aiScoreArtistForLineupObjectives(x, pd, lineupObjectives) * lineupWeight;
       const xCouncil = aiScoreArtistForCouncilProgress(x, pd, year);
-      const xIdentity = aiScoreArtistForIdentity(x, identity);
+      const xIdentity = aiScoreArtistForIdentity(x, identity, identityCtx);
       const xSlot = bestSlotBonus(x);
       const xScore = (x.vp * 3 + x.tickets * 2) + (x.effect ? 5 : 0) + xLineup + xCouncil + microBonus(x) + xIdentity + xSlot;
       const yLineup = aiScoreArtistForLineupObjectives(y, pd, lineupObjectives) * lineupWeight;
       const yCouncil = aiScoreArtistForCouncilProgress(y, pd, year);
-      const yIdentity = aiScoreArtistForIdentity(y, identity);
+      const yIdentity = aiScoreArtistForIdentity(y, identity, identityCtx);
       const ySlot = bestSlotBonus(y);
       const yScore = (y.vp * 3 + y.tickets * 2) + (y.effect ? 5 : 0) + yLineup + yCouncil + microBonus(y) + yIdentity + ySlot;
       return yScore - xScore;
@@ -1663,7 +1693,7 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   [...(pd.hand || [])].filter(a => fame >= a.fame).forEach(a => {
     const genres = (a.genre || "").split(",").map(g => g.trim());
     const isMicroMatch = (activeGenre && genres.includes(activeGenre)) || (forecastGenre && genres.includes(forecastGenre));
-    const identityScore = aiScoreArtistForIdentity(a, identity);
+    const identityScore = aiScoreArtistForIdentity(a, identity, identityCtx);
     const isIdentityMatch = identityScore > 0;
     // A microtrend-matching or identity-matching artist counts more (weight = 3 vs 1)
     const weight = (isMicroMatch ? 3 : 0) + (isIdentityMatch ? 2 : 0) + 1;
@@ -2315,9 +2345,14 @@ export default function Headliners() {
   const [pendingObjectivePickerQueue, setPendingObjectivePickerQueue] = useState([]);
   const [yearObjectiveAssignments, setYearObjectiveAssignments] = useState({});
 
-  // Increment a per-year event counter for the current player. Safe no-op outside alt mode.
+  // Increment a per-year event counter for the current player.
+  // v196.2: was gated on altObjectivesModeRef, which meant Curated identity (and any
+  // other identity keying off per-year event counters) never fired outside alt-objectives
+  // mode — because yearEvents.artistsPlayedThisYear was never incremented. Removed the
+  // gate so identity year-end scoring works regardless of the alt-objectives toggle.
+  // Counters are cheap and used by both identities and (when active) alt-objectives.
   const bumpYearEvent = (pid, field, by = 1) => {
-    if (!altObjectivesModeRef.current || pid == null) return;
+    if (pid == null) return;
     setYearEvents(prev => ({
       ...prev,
       [pid]: { ...(prev[pid] || {}), [field]: ((prev[pid] || {})[field] || 0) + by }
@@ -3209,8 +3244,14 @@ export default function Headliners() {
         const winPd = playerDataRef.current?.[resolution.pid] || playerData[resolution.pid] || {};
         const artist = resolution.artist;
         if (winner?.isAI) {
+          // v196.1 bugfix: this AI branch was using canBookArtistOnStage/canBookHeadlinerViaGenre
+          // (the LOOSE rule that permits headliner placement when existing artists share ≥1
+          // genre with the incoming). That let AI tempts land on stages where an existing
+          // artist had genres NOT covered by the incoming — violating v194's strict subset
+          // rule. Fixed by matching the AI turn-start path (line ~6662) which correctly uses
+          // canTemptDirectToStage. Tempts that fail the strict rule now go to hand for AI too.
           const stages = (winPd.stageArtists || []).map((sa, i) => ({ i, len: sa.length }));
-          const bookable = stages.filter(({ i }) => canBookArtistOnStage(artist, winPd, i)).map(x => x.i);
+          const bookable = stages.filter(({ i }) => canTemptDirectToStage(artist, winPd, i)).map(x => x.i);
           if (bookable.length > 0) {
             const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, winPd, si));
             const chosen = genreStage != null ? genreStage : bookable[0];
@@ -3628,12 +3669,17 @@ export default function Headliners() {
       // queue for their next turn so they can choose then rather than auto-booking.
       const winnerIsAI = players.find(p => p.id === winnerId)?.isAI;
       if (winnerIsAI) {
-        // v150: filter to stages the artist can actually be booked to (amenity or genre-match).
-        // Previously trusted openStages[0] which may not meet amenity reqs — allowed AI to
-        // land a Fame-5 headliner on a barebones stage.
+        // v150: filter to stages the artist can actually be booked to.
         // v177: use winPdForCheck (fame-refund-adjusted) so the AI's bookability check
         // matches the human canPlayNow check.
-        const bookable = openStages.filter(si => canBookArtistOnStage(artist, winPdForCheck, si));
+        // v196.1: under tempt mode, this must use v194's STRICT subset rule
+        // (canTemptDirectToStage), not the loose canBookArtistOnStage rule. Previously
+        // AI contest winners could land on stages where an existing artist had genres
+        // not covered by the incoming, violating v194. Non-tempt mode still uses the
+        // amenity/loose rule for regular agent contests.
+        const bookable = isTempt
+          ? openStages.filter(si => canTemptDirectToStage(artist, winPdForCheck, si))
+          : openStages.filter(si => canBookArtistOnStage(artist, winPdForCheck, si));
         if (bookable.length === 0) {
           // No legal placement — hand.
           // v177: no longer preserves _tempted flag. TEMPT effect is lost when the
@@ -3845,6 +3891,24 @@ export default function Headliners() {
         return disruption;
       };
 
+      // v196.2: read identity context — Curated needs artistsPlayedThisYear to
+      // strongly discourage tempts that would push past the 6-play cap.
+      const playedThisYear = (yearEvents[pid]?.artistsPlayedThisYear) || 0;
+      const identityCtxAI = {
+        playedThisYear,
+        stagesTwoFull: (pd.stageArtists || []).filter(s => s.length === 2).length,
+      };
+      // Under Curated, tempts that would land the AI over 6 plays are strongly punished.
+      // A tempt that resolves as immediate play IS a play (counts toward the 6-cap).
+      // A tempt that goes to hand doesn't count until played, so the penalty is milder.
+      const curatedTemptPenalty = (a, immediatePlay) => {
+        if (aiIdentity?.type !== "curated") return 0;
+        if (playedThisYear >= 6) return immediatePlay ? -30 : -5; // over cap already — huge penalty
+        if (playedThisYear === 5) return immediatePlay ? -8 : 0;  // next play brings us to cap — careful
+        // Below 5: reward high-value tempts since each play slot is precious
+        return immediatePlay ? Math.round(((a.tickets || 0) + (a.fame || 0)) * 0.3) : 0;
+      };
+
       const scored = artistPool.map(a => {
         const iAlreadyTempted = (temptPlacements[pid] || []).some(pl => pl.artistName === a.name);
         if (iAlreadyTempted) return { a, score: -999 };
@@ -3859,6 +3923,11 @@ export default function Headliners() {
         const canPlayLater = canBookArtistAnywhere(a, pd);
         const immediateBonus = canImmediatePlay ? 12 : 0;
         const laterBonus = (!canImmediatePlay && canPlayLater) ? 3 : 0;
+        // v196.2: general identity score — covers Curated (via curatedTemptPenalty below,
+        // this hook covers Confetti Cannons, Local Talent, genrePair, etc.)
+        const identityBonus = aiScoreArtistForIdentity(a, aiIdentity, identityCtxAI);
+        // v196.2: Curated-specific penalty for pushing past the 6-play cap.
+        const curatedPenalty = curatedTemptPenalty(a, canImmediatePlay);
         // How many amenities are we short by? (Sum of gaps.)
         const gap = Math.max(0, (a.campCost || 0) - (pd.amenities?.campsite || 0))
                   + Math.max(0, (a.securityCost || 0) - (pd.amenities?.security || 0))
@@ -3902,17 +3971,29 @@ export default function Headliners() {
         let contestScore = 0;
         if (alreadyTempted) {
           const disruption = contestDisruptionScore(a);
-          const spareScale = spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.6 : 0.2;
+          // v196.2: tightened spare-fame scaling because tempt cost is now 2 Fame (v196).
+          // Was 1.0/0.6/0.2 — dropped to 1.0/0.4/0.1 so Fame-tight AIs are less likely
+          // to burn 2 Fame on speculative contests.
+          const spareScale = spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.4 : 0.1;
           // v195: raw-value contest bonus — proportional to what we're denying
           const rawValueContest = ((a.fame || 0) * 2 + (a.tickets || 0)) * 0.5;
-          contestScore = disruption * spareScale + rawValueContest * spareScale - 1;
+          // v196.2: leader-aware contest — if the artist is currently tempted by the
+          // current leader, boost willingness to contest. Anti-lead mechanic already
+          // pressures leaders, this makes contest denial specifically preferential
+          // against them (as the user requested).
+          const currentLeader = getCurrentLeader();
+          const placements = getPlacementsOnArtist(a.name);
+          const opponentPlacers = placements.filter(pl => pl.pid !== pid);
+          const leaderIsTempting = currentLeader != null && opponentPlacers.some(pl => pl.pid === currentLeader);
+          const leaderBonus = leaderIsTempting ? 4 : 0;
+          contestScore = disruption * spareScale + rawValueContest * spareScale + leaderBonus * spareScale - 1;
         }
         // v179/v196: uncontested tempts yield +2 Fame refund. Under v196 (tempt cost 2)
         // that's net 0 Fame (was net +1 under v179 with cost 1). Small preference for
         // uncontested targets kept — solo tempts are still a cleaner path than fighting
         // over a shared claim even when Fame-neutral.
         const uncontestedPref = alreadyTempted ? 0 : 2;
-        return { a, score: base + immediateBonus + laterBonus + reachPenalty + targetBonus + microBonus + objBonus + contestScore + uncontestedPref };
+        return { a, score: base + immediateBonus + laterBonus + reachPenalty + targetBonus + microBonus + objBonus + contestScore + uncontestedPref + identityBonus + curatedPenalty };
       }).sort((x, y) => y.score - x.score);
       let best = scored[0];
       // v195: post-scoring override. If the top pick is a CONTEST (an artist already
@@ -6739,7 +6820,13 @@ export default function Headliners() {
       const pd = playerData[currentPlayerId] || {};
       const forecastForAI = canClaimForecast(currentPlayerId) ? nextMicrotrend : null;
       const trendsMode = stageOpenModeRef.current === "trends";
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]));
+      // v196.2: pass identity context — used for Curated (avoid >6 plays) and Full of
+      // Surprises (avoid filling the last slot of a 2/3-full stage normally).
+      const identityCtx = {
+        playedThisYear: (yearEvents[currentPlayerId]?.artistsPlayedThisYear) || 0,
+        stagesTwoFull: (pd.stageArtists || []).filter(s => s.length === 2).length,
+      };
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       if (decision.action === "book") {
@@ -7621,7 +7708,10 @@ export default function Headliners() {
     setSpecialGuestCard(null);
     setTimeout(() => recalcTickets(), 50);
     // v135: alt-objectives event — Friends in Special Places tracks special guest placements.
+    // v196.2: also count as a normal artist play so Curated identity's -3-per-artist-over-6
+    // penalty (and any other identity keying on artistsPlayedThisYear) sees the special guest.
     bumpYearEvent(p.id, "specialGuestPlacedThisYear");
+    bumpYearEvent(p.id, "artistsPlayedThisYear");
     setTimeout(() => checkMidYearAchievements(p.id), 80);
     // v154: identity hook. Full of Surprises grants +4 tickets per successful special
     // guest play. Any identity keying off "played artist" fires here too, since a
@@ -11884,10 +11974,12 @@ export default function Headliners() {
         return (yStats[y]?.stageCount) ?? (y === yearRange[yearRange.length - 1] ? (pd.stages || []).length : "");
       })]);
       // Tempts successful / total per year
+      // v196.2: format as "N of M" instead of "N / M" — Excel was interpreting
+      // "2 / 3" as "2 March" (date auto-parse) when opening the CSV.
       rows.push(["Tempts won / placed", ...yearRange.map(y => {
         const won = (yStats[y]?.temptsWon) || 0;
         const placed = (yStats[y]?.temptsPlaced) || 0;
-        return `${won} / ${placed}`;
+        return `${won} of ${placed}`;
       })]);
       // Tickets from artists per year — base (from artist tickets+vp) and effect tickets separately.
       // "Tickets from artists" = sum of a.tickets + a.vp for each artist on stage that year.
@@ -11983,14 +12075,28 @@ export default function Headliners() {
       samples.forEach(v => { const k = Math.round(v); buckets[k] = (buckets[k] || 0) + 1; });
       const maxFreq = Math.max(...Object.values(buckets));
       const modes = Object.entries(buckets).filter(([_, c]) => c === maxFreq).map(([k]) => parseInt(k));
-      return { genre: g, mean, median, mode: modes.join("/"), samples };
+      // v196.2: join modes with " · " instead of "/" — Excel was interpreting
+      // multi-mode results like "1/8/11" as a date. Middle-dot is unambiguous text.
+      return { genre: g, mean, median, mode: modes.join(" · "), samples };
     });
     stats.sort((a, b) => b.mean - a.mean);
     rows.push(["Genre", "Mean tickets", "Median tickets", "Mode tickets", "Sample count"]);
     stats.forEach(s => rows.push([s.genre, Math.round(s.mean * 10) / 10, Math.round(s.median * 10) / 10, s.mode, s.samples.length]));
 
     // ── Serialize + download ──
-    const csv = rows.map(r => r.map(c => { const s = String(c ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; }).join(",")).join("\n");
+    // v196.2: Excel auto-parses cells like "2/3" as dates ("2 March"). Any cell
+    // whose entire content matches a "digit / digit" or "digit-Mon-digit" pattern
+    // gets force-quoted with a leading tab so Excel treats it as text.
+    // Existing " / " → " of " and mode "/" → " · " changes cover most cases; this
+    // is a defensive net for anything future authors might add.
+    const looksDatey = (s) => /^\s*\d+\s*[\/\-]\s*\d+(\s*[\/\-]\s*\d+)?\s*$/.test(s);
+    const csv = rows.map(r => r.map(c => {
+      let s = String(c ?? "");
+      if (looksDatey(s)) s = "\t" + s; // leading tab forces text in Excel
+      return s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\t")
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
+    }).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
