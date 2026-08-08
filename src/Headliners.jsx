@@ -629,6 +629,42 @@ function canBookArtistAnywhere(artist, pd) {
   if (canAffordArtist(artist, pd)) return true;
   return openStages.some(si => canBookHeadlinerViaGenre(artist, pd, si));
 }
+
+// v194: tempt-to-stage rule. A tempted artist can only land DIRECTLY on a stage if the
+// stage already contains at least 1 artist AND every existing artist's genre set is a
+// subset of the incoming artist's genres. Empty stages don't qualify. Amenity costs are
+// ignored on this path — tempt-to-stage is now a pure genre-match mechanic, distinct
+// from the amenity-driven hand-play path.
+//
+// Rule check: for each existing artist on the stage, ALL of that artist's genres must
+// appear in the incoming artist's genres. Equivalently: the union of existing genres
+// must be a subset of the incoming artist's genres. Fame gating still applies.
+//
+// Example — tempting Lady Gaga (Pop, Electronic):
+//   Stage: CRUEL MISTRESS (Electronic) + Sadchild (Pop) → allowed
+//   Stage: Rock-Pop artist + Electronic-Indie artist → blocked (Rock and Indie not in Gaga's set)
+//   Stage: empty → blocked
+//   Stage: full (3 artists) → blocked
+function canTemptDirectToStage(artist, pd, stageIdx) {
+  if (!artist || !pd) return false;
+  if ((pd.fame || 0) < (artist.fame || 0)) return false;
+  const sa = (pd.stageArtists || [])[stageIdx];
+  if (!sa || sa.length === 0 || sa.length >= 3) return false;
+  const incomingGenres = new Set(getGenres(artist.genre));
+  for (const existing of sa) {
+    const existingGenres = getGenres(existing.genre);
+    // Every existing genre must be in the incoming set. If ANY existing genre falls
+    // outside the incoming artist's genres, this stage is not a valid tempt target.
+    if (!existingGenres.every(g => incomingGenres.has(g))) return false;
+  }
+  return true;
+}
+
+function canTemptToAnyStage(artist, pd) {
+  if (!artist || !pd) return false;
+  const stages = pd.stageArtists || [];
+  return stages.some((_, i) => canTemptDirectToStage(artist, pd, i));
+}
 function getAvailableStages(pd) {
   return pd.stages.filter((_, i) => (pd.stageArtists?.[i] || []).length < 3);
 }
@@ -3051,7 +3087,9 @@ export default function Headliners() {
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
-      return (pd.fame || 0) >= 1 && tempts.length < 2;
+      // v196: tempt cost raised to 2 Fame (was 1). Uncontested still refunds +2 Fame (net 0),
+      // contested still refunds 1 Fame (net -1). Discourages reflexive tempting every turn.
+      return (pd.fame || 0) >= 2 && tempts.length < 2;
     }
     return !agentPlacements[pid] && !agentExhausted[pid];
   };
@@ -3064,10 +3102,10 @@ export default function Headliners() {
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
-      // v188: tempt cap reduced from 2/turn to 1/turn. Each tempt is now a single-Fame
-      // commitment that returns +1 Fame net if uncontested. Removes the double-tempt
-      // snowball that only benefited high-Fame players.
-      return Math.max(0, Math.min(1 - tempts.length, pd.fame || 0));
+      // v188: tempt cap reduced from 2/turn to 1/turn.
+      // v196: tempt cost raised to 2 Fame (was 1). Uncontested still refunds +2 Fame
+      // (net 0), contested refunds 1 Fame (net -1). Discourages reflexive tempting.
+      return (pd.fame || 0) >= 2 ? Math.max(0, 1 - tempts.length) : 0;
     }
     const pd = playerData[pid] || {};
     const y = year || 1;
@@ -3084,7 +3122,10 @@ export default function Headliners() {
   };
   
   // Place agent on pool artist — start 2-step booking claim.
-  // v130/v131: under tempt mode, deducts 1 Fame and appends to temptPlacements[pid] (up to 2).
+  // v130/v131: under tempt mode, deducts Fame and appends to temptPlacements[pid] (up to 2).
+  // v196: tempt cost raised to 2 Fame (was 1). Uncontested tempts still refund +2 Fame
+  // (net 0 after cost). Contested tempts still refund 1 Fame (net -1). This nerf targets
+  // the "9 artists by mid-year-3" pattern where uncontested tempts were net-positive Fame.
   // A player may tempt ANY pool artist regardless of the artist's fame cost. The gate is at
   // resolution time: on the tempting player's next turn, artists they can play go to a stage;
   // artists they can't (fame or amenities short) go to their hand.
@@ -3094,23 +3135,23 @@ export default function Headliners() {
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
-      if ((pd.fame || 0) < 1) {
-        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Not enough Fame to tempt ${artist.name}`);
+      if ((pd.fame || 0) < 2) {
+        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Not enough Fame to tempt ${artist.name} (needs 2 🔥)`);
         return false;
       }
       if (tempts.length >= 2) {
         addLog(players.find(p => p.id === pid)?.festivalName || "?", `Already tempting 2 artists this turn`);
         return false;
       }
-      // Deduct 1 Fame (from baseFame — the reversible portion of the fame stack).
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 1) } }));
-      logFameLoss(pid, 1, `Tempting ${artist.name}`);
+      // v196: Deduct 2 Fame (was 1) from baseFame.
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 2) } }));
+      logFameLoss(pid, 2, `Tempting ${artist.name}`);
       // v154: Counter Culture identity refunds 1 Fame when tempting a Fame ≤ 3 artist.
       applyIdentityOnTempt(pid, artist);
       setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber }] }));
       setTimeout(() => recalcTickets(), 30);
       const pName = players.find(p => p.id === pid)?.festivalName || "?";
-      addLog("💫 Tempt", `${pName} spent 1 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
+      addLog("💫 Tempt", `${pName} spent 2 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
       showFloatingBonus(`💫 Tempting ${artist.name}`, "#fbbf24");
       setLastActionFor(pid, `is tempting ${artist.name}`);
       bumpYearlyStat(pid, "temptsPlaced");
@@ -3131,9 +3172,10 @@ export default function Headliners() {
     const removed = tempts[tempts.length - 1];
     setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(0, -1) }));
     // No logFameGain here — undoing is a refund, not a celebration.
-    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+    // v196: refund 2 Fame (matches new tempt cost of 2).
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
-    addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 1 🔥 Fame refunded`);
+    addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 2 🔥 Fame refunded`);
     showFloatingBonus(`↩️ ${removed.artistName} withdrawn`, "#94a3b8");
     setTimeout(() => recalcTickets(), 30);
     return true;
@@ -3397,11 +3439,11 @@ export default function Headliners() {
       // Find the artist in the pool by name (index may have shifted)
       const poolIdx = currentPool.findIndex(a => a.name === placement.artistName);
       if (poolIdx < 0) {
-        // Artist no longer in pool — refund the fame this tempt cost and drop the placement.
+        // Artist no longer in pool — refund the full tempt cost (v196: 2 Fame) and drop.
         setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
         // No logFameGain — refunds shouldn't feel like celebrations.
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
-        addLog("💫 Tempt", `${placement.artistName} no longer available — 1 🔥 Fame refunded`);
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
+        addLog("💫 Tempt", `${placement.artistName} no longer available — 2 🔥 Fame refunded`);
         return null;
       }
       const artist = currentPool[poolIdx];
@@ -3713,12 +3755,12 @@ export default function Headliners() {
       return true;
     };
 
-    // v140: Tempt-mode branch. Much more liberal about targets and contests since a tempt
-    // costs 1 Fame regardless of the artist's value — asymmetric upside. AI considers ALL
-    // pool artists (even ones it can't afford yet; they'd land in hand as future ammo) and
-    // factors in live objectives + a stronger willingness to challenge other players' tempts.
+    // v140: Tempt-mode branch. Considers ALL pool artists (even ones it can't afford yet;
+    // they'd land in hand as future ammo) and factors in live objectives + willingness to
+    // challenge other players' tempts.
+    // v196: tempt cost raised to 2 Fame (was 1). AI must have ≥2 Fame to tempt at all.
     if (isTempt) {
-      if ((pd.fame || 0) < 1) { tryMicrotrend(); return; }
+      if ((pd.fame || 0) < 2) { tryMicrotrend(); return; }
       if ((temptPlacements[pid] || []).length >= 1) return; // v188: 1 tempt/turn cap (was 2)
       // v152: rebalanced tempt scoring. The AI now weighs "can I actually play this artist
       // this turn?" much more heavily, chases active microtrends, and reserves headliner
@@ -3807,8 +3849,16 @@ export default function Headliners() {
         const iAlreadyTempted = (temptPlacements[pid] || []).some(pl => pl.artistName === a.name);
         if (iAlreadyTempted) return { a, score: -999 };
         const base = (a.vp || 0) * 2 + (a.tickets || 0);
-        const affordable = canBookArtistAnywhere(a, pd);
-        const affBonus = affordable ? 8 : 0;
+        // v195: split the old flat "affordable" bonus into two tiers reflecting how a tempt
+        // actually resolves post-v194 (genre-match rule):
+        //   - canTemptToAnyStage: the artist would land DIRECTLY on a stage (immediate play)
+        //   - canBookArtistAnywhere: the artist is at least amenity-affordable to play later
+        //     from hand (delayed play; requires hand-then-amenity-play sequence)
+        // The immediate-play bonus dominates because it's a play NOW, not a stockpile.
+        const canImmediatePlay = canTemptToAnyStage(a, pd);
+        const canPlayLater = canBookArtistAnywhere(a, pd);
+        const immediateBonus = canImmediatePlay ? 12 : 0;
+        const laterBonus = (!canImmediatePlay && canPlayLater) ? 3 : 0;
         // How many amenities are we short by? (Sum of gaps.)
         const gap = Math.max(0, (a.campCost || 0) - (pd.amenities?.campsite || 0))
                   + Math.max(0, (a.securityCost || 0) - (pd.amenities?.security || 0))
@@ -3817,7 +3867,7 @@ export default function Headliners() {
         const isTargetHeadlinerTier = (a.fame || 0) >= 4 && (!target || (a.fame || 0) >= (target.fame || 0));
         // Penalize unreachable artists UNLESS they're a target-tier headliner (worth
         // stockpiling in hand for later). Non-headliners we can't play get -3 per gap.
-        const reachPenalty = affordable ? 0 : (isTargetHeadlinerTier ? -gap * 1 : -gap * 3);
+        const reachPenalty = canPlayLater ? 0 : (isTargetHeadlinerTier ? -gap * 1 : -gap * 3);
         const targetBonus = isTargetHeadlinerTier ? 5 : 0;
         // Microtrend: matches if artist's genre list overlaps with active trend OR
         // (for non-leaders under anti-lead) the forecast trend.
@@ -3825,13 +3875,14 @@ export default function Headliners() {
         const artistGenres = (a.genre || "").split(",").map(g => g.trim());
         const stagesLeftForBump = 3 - ((pd.stages || []).length);
         const trendBump = (stageOpenModeRef.current === "trends" && stagesLeftForBump > 0) ? 5 : 0;
-        // v172: if the AI has enough Fame to still play this artist AFTER spending 1
-        // Fame on the tempt itself (i.e. current fame >= artist.fame + 1), and the
-        // artist matches an active/forecast microtrend genre, give a MUCH bigger
-        // bonus. This is the proactive-tempt case the user asked for: the AI
-        // preferentially chases pool artists that match a live microtrend when
-        // it can immediately deploy them.
-        const canPlayAfterTempt = (pd.fame || 0) >= (a.fame || 0) + 1;
+        // v172: if the AI has enough Fame to still play this artist AFTER spending
+        // Fame on the tempt itself, and the artist matches an active/forecast microtrend
+        // genre, give a MUCH bigger bonus. This is the proactive-tempt case: the AI
+        // preferentially chases pool artists that match a live microtrend when it can
+        // immediately deploy them.
+        // v196: tempt cost is now 2 Fame (was 1), so canPlay-after-tempt requires
+        // current fame >= artist.fame + 2.
+        const canPlayAfterTempt = (pd.fame || 0) >= (a.fame || 0) + 2;
         const microMatchActive = activeGenre && artistGenres.includes(activeGenre);
         const microMatchForecast = forecastGenre && artistGenres.includes(forecastGenre);
         const microBonus = (microMatchActive || microMatchForecast) && canPlayAfterTempt
@@ -3841,27 +3892,49 @@ export default function Headliners() {
           : 0;
         const objBonus = scoreArtistForObjectives(a, pid);
         const alreadyTempted = getPlacementsOnArtist(a.name).length > 0;
-        // v179: replace the old flat -1 contestPenalty with disruption-based scoring.
-        // If the artist is already tempted:
-        //   - Compute the disruption value (fame-swing, genre-dominance, identity match)
-        //   - Scale by AI's spare Fame. If spareFame == 0, AI is fame-tight — contests
-        //     are heavily suppressed (score * 0.2). If spareFame >= 2, full disruption
-        //     value applies. If spareFame == 1, partial (score * 0.6).
-        //   - Still slightly penalize (-1) so all-else-equal, AI prefers uncontested
-        //     tempts (which now grant +2 Fame — much better for tempo).
+        // v179/v195: contest scoring.
+        // If the artist is already tempted by an opponent, contesting is a denial move.
+        //   - Existing disruption signals: fame-swing, genre-dominance, identity-match
+        //   - v195 addition: scale contest willingness with the RAW VALUE of the pool artist.
+        //     Higher fame+tickets → bigger denial upside → AI more willing to contest.
+        //   - Spare-fame scaling still applies (fame-tight AIs still avoid contests)
+        //   - Small -1 penalty preserved so all-else-equal, uncontested tempts win
         let contestScore = 0;
         if (alreadyTempted) {
           const disruption = contestDisruptionScore(a);
           const spareScale = spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.6 : 0.2;
-          contestScore = disruption * spareScale - 1;
+          // v195: raw-value contest bonus — proportional to what we're denying
+          const rawValueContest = ((a.fame || 0) * 2 + (a.tickets || 0)) * 0.5;
+          contestScore = disruption * spareScale + rawValueContest * spareScale - 1;
         }
-        // v179: uncontested tempts now yield +2 Fame (net +1 after cost). Add a small
-        // preference for artists NOT already tempted by others — the AI prefers going
-        // for solo tempts when the underlying artist value is comparable.
+        // v179/v196: uncontested tempts yield +2 Fame refund. Under v196 (tempt cost 2)
+        // that's net 0 Fame (was net +1 under v179 with cost 1). Small preference for
+        // uncontested targets kept — solo tempts are still a cleaner path than fighting
+        // over a shared claim even when Fame-neutral.
         const uncontestedPref = alreadyTempted ? 0 : 2;
-        return { a, score: base + affBonus + reachPenalty + targetBonus + microBonus + objBonus + contestScore + uncontestedPref };
+        return { a, score: base + immediateBonus + laterBonus + reachPenalty + targetBonus + microBonus + objBonus + contestScore + uncontestedPref };
       }).sort((x, y) => y.score - x.score);
-      const best = scored[0];
+      let best = scored[0];
+      // v195: post-scoring override. If the top pick is a CONTEST (an artist already
+      // tempted by an opponent) AND there's a genre-match alternative for the AI's own
+      // board whose ticket value is no more than 1 lower, prefer the genre-match play.
+      // Rationale: contesting is a denial win; genre-match tempt is a direct-play win.
+      // When the values are comparable, the direct play is worth more (guaranteed stage
+      // placement + no die roll risk + no opponent Fame refund).
+      if (best && getPlacementsOnArtist(best.a.name).some(pl => pl.pid !== pid)) {
+        const bestTickets = best.a.tickets || 0;
+        const genreMatchAlt = scored.find(s =>
+          s.a !== best.a
+          && s.score > -999
+          && canTemptToAnyStage(s.a, pd)
+          && getPlacementsOnArtist(s.a.name).length === 0
+          && (s.a.tickets || 0) >= bestTickets - 1
+        );
+        if (genreMatchAlt) {
+          addLog("🤖 AI", `Skipping contest for ${best.a.name} — own genre-match play on ${genreMatchAlt.a.name} is comparable value`);
+          best = genreMatchAlt;
+        }
+      }
       if (!best || best.score < 5) { tryMicrotrend(); return; }
       const poolIdx = artistPool.indexOf(best.a);
       if (poolIdx >= 0) placeAgentOnArtist(pid, poolIdx);
@@ -6563,33 +6636,33 @@ export default function Headliners() {
         if (resolution && resolution.type === "uncontested") {
           // v179: +2 Fame for uncontested tempt win (fires at resolution, before book/hand branch)
           grantUncontestedTemptBonus(currentPlayerId);
-          // Auto-book uncontested agent/tempt claim.
-          // v151: per-stage bookability check. Previously auto-booked to openStages[0]
-          // with no amenity/fame validation — that let an AI who had tempted a Fame-5
-          // headliner (e.g. Silk Sonic, Kendrick Lamar) drop them onto a barebones stage
-          // at the start of their next turn, ignoring stage costs entirely.
+          // v194: tempt-to-stage now requires genre-match (see canTemptDirectToStage).
+          // Amenity costs no longer create a direct-to-stage path via tempt — if the tempter
+          // can't satisfy the genre-subset rule, the artist goes to hand and must be played
+          // later via the standard amenity-cost path. This makes tempting either a play move
+          // (you've been building a matching stage) OR a denial move (you sent them to hand
+          // and locked them out of the opposing player) — not both at once.
           const artist = resolution.artist;
           const pd2 = playerData[currentPlayerId] || {};
           const openStages = (pd2.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-          const bookable = openStages.filter(i => canBookArtistOnStage(artist, pd2, i));
+          const bookable = openStages.filter(i => canTemptDirectToStage(artist, pd2, i));
           const isTempt = temptModeRef.current;
           if (bookable.length > 0) {
-            // Prefer a genre-match headliner stage when available.
+            // Prefer a genre-match headliner stage when available (fires genreMatchEffect).
             const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, pd2, si));
             const si = genreStage != null ? genreStage : bookable[0];
-            const viaGenre = genreStage != null && !canAffordArtist(artist, pd2);
+            const viaGenre = genreStage != null;
             const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === artist.name);
             if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
             bookArtistToStage(artist, si, currentPlayerId, true, viaGenre);
-            // v151: also pop the resolved tempt placement so it doesn't re-fire.
             if (isTempt) {
               setTemptPlacements(prev => ({ ...prev, [currentPlayerId]: (prev[currentPlayerId] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
             } else {
               exhaustAgent(currentPlayerId);
             }
-            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} booked ${artist.name} (uncontested claim)`);
+            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} booked ${artist.name} (uncontested claim, genre match)`);
           } else {
-            // Not legally bookable on any stage (or no open stages) — send to hand.
+            // No stage has a valid genre-match — send to hand.
             setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), artist] } }));
             const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === artist.name);
             if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
@@ -6598,7 +6671,7 @@ export default function Headliners() {
             } else {
               exhaustAgent(currentPlayerId);
             }
-            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} sent ${artist.name} to hand (couldn't afford stage placement)`);
+            addLog(isTempt ? "💫 Tempt" : "🕵️ AI Agent", `${currentPlayer?.festivalName} sent ${artist.name} to hand (no genre-match stage)`);
           }
         } else if (resolution && resolution.type === "contested") {
           // Roll the contest die and surface the result in the modal.
@@ -6627,25 +6700,25 @@ export default function Headliners() {
         const pa = pendingAgentArtist;
         const pd2 = playerData[pa.pid] || {};
         const allOpen = (pd2.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-        const bookable = allOpen.filter(si => canBookArtistOnStage(pa.artist, pd2, si));
-        // Pool removal is defensive — for contest paths, the artist was already removed
-        // at commitAgentContest time. For uncontested paths that route here, we still
-        // need to remove. findIndex/splice is safe either way.
+        // v194: tempt-to-stage requires genre match. If the AI winner has no matching
+        // stage they take the artist to hand — even for contest wins. This is intended:
+        // contesting is now denial-focused (block opponent's play), not a double-win.
+        const bookable = allOpen.filter(si => canTemptDirectToStage(pa.artist, pd2, si));
         const newPool = [...artistPool];
         const idx = newPool.findIndex(a => a.name === pa.artist.name);
         if (idx >= 0) { newPool.splice(idx, 1); setArtistPool(newPool); }
         if (bookable.length > 0) {
           const genreStage = bookable.find(si => canBookHeadlinerViaGenre(pa.artist, pd2, si));
           const chosen = genreStage != null ? genreStage : bookable[0];
-          const viaGenre = genreStage != null && !canAffordArtist(pa.artist, pd2);
+          const viaGenre = genreStage != null;
           bookArtistToStage(pa.artist, chosen, pa.pid, true, viaGenre);
           exhaustAgent(pa.pid);
-          addLog("🤖 AI", `Booked ${pa.artist.name} (contest/agent claim)`);
+          addLog("🤖 AI", `Booked ${pa.artist.name} (contest/agent claim, genre match)`);
         } else {
-          // No legal stage — hand fallback prevents silent artist loss.
+          // No genre-match stage — hand fallback.
           setPlayerData(p => ({ ...p, [pa.pid]: { ...p[pa.pid], hand: [...(p[pa.pid].hand || []), pa.artist] } }));
           exhaustAgent(pa.pid);
-          addLog("🤖 AI", `${pa.artist.name} won but no legal stage — added to hand`);
+          addLog("🤖 AI", `${pa.artist.name} won but no genre-match stage — added to hand`);
         }
         setPendingAgentArtist(null);
         setTimeout(() => recalcTickets(), 50);
@@ -6717,37 +6790,38 @@ export default function Headliners() {
         scheduleNext(800); return;
       }
       if (decision.action === "reserve" || decision.action === "drawDeck") {
-        // AI Draw 2: pick best combo from pool + deck
+        // v196 draw action: pool = 1 card OR deck = N cards (Fame 1-3 → 2, Fame 4-5 → 3).
+        // Mixing pool + deck is no longer allowed. AI picks the higher-EV path.
         const protectedNames = getAgentProtectedNames();
         const pickable = artistPool.filter(a => !protectedNames.has(a.name));
+        const deckDrawCount = getDeckDrawCount(pd);
         const drawn = [];
-        
-        // Strategy: take best from pool, then best from remaining pool or deck
-        if (pickable.length >= 2) {
-          const sorted = [...pickable].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets));
-          const deckTop = artistDeck.length > 0 ? artistDeck[artistDeck.length - 1] : null;
-          // Compare: 2 pool vs 1 pool + 1 deck
-          const twoPoolVal = sorted[0].vp + sorted[0].tickets + sorted[1].vp + sorted[1].tickets;
-          const mixedVal = sorted[0].vp + sorted[0].tickets + (deckTop ? deckTop.vp + deckTop.tickets : 0);
-          if (twoPoolVal >= mixedVal) {
-            drawn.push(sorted[0], sorted[1]);
-            const newPool = artistPool.filter(a => a !== sorted[0] && a !== sorted[1]);
-            setArtistPool(newPool);
-          } else {
-            drawn.push(sorted[0]);
-            setArtistPool(artistPool.filter(a => a !== sorted[0]));
-            const deckDrawn = drawFromDeck(1);
-            if (deckDrawn.length > 0) drawn.push(deckDrawn[0]);
-          }
-        } else if (pickable.length === 1) {
-          drawn.push(pickable[0]);
-          setArtistPool(artistPool.filter(a => a !== pickable[0]));
-          const deckDrawn = drawFromDeck(1);
-          if (deckDrawn.length > 0) drawn.push(deckDrawn[0]);
-        } else {
-          // No pickable pool artists — draw 2 from deck
-          const deckDrawn = drawFromDeck(2);
+
+        // Estimated value from a deck draw: draws are blind, so use average pool artist
+        // value as a proxy for expected per-card value from the deck. Multiplied by N cards.
+        // Slight discount (0.85x) because the AI doesn't get to pick from a deck draw.
+        const avgArtistVal = artistPool.length > 0
+          ? artistPool.reduce((s, a) => s + (a.vp || 0) + (a.tickets || 0), 0) / artistPool.length
+          : 6; // fallback baseline
+        const deckEV = avgArtistVal * deckDrawCount * 0.85;
+
+        // Best pool card value (guaranteed pick)
+        const bestPool = pickable.length > 0
+          ? [...pickable].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0]
+          : null;
+        const bestPoolVal = bestPool ? (bestPool.vp || 0) + (bestPool.tickets || 0) : 0;
+
+        // AI chooses deck if EV higher AND deck has cards; otherwise pool
+        if (bestPool && bestPoolVal >= deckEV) {
+          drawn.push(bestPool);
+          setArtistPool(artistPool.filter(a => a !== bestPool));
+        } else if (artistDeck.length > 0) {
+          const deckDrawn = drawFromDeck(deckDrawCount);
           drawn.push(...deckDrawn);
+        } else if (bestPool) {
+          // Deck empty — fall back to pool pick even if worse EV
+          drawn.push(bestPool);
+          setArtistPool(artistPool.filter(a => a !== bestPool));
         }
         
         if (drawn.length > 0) {
@@ -7088,7 +7162,18 @@ export default function Headliners() {
     setTimeout(() => recalcTickets(), 50);
   };
 
-  // ── DRAW 2 FLOW ──
+  // ── DRAW FLOW ──
+  // v196: Fame-tiered draw. Player picks ONE path:
+  //   Pool click  = take 1 pool artist (any Fame tier, always 1)
+  //   Deck click  = draw N from deck where N depends on current Fame:
+  //                   Fame 1-3 → 2 cards
+  //                   Fame 4-5 → 3 cards
+  // Mixing pool + deck within a single draw action is no longer allowed. This gives
+  // Fame a real ongoing economic purpose (more deck throughput at high Fame) and closes
+  // the "cherry-pick 2 pool artists per turn" loop that was fuelling 9-artist boards.
+  // The draw2Picks state array is reused (for the reveal strip) but always fully populated
+  // in a single call — no intermediate multi-click accumulation.
+  const getDeckDrawCount = (pd) => ((pd?.fame || 0) >= 4 ? 3 : 2);
   const startDraw2 = () => {
     setDraw2Picks([]);
     setDraw2DeckCard(null);
@@ -7103,22 +7188,24 @@ export default function Headliners() {
     }
     const newPool = [...artistPool]; newPool.splice(idx, 1);
     setArtistPool(newPool);
-    const newPicks = [...draw2Picks, artist];
-    setDraw2Picks(newPicks);
-    addLog(currentPlayer.festivalName, `drew ${artist.name} from pool (${newPicks.length}/2)`);
+    const picks = [artist];
+    setDraw2Picks(picks);
+    addLog(currentPlayer.festivalName, `picked ${artist.name} from pool`);
     setLastActionFor(currentPlayerId, `pulled ${artist.name} from the pool`);
-    if (newPicks.length >= 2) finishDraw2(newPicks);
+    finishDraw2(picks);
   };
   const draw2PickFromDeck = () => {
-    const drawn = drawFromDeck(1);
+    const pd = playerData[currentPlayerId] || {};
+    const drawCount = getDeckDrawCount(pd);
+    const drawn = drawFromDeck(drawCount);
     if (drawn.length === 0) { addLog("Deck", "No artists left!"); return; }
     // Drawing from deck = no undo (hidden information revealed) and no put back
     setUndoSnapshot(null);
-    const newPicks = [...draw2Picks, drawn[0]];
-    setDraw2Picks(newPicks);
-    addLog(currentPlayer.festivalName, `drew ${drawn[0].name} from deck (${newPicks.length}/2)`);
-    setLastActionFor(currentPlayerId, `drew 1 artist from the deck`);
-    if (newPicks.length >= 2) finishDraw2(newPicks);
+    setDraw2Picks(drawn);
+    const names = drawn.map(a => a.name).join(", ");
+    addLog(currentPlayer.festivalName, `drew ${drawn.length} from deck (${names})`);
+    setLastActionFor(currentPlayerId, `drew ${drawn.length} from the deck`);
+    finishDraw2(drawn);
   };
   const finishDraw2 = (picks) => {
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
@@ -7777,16 +7864,29 @@ export default function Headliners() {
         } else {
           // All done — go to events
           // All year-end artist effects done — recompute tickets/fame and transition to star dice phase.
-          // Compute the fresh snapshot synchronously and prime playerDataRef so grantPositionalDice
-          // (which runs inside beginStarDicePhase via the ref) reads the just-recomputed values
-          // rather than the pre-recalc closure / pre-render React state.
+          //
+          // v195 fix: year-end ticket bonuses (Kendrick, Coldplay, Foo Fighters year-end
+          // scalers) were being LOST between the effect popup and the leaderboard reveal.
+          // Root cause: previous version read `playerDataRef.current` and called
+          // `setPlayerData(fresh)` with a plain-object replacement. If the last click's
+          // `setPlayerData(p => bonusTickets += N)` update hadn't yet propagated to the
+          // ref (via the useEffect that syncs it), then `fresh` was built from stale
+          // state without the +N. React would then apply the two queued updates in order:
+          // the functional +N first, then the plain-object replacement — which REPLACED
+          // the state with `fresh`, wiping the +N.
+          //
+          // Fix: use functional setPlayerData so the updater sees the ACTUAL latest
+          // committed state (with all queued year-end additions), not the potentially
+          // stale ref. Recompute inside the updater, sync the ref inside the updater
+          // so beginStarDicePhase (called synchronously after) reads the fresh ref.
           setTimeout(() => {
             try {
-              const prev = playerDataRef.current || {};
-              const fresh = {};
-              Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
-              setPlayerData(fresh);
-              playerDataRef.current = fresh;
+              setPlayerData(prev => {
+                const fresh = {};
+                Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
+                playerDataRef.current = fresh;
+                return fresh;
+              });
               beginStarDicePhase();
             } catch(e) {
               console.error("beginStarDicePhase error:", e);
@@ -10798,11 +10898,11 @@ export default function Headliners() {
             {/* Deploy Agent / Tempt — pool claim only */}
             {(turnAction === "deployAgent" || turnAction === "agentPool") && <div style={{ textAlign: "center" }}>
               <p style={{ color: temptMode ? "#fbbf24" : "#60a5fa", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{temptMode ? "💫 Tempt a Pool Artist" : "🕵️ Claim a Pool Artist"}</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{temptMode ? "Spend 1 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage. If another player also tempts the same artist, dice roll decides — both players get their Fame refunded." : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties)."}</p>
+              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{temptMode ? "Spend 2 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage (+2 🔥 Fame refunded, net 0). If contested → dice roll decides, 1 🔥 Fame refunded to contestants." : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties)."}</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {artistPool.map((a, i) => {
                   const canAfford = canAffordArtist(a, currentPD);
-                  const canTempt = temptMode ? ((currentPD.fame || 0) >= 1) : true;
+                  const canTempt = temptMode ? ((currentPD.fame || 0) >= 2) : true;
                   const clickable = temptMode ? canTempt : canAfford;
                   const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                   return <div key={i} style={{ position: "relative" }}>
@@ -10811,7 +10911,7 @@ export default function Headliners() {
                       placeAgentOnArtist(currentPlayerId, i);
                       setTurnAction(null);
                     }} />
-                    {!clickable && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>{temptMode ? "Need 1 🔥 Fame" : "Can't afford"}</div>}
+                    {!clickable && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>{temptMode ? "Need 2 🔥 Fame" : "Can't afford"}</div>}
                     {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                       {agentsOnIt.map(([pid], ai) => {
                         const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -10979,18 +11079,14 @@ export default function Headliners() {
             {pendingAgentArtist && (() => {
               const pa = pendingAgentArtist;
               const pd = playerData[pa.pid];
-              // v150: filter to stages the artist can ACTUALLY be booked on (per amenities
-              // and/or genre-match). Previously the modal listed every open stage as clickable
-              // and bookArtistToStage trusted the caller — so a Fame-5 headliner could land
-              // on a barebones stage. Now bookable openStages only.
+              // v194: tempt-to-stage now requires genre-match (see canTemptDirectToStage).
+              // The stage must already have 1-2 artists whose combined genres are a subset
+              // of the tempted artist's genres. Empty stages don't qualify — you can't
+              // "seed" a stage via tempt. If no stage matches, artist goes to hand.
               const allOpen = (pd?.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-              const openStages = allOpen.filter(i => canBookArtistOnStage(pa.artist, pd || {}, i));
-              // v131: under tempt mode, verify the artist is actually playable given the
-              // player's current fame + amenities (or genre-match). If not, force to hand.
+              const openStages = allOpen.filter(i => canTemptDirectToStage(pa.artist, pd || {}, i));
               const isTempt = temptMode;
               const playable = openStages.length > 0;
-              // Under tempt mode, ALSO pop the resolved placement from temptPlacements as
-              // part of any action that finalizes this modal.
               const popTemptPlacement = () => {
                 if (!isTempt) return;
                 setTemptPlacements(prev => ({ ...prev, [pa.pid]: (prev[pa.pid] || []).filter(p => !(p.type === "pool" && p.artistName === pa.artist.name)) }));
@@ -10999,20 +11095,19 @@ export default function Headliners() {
                 <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
                   <h3 style={{ color: isTempt ? "#fbbf24" : "#60a5fa", marginBottom: 12 }}>{isTempt ? "💫" : "🕵️"} {isTempt ? "Tempted" : "Agent Secured"} {pa.artist.name}!</h3>
                   <ArtistCard artist={pa.artist} showCost />
-                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>{playable ? "Uncontested! Select a stage:" : (isTempt ? `You don't have the Fame or amenities to play ${pa.artist.name} right now — they'll go to your hand.` : "No open stages! Artist goes to hand.")}</p>
+                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>{playable ? "Uncontested! Pick a genre-match stage:" : `No stage is a genre match — ${pa.artist.name} will go to your hand.`}</p>
                   {playable && <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                     {openStages.map(si => <button key={si} onClick={() => {
-                      // Remove from pool
                       const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
                       if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-                      // v132: detect genre-match booking for tempted artists so the
-                      // genreMatchEffect bonus fires. If the stage is headliner-eligible via
-                      // the genre-match rule AND the player can't afford the artist normally
-                      // (which is often the case since they tempted it), treat as genre-path.
-                      const viaGenreMatch = canBookHeadlinerViaGenre(pa.artist, pd || {}, si) && !canAffordArtist(pa.artist, pd || {});
+                      // v194: all tempt-to-stage placements are genre-match by definition.
+                      // Fire genreMatchEffect via viaGenre=true when the artist has one AND
+                      // the placement fits headliner-eligibility (2 existing artists sharing
+                      // ≥1 genre with the incoming). canBookHeadlinerViaGenre handles that.
+                      const viaGenreMatch = canBookHeadlinerViaGenre(pa.artist, pd || {}, si);
                       bookArtistToStage(pa.artist, si, pa.pid, true, viaGenreMatch);
                       if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
-                      addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Booked ${pa.artist.name} (uncontested ${isTempt ? "tempt" : "agent"} claim)${viaGenreMatch ? " via Genre Match" : ""}`);
+                      addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Booked ${pa.artist.name} (uncontested ${isTempt ? "tempt" : "agent"} claim, genre match${viaGenreMatch ? " — headliner bonus" : ""})`);
                       setPendingAgentArtist(null);
                       setTimeout(() => recalcTickets(), 50);
                       if (isTempt) checkNextTempt(pa.pid);
@@ -11120,7 +11215,7 @@ export default function Headliners() {
             {/* Unified Artist Action Panel */}
             {!actionTaken && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "draw2") && !selectedArtist && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#ec4899", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Artist Action</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Book from hand, or draw 2 from pool/deck</p>
+              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Book from hand, take 1 from pool, or draw {getDeckDrawCount(currentPD)} from deck ({currentPD?.fame >= 4 ? "Fame 4-5" : "Fame 1-3"})</p>
               
               {/* Hand */}
               {handCards.length > 0 && <div style={{ marginBottom: 12 }}>
@@ -11139,24 +11234,23 @@ export default function Headliners() {
                 </div>
               </div>}
               
-              {/* Draw 2 progress */}
+              {/* Reveal strip — briefly shows what was drawn before finishDraw2 clears it */}
               {draw2Picks.length > 0 && <div style={{ marginBottom: 12, padding: 8, borderRadius: 10, background: "rgba(34,197,94,0.1)", border: "1px solid #22c55e40" }}>
-                <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>Drawing: {draw2Picks.length}/2 picked</div>
+                <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>Drew {draw2Picks.length} artist{draw2Picks.length === 1 ? "" : "s"}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
                   {draw2Picks.map((a, i) => <ArtistCard key={i} artist={a} showCost small />)}
                 </div>
               </div>}
 
-              {/* Deck card reveal */}
-              {/* Pool + Deck row */}
+              {/* Pool + Deck row — v196: pool = 1 card, deck = 2 or 3 based on Fame */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pool & Deck — click to draw ({2 - draw2Picks.length} remaining)</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pool (1 card) or Deck ({getDeckDrawCount(currentPD)} cards)</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                     return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
-                      <ArtistCard artist={a} showCost small onClick={() => { if (!claimedByOther && draw2Picks.length < 2) draw2PickFromPool(i); }} />
+                      <ArtistCard artist={a} showCost small onClick={() => { if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i); }} />
                       {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                         {agentsOnIt.map(([pid], ai) => {
                           const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -11165,13 +11259,13 @@ export default function Headliners() {
                       </div>}
                     </div>;
                   })}
-                  <button onClick={() => { if (draw2Picks.length < 2) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length >= 2} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length >= 2) ? 0.3 : 1 }}>
-                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length})</span>
+                  <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
+                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +{getDeckDrawCount(currentPD)}</span>
                   </button>
                 </div>
               </div>
               
-              {((currentPD.amenities?.portaloo) || 0) > 0 && draw2Picks.length < 2 && <button onClick={() => {
+              {((currentPD.amenities?.portaloo) || 0) > 0 && draw2Picks.length === 0 && <button onClick={() => {
                 setPlayerData(p => {
                   const cur = p[currentPlayerId];
                   const fields = cur.fields || emptyFields();
@@ -11195,7 +11289,7 @@ export default function Headliners() {
                 const fields = currentPD?.fields || [];
                 const refreshCap = (currentPD?.councils || []).reduce((acc, c, i) => acc + (c?.reward?.type === "refreshPool" && councilQualifies(c, fields[i], year || 1) ? 1 : 0), 0);
                 const remaining = refreshCap - councilRefreshesUsedThisTurn;
-                if (refreshCap <= 0 || remaining <= 0 || draw2Picks.length >= 2) return null;
+                if (refreshCap <= 0 || remaining <= 0 || draw2Picks.length > 0) return null;
                 return <button onClick={() => {
                   refreshPool(1);
                   setCouncilRefreshesUsedThisTurn(n => n + 1);
