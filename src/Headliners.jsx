@@ -8797,14 +8797,32 @@ export default function Headliners() {
     // first; ties broken by tickets sold. Then discard the current pool + microtrends,
     // draw 5 fresh artists for the draft, and switch to the draft phase. Pool refill and
     // microtrend refresh happen when the draft finalizes (see finalizeDraft).
+    // v197.10: read fame from allTickets[pid][year] (the same snapshot the roundEnd
+    // leaderboard displays) — reading playerData[pid].fame directly can diverge from
+    // the displayed value if any recalcTickets fired between beginRoundEnd and here
+    // (fame is derived from baseFame + councilFame at read-time, whereas allTickets
+    // stores the fixed year-end snapshot). Users read the leaderboard to predict the
+    // draft order, so the two must be the same source of truth.
     const orderedPids = [...players].sort((a, b) => {
-      const fa = playerData[a.id]?.fame || 0;
-      const fb = playerData[b.id]?.fame || 0;
+      const snapA = (allTickets[a.id] && allTickets[a.id][year]) || {};
+      const snapB = (allTickets[b.id] && allTickets[b.id][year]) || {};
+      const fa = snapA.fame ?? (playerData[a.id]?.fame || 0);
+      const fb = snapB.fame ?? (playerData[b.id]?.fame || 0);
       if (fb !== fa) return fb - fa;
-      const ta = playerData[a.id]?.tickets || 0;
-      const tb = playerData[b.id]?.tickets || 0;
+      const ta = playerData[a.id]?.tickets || snapA.raw || 0;
+      const tb = playerData[b.id]?.tickets || snapB.raw || 0;
       return tb - ta;
     }).map(p => p.id);
+    // Diagnostic log so if the order ever looks wrong again we can see the exact
+    // (fame, tickets) pairs the sort compared, matching what the leaderboard displays.
+    const orderReport = orderedPids.map(pid => {
+      const p = players.find(pl => pl.id === pid);
+      const snap = (allTickets[pid] && allTickets[pid][year]) || {};
+      const fame = snap.fame ?? (playerData[pid]?.fame || 0);
+      const tix = playerData[pid]?.tickets || snap.raw || 0;
+      return `${p?.festivalName || "?"} (🔥${fame}/🎟️${tix})`;
+    }).join(" → ");
+    addLog("🎴 Draft", `Pick order: ${orderReport}`);
     // Discard current pool contents into the discard pile — they're replaced fresh below.
     const oldPool = [...(artistPoolRef.current || artistPool)];
     let deck = [...(artistDeckRef.current || artistDeck)];
