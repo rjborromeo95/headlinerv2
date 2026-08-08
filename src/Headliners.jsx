@@ -4603,25 +4603,42 @@ export default function Headliners() {
     //   3 stages → first value, 2 stages → second, 1 stage → third.
     // Handles ticket triplets ("+3/5/7 tickets") and draw triplets ("Draw 1/2/3 artists").
     if (eff.startsWith("[STAGES_321]")) {
-      const pdNow = playerData[pid] || {};
-      const stageCount = (pdNow.stages || []).length; // typically 1..3
+      // v197.7: read stage count via ref-fresh playerData to avoid stale-state race.
+      // Bruised Brothers played on turn 1 wasn't firing the draw — root cause was that
+      // playerData[pid].stages was seen as empty (stale) when applyEffect ran synchronously
+      // during the setPlayerData that ADDED the artist to the stage. The ref is updated
+      // synchronously by an earlier useEffect, but during rapid book+effect flows the ref
+      // itself may not have caught the stage-open commit either. So read from BOTH sources
+      // and take the max — defensive fallback.
+      const pdRef = (playerDataRef.current || {})[pid] || {};
+      const pdState = playerData[pid] || {};
+      const stageCount = Math.max((pdRef.stages || []).length, (pdState.stages || []).length, 1);
       eff = eff.substring("[STAGES_321]".length).trim();
       const idx = stageCount >= 3 ? 0 : stageCount === 2 ? 1 : 2;
+      addLog("Effect", `${artist.name}: [STAGES_321] triggered (${stageCount} stages open, idx=${idx})`);
       // "Draw N/N/N artists"
-      const drawTriple = eff.match(/draw\s+(\d+)\/(\d+)\/(\d+)\s+artists?/i);
+      const drawTriple = eff.match(/draw\s+(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s+artists?/i);
       if (drawTriple) {
         const val = parseInt([drawTriple[1], drawTriple[2], drawTriple[3]][idx]);
         if (val > 0) {
-          const drawn = drawFromDeck(val);
-          if (drawn.length > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
-            addLog("Effect", `${artist.name}: drew ${drawn.length} artist${drawn.length === 1 ? "" : "s"} (${stageCount} stages)`);
-          }
+          // v197.7: converted from silent auto-draw-from-deck to interactive pool-or-deck
+          // picker — matches Maroon 5's "Draw 2 from the deck or pool" pattern so the
+          // player actually sees the picker and can choose. AI dispatcher already handles
+          // the drawFromPoolOrDeck pendingEffect type.
+          setPendingEffect({
+            type: "drawFromPoolOrDeck",
+            artistName: artist.name,
+            drawsRemaining: val,
+          });
+          setPendingEffectPid(pid);
+          addLog("Effect", `${artist.name}: draw ${val} artist${val === 1 ? "" : "s"} from deck or pool (${stageCount} stages)`);
+        } else {
+          addLog("Effect", `${artist.name}: 0 draws at ${stageCount} stages`);
         }
         return;
       }
       // "+N/N/N ticket(s)"
-      const tixTriple = eff.match(/\+?(\d+)\/(\d+)\/(\d+)\s*ticket/i);
+      const tixTriple = eff.match(/\+?(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)\s*ticket/i);
       if (tixTriple) {
         const val = parseInt([tixTriple[1], tixTriple[2], tixTriple[3]][idx]);
         if (val > 0) {
@@ -4629,9 +4646,12 @@ export default function Headliners() {
           setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + val } }));
           addLog("Effect", `${artist.name}: +${val} 🎟️ (${stageCount} stage${stageCount === 1 ? "" : "s"})`);
           showFloatingBonus(`+${val} 🎟️`, "#fbbf24"); sfx.gainTickets();
+        } else {
+          addLog("Effect", `${artist.name}: 0 tickets at ${stageCount} stages`);
         }
         return;
       }
+      addLog("Effect", `${artist.name}: [STAGES_321] pattern didn't match effect body — unhandled shape`);
       // Fall through if no triplet matched — allow standard handlers to run.
     }
     // Agent-conditional effects: trigger ONLY when booked via an agent AND the lobby toggle
