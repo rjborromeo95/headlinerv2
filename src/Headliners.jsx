@@ -2406,6 +2406,14 @@ export default function Headliners() {
   const [allTickets, setAllTickets] = useState({});
   const [revealIndex, setRevealIndex] = useState(0);
   const [leaderboardRevealed, setLeaderboardRevealed] = useState(false);
+  // v197.9: between-year draft phase. When a year ends, 5 fresh artists are drawn from
+  // the deck and players pick one each in order of end-of-year Fame (highest first,
+  // ties broken by tickets sold). This gives every player one guaranteed high-value
+  // pickup entering the new year — improves Y2/Y3 pacing so a good Y1 doesn't leave
+  // players' second/third years feeling like a downhill slide.
+  const [draftCards, setDraftCards] = useState([]);
+  const [draftOrder, setDraftOrder] = useState([]); // pids in pick order
+  const [draftIndex, setDraftIndex] = useState(0);
 
   // Pre-round
   const [preRoundIndex, setPreRoundIndex] = useState(0);
@@ -6454,6 +6462,11 @@ export default function Headliners() {
     if (phase === "preRound") return currentPreRoundPlayer?.isAI || false;
     // Year-end effects auto-resolve for AI within their flow.
     if (phase === "yearEndEffects") return true;
+    // v197.9: draft phase — current picker is driven by draftIndex.
+    if (phase === "draft") {
+      const pickerPid = draftOrder[draftIndex];
+      return players.find(p => p.id === pickerPid)?.isAI || false;
+    }
     return false;
   };
 
@@ -6855,6 +6868,17 @@ export default function Headliners() {
       }
       aiProcessing.current = false; return;
     }
+    // v197.9: draft phase — if the current picker is an AI, auto-pick after a short beat
+    // so humans can see what the AI took. Human picks go through the modal (see JSX).
+    if (phase === "draft") {
+      const pickerPid = draftOrder[draftIndex];
+      const picker = players.find(p => p.id === pickerPid);
+      if (picker?.isAI) {
+        aiDraftPick(pickerPid);
+        scheduleNext(500); return;
+      }
+      aiProcessing.current = false; return;
+    }
 
     // ─── GAME PHASE ───
     if (phase === "game") {
@@ -7206,7 +7230,7 @@ export default function Headliners() {
     if (aiProcessing.current) return;
     aiTimer.current = setTimeout(() => aiStep(), 700);
     return () => { if (aiTimer.current) clearTimeout(aiTimer.current); clearTimeout(safetyTimer); };
-  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest]);
+  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest, draftIndex]);
 
   // AI objective choices are handled in startGame — no useEffect needed
 
@@ -8767,13 +8791,134 @@ export default function Headliners() {
     });
     setPreRoundIndex(0); setPreRoundStep("notify");
     setFreeAmenityCount(0); setFreeAmenityPlaced(0); setFreeAmenityType(null);
-    setPhase("preRound");
+    // v197.9: instead of jumping straight to preRound, first run the between-year draft.
+    // Snapshot end-of-year fame + tickets NOW (before the pre-round bonuses land) so the
+    // draft order reflects "who did best in the year just finished". Highest fame picks
+    // first; ties broken by tickets sold. Then discard the current pool + microtrends,
+    // draw 5 fresh artists for the draft, and switch to the draft phase. Pool refill and
+    // microtrend refresh happen when the draft finalizes (see finalizeDraft).
+    const orderedPids = [...players].sort((a, b) => {
+      const fa = playerData[a.id]?.fame || 0;
+      const fb = playerData[b.id]?.fame || 0;
+      if (fb !== fa) return fb - fa;
+      const ta = playerData[a.id]?.tickets || 0;
+      const tb = playerData[b.id]?.tickets || 0;
+      return tb - ta;
+    }).map(p => p.id);
+    // Discard current pool contents into the discard pile — they're replaced fresh below.
+    const oldPool = [...(artistPoolRef.current || artistPool)];
+    let deck = [...(artistDeckRef.current || artistDeck)];
+    let disc = [...(discardPileRef.current || discardPile), ...oldPool];
+    // Draw 5 fresh cards for the draft. Reshuffle discard into deck if we run out.
+    const inUse = getInUseNames();
+    // The pool we just emptied shouldn't block itself — the cards we discarded are eligible
+    // for reshuffling next time the deck depletes.
+    oldPool.forEach(a => inUse.delete(a.name));
+    const drafted = [];
+    while (drafted.length < 5) {
+      if (deck.length === 0 && disc.length > 0) {
+        deck = shuffle(disc.filter(a => !inUse.has(a.name)));
+        disc = disc.filter(a => inUse.has(a.name));
+      }
+      while (deck.length > 0 && inUse.has(deck[deck.length - 1]?.name)) { disc.push(deck.pop()); }
+      if (deck.length === 0) break;
+      const card = deck.pop();
+      drafted.push(card);
+      inUse.add(card.name);
+    }
+    setArtistDeck(deck); setDiscardPile(disc);
+    artistDeckRef.current = deck; discardPileRef.current = disc;
+    setArtistPool([]); // pool empty during draft — will refill in finalizeDraft
+    setDraftCards(drafted);
+    setDraftOrder(orderedPids);
+    setDraftIndex(0);
+    addLogH(`Year ${newYear} — Between-Year Draft`, "round");
+    addLog("🎴 Draft", `${drafted.length} fresh artists — picking in end-of-year Fame order`);
+    setPhase("draft");
     // v140: alt-objectives year-end evaluation now handles BOTH the achievement rewards
     // AND the deal of the next year's objective (progression if succeeded, failure if not).
     // Previously we ran evaluate + a separate progression deal, which double-dealt.
     if (altObjectivesModeRef.current) {
       evaluateAltObjectivesYearEnd();
     }
+  };
+
+  // v197.9: draft phase resolution. `pickDraftCard` handles a single pick (human click OR
+  // AI auto-pick), advances to the next picker, and finalizes when everyone has picked.
+  const pickDraftCard = (pid, cardIdx) => {
+    // Guard: only the current picker can pick, and only if there are cards remaining.
+    if (draftOrder[draftIndex] !== pid) return;
+    if (cardIdx < 0 || cardIdx >= draftCards.length) return;
+    const chosen = draftCards[cardIdx];
+    const picker = players.find(p => p.id === pid);
+    // Add to picker's hand; remove from draftCards; advance the pick order.
+    setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...(prev[pid].hand || []), chosen] } }));
+    const newCards = draftCards.filter((_, i) => i !== cardIdx);
+    setDraftCards(newCards);
+    addLog("🎴 Draft", `${picker?.festivalName || "?"} drafted ${chosen.name}`);
+    const nextIdx = draftIndex + 1;
+    if (nextIdx >= draftOrder.length) {
+      // Everyone has picked — finalize the between-year cleanup and enter preRound.
+      finalizeDraft(newCards);
+    } else {
+      setDraftIndex(nextIdx);
+    }
+  };
+
+  // v197.9: finalize the draft — discard leftover draft cards, refill the pool to 5,
+  // replace both microtrend tracks with fresh entries from their bags, then transition
+  // into the pre-round (stage-open + free-amenity walk). The stage-clear + fame-decay
+  // logic still runs later inside startNextYear as before.
+  const finalizeDraft = (leftoverCards) => {
+    // Leftover draft cards → discard pile (they're not free to sit in the pool because
+    // the fresh pool refill logic below draws its own set from the deck).
+    let deck = [...(artistDeckRef.current || artistDeck)];
+    let disc = [...(discardPileRef.current || discardPile), ...(leftoverCards || [])];
+    // Refill pool to 5 from the deck.
+    const inUse = getInUseNames();
+    const newPool = [];
+    while (newPool.length < 5) {
+      if (deck.length === 0 && disc.length > 0) {
+        deck = shuffle(disc.filter(a => !inUse.has(a.name)));
+        disc = disc.filter(a => inUse.has(a.name));
+      }
+      while (deck.length > 0 && inUse.has(deck[deck.length - 1]?.name)) { disc.push(deck.pop()); }
+      if (deck.length === 0) break;
+      const card = deck.pop();
+      newPool.push(card);
+      inUse.add(card.name);
+    }
+    setArtistDeck(deck); setDiscardPile(disc); setArtistPool(newPool);
+    artistDeckRef.current = deck; discardPileRef.current = disc; artistPoolRef.current = newPool;
+    addLog("🎴 Draft", `Draft complete — pool refilled to ${newPool.length} artists`);
+    // Refresh BOTH microtrends. Unclaimed ones stay live (they weren't earned); we replace
+    // them with fresh entries so every year opens with a new pair of prompts.
+    const freshAmenity = nextAmenityMicrotrend || popAmenityFromBag();
+    const freshGenre = nextGenreMicrotrend || popGenreFromBag();
+    setMicrotrends([freshAmenity, freshGenre]);
+    // Draw the NEXT forecast for each track so the "next up" preview stays populated.
+    const nextAm = popAmenityFromBag(freshAmenity);
+    const nextGe = popGenreFromBag(freshGenre);
+    setNextAmenityMicrotrend(nextAm);
+    setNextGenreMicrotrend(nextGe);
+    const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
+    addLog("🎵 Microtrend", `Refreshed — ${describeMt(freshAmenity)} · ${describeMt(freshGenre)}`);
+    // Clear draft state and enter pre-round.
+    setDraftCards([]); setDraftOrder([]); setDraftIndex(0);
+    setPhase("preRound");
+  };
+
+  // v197.9: AI auto-pick heuristic — favors highest (fame*2 + tickets), i.e. the
+  // Fame-5 headliners come out first, then high-ticket mid-tier cards. Ties broken
+  // arbitrarily by first appearance in draftCards.
+  const aiDraftPick = (pid) => {
+    if (draftCards.length === 0) return;
+    let bestIdx = 0; let bestScore = -1;
+    draftCards.forEach((a, i) => {
+      const score = (a.fame || 0) * 2 + (a.tickets || 0);
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    });
+    pickDraftCard(pid, bestIdx);
   };
 
   // Pre-round — ALL players participate
@@ -12041,6 +12186,67 @@ export default function Headliners() {
         </div>
       </div>{anim}</div>
   );
+
+  // ═══════════════════════════════════════════════════════════
+  // RENDER: BETWEEN-YEAR DRAFT (v197.9)
+  // ═══════════════════════════════════════════════════════════
+  if (phase === "draft") {
+    const currentPickerPid = draftOrder[draftIndex];
+    const currentPicker = players.find(p => p.id === currentPickerPid);
+    const isAIPicker = currentPicker?.isAI;
+    const isMyTurn = currentPickerPid === currentPlayerId || (!isAIPicker && currentPicker); // human picks route through their own click
+    // For a stacked-vertical roster showing pick order + who's picked.
+    const roster = draftOrder.map((pid, idx) => {
+      const p = players.find(pl => pl.id === pid);
+      const pd = playerData[pid] || {};
+      const picked = idx < draftIndex;
+      const active = idx === draftIndex;
+      return { pid, name: p?.festivalName || "?", isAI: p?.isAI, fame: pd.fame || 0, tickets: pd.tickets || 0, picked, active, order: idx + 1 };
+    });
+    return (<div style={CS}>{utilButtons}{showLog && <GameLog log={gameLog} onClose={() => setShowLog(false)} />}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24, gap: 20 }}>
+        <div style={{ ...card, textAlign: "center", maxWidth: 900, width: "100%" }}>
+          <h2 style={{ color: "#a855f7", fontSize: 26, marginBottom: 4 }}>🎴 Between-Year Draft</h2>
+          <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 16 }}>Each player picks one artist in order of end-of-year Fame (ties broken by tickets sold). The new year begins after everyone picks.</p>
+          {/* Pick-order roster */}
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 18 }}>
+            {roster.map(r => (
+              <div key={r.pid} style={{
+                padding: "6px 12px", borderRadius: 8,
+                background: r.active ? "rgba(168,85,247,0.25)" : r.picked ? "rgba(74,222,128,0.15)" : "rgba(30,41,59,0.6)",
+                border: r.active ? "2px solid #a855f7" : r.picked ? "1px solid #4ade80" : "1px solid #334155",
+                fontSize: 12, color: r.active ? "#e9d5ff" : r.picked ? "#86efac" : "#94a3b8",
+                fontWeight: r.active ? 700 : 500,
+                minWidth: 130,
+              }}>
+                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>#{r.order} {r.active ? "· picking" : r.picked ? "· done" : "· waiting"}</div>
+                <div>{r.name}{r.isAI ? " 🤖" : ""}</div>
+                <div style={{ fontSize: 10, opacity: 0.7 }}>🔥{r.fame} · 🎟️{r.tickets}</div>
+              </div>
+            ))}
+          </div>
+          {/* Current picker prompt */}
+          {currentPicker && draftCards.length > 0 && <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(168,85,247,0.1)", border: "1px solid #a855f740", marginBottom: 16 }}>
+            <p style={{ color: "#a855f7", fontSize: 15, fontWeight: 700, margin: 0 }}>
+              {isAIPicker ? `${currentPicker.festivalName} is picking…` : `${currentPicker.festivalName} — pick one artist`}
+            </p>
+          </div>}
+          {/* Draft card grid */}
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            {draftCards.map((a, i) => (
+              <div key={`${a.name}-${i}`} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <ArtistCard
+                  artist={a}
+                  showCost
+                  onClick={!isAIPicker ? () => pickDraftCard(currentPickerPid, i) : undefined}
+                />
+                {!isAIPicker && <div style={{ fontSize: 10, color: "#a855f7", fontWeight: 700 }}>Click to draft</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>{anim}</div>);
+  }
 
   // ═══════════════════════════════════════════════════════════
   // RENDER: PRE-ROUND
