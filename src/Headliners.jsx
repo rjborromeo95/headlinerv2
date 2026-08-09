@@ -9074,27 +9074,40 @@ export default function Headliners() {
       return next;
     });
     // Capture pre-round baseFame (from opening stages) BEFORE resetting
-    // v192: apply -2 Fame decay at year transition. Trailing baseFame gets clamped
-    // at 0. This makes Fame matter every year — a player who ended Year 1 at Fame 4
-    // enters Year 2 at Fame 2; a player at Fame 1-2 enters Year 2 at Fame 0. Preserves
-    // proportional leader edge without full reset. Applied AFTER year-end scoring/effects
-    // and BEFORE the +1 fame stage-open bonus (which fires during pre-round if enabled).
+    // v192: apply -2 Fame decay at year transition. Trailing baseFame gets clamped at 0.
+    // v197.11: decay now scales inversely with stage count — investing in expansion
+    // reduces the year-transition punishment. Rationale: playtest data showed Y2/Y3
+    // tickets climb on aggregate but individual trajectories often peak at Y2, and
+    // stage count was one of the slowest-growing metrics. Tying decay to stages makes
+    // opening a new stage a Y2/Y3 pacing lever, not just a Fame-3 milestone reward.
+    //   1 stage  → −3 decay (feels harshest — 1-stage strategies like Indie must
+    //              rebuild fame each year, which is consistent with their small-festival
+    //              identity)
+    //   2 stages → −2 decay (unchanged from v192)
+    //   3 stages → −1 decay (soft landing — players who expanded feel their Y1 build
+    //              carry into Y2/Y3)
+    // Applied AFTER year-end scoring/effects and BEFORE the +1 fame stage-open bonus
+    // (which fires during pre-round if enabled).
     const preRoundFame = {};
     const fameDecayLog = [];
+    const decayForStages = (n) => (n >= 3 ? 1 : n === 2 ? 2 : 3);
     players.forEach(p => {
-      const before = playerData[p.id]?.baseFame || 0;
-      const after = Math.max(0, before - 2);
+      const pd = playerData[p.id] || {};
+      const before = pd.baseFame || 0;
+      const stageCount = (pd.stages || []).length;
+      const decay = decayForStages(stageCount);
+      const after = Math.max(0, before - decay);
       preRoundFame[p.id] = after;
       if (before !== after) {
-        fameDecayLog.push({ pid: p.id, before, after, lost: before - after });
+        fameDecayLog.push({ pid: p.id, before, after, lost: before - after, stages: stageCount, decay });
       }
     });
     if (fameDecayLog.length > 0) {
-      addLogH(`Year ${ny} — Fame Decay (−2)`, "round");
+      addLogH(`Year ${ny} — Fame Decay (stage-scaled)`, "round");
       fameDecayLog.forEach(e => {
         const pName = players.find(pl => pl.id === e.pid)?.festivalName || "?";
-        addLog("🔥 Fame Decay", `${pName}: ${e.before} → ${e.after} (−${e.lost} Fame)`);
-        logFameLoss(e.pid, e.lost, "Year transition decay", ny - 1);
+        addLog("🔥 Fame Decay", `${pName}: ${e.before} → ${e.after} (−${e.lost} Fame · ${e.stages} stage${e.stages === 1 ? "" : "s"} → −${e.decay} scale)`);
+        logFameLoss(e.pid, e.lost, `Year transition decay (${e.stages}-stage)`, ny - 1);
       });
     }
     // Clear all stages: move booked artists to discard pile, reset bonus tickets
