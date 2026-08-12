@@ -1812,87 +1812,15 @@ export default function Headliners() {
   const [infraRewards, setInfraRewards] = useState(null);
   const infraRewardsRef = useRef(null);
   useEffect(() => { infraRewardsRef.current = infraRewards; }, [infraRewards]);
-  // v197.14: watch for leader changes across all four amenity types and log them so
-  // players see when a reward is gained or lost mid-turn. Uses playerData as the trigger
-  // so it fires after every amenity placement. Only runs when the mode is on and the
-  // reward pool is populated.
-  useEffect(() => {
-    if (!infraRewardsMode || !infraRewards) return;
-    ["campsite", "portaloo", "catering", "security"].forEach(amenity => {
-      // Pass the closure's playerData as the data override — this is the freshest data
-      // available inside a useEffect that depends on playerData (the ref may not have
-      // been synced yet by its own useEffect, which fires in declaration order).
-      const newLeader = getInfraLeader(amenity, playerData);
-      const oldLeader = infraLeaderRef.current[amenity];
-      if (newLeader !== oldLeader) {
-        infraLeaderRef.current[amenity] = newLeader;
-        const rewardId = infraRewards[amenity];
-        const r = INFRA_REWARDS[rewardId];
-        if (!r) return;
-        if (newLeader != null) {
-          const pName = players.find(p => p.id === newLeader)?.festivalName || "?";
-          addLog("🏗️ Infra", `${pName} now holds "${r.label}" (Most ${AMENITY_LABELS[amenity]}s)`);
-          if (!players.find(p => p.id === newLeader)?.isAI) {
-            showFloatingBonus(`🏗️ ${r.label} — you're in the lead!`, "#fb923c");
-          }
-          // v197.15: symmetric ticket adjustment for the NEW leader gaining a passive
-          // ticket reward (camp_1: +1/campsite, cat_2: +2/catering). Their ticket total
-          // WILL update via computeTicketsForPlayer, but they'd otherwise have no idea
-          // WHY the number jumped. Log + floating popup make the causality visible.
-          const newLeaderPd = playerData[newLeader] || {};
-          const newAms = newLeaderPd.amenities || {};
-          if (rewardId === "camp_1") {
-            const delta = (newAms.campsite || 0);
-            if (delta > 0) {
-              logTicketGain(newLeader, delta, `Gained ${r.label} (+1/campsite × ${delta})`);
-              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
-              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
-            }
-          } else if (rewardId === "cat_2") {
-            const delta = (newAms.catering || 0) * 2;
-            if (delta > 0) {
-              logTicketGain(newLeader, delta, `Gained ${r.label} (+2/catering × ${(newAms.catering || 0)})`);
-              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
-              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
-            }
-          }
-        }
-        if (oldLeader != null) {
-          const oldName = players.find(p => p.id === oldLeader)?.festivalName || "?";
-          if (newLeader == null) {
-            addLog("🏗️ Infra", `${oldName} lost "${r.label}" (Most ${AMENITY_LABELS[amenity]}s) — tied or dropped below 2`);
-          } else {
-            const newName = players.find(p => p.id === newLeader)?.festivalName || "?";
-            addLog("🏗️ Infra", `${oldName} lost "${r.label}" — ${newName} took the lead`);
-          }
-          // v197.15: symmetric ticket adjustment for the OLD leader losing a passive
-          // ticket reward. Show them the loss so the shrinking total isn't a mystery.
-          const oldPd = playerData[oldLeader] || {};
-          const oldAms = oldPd.amenities || {};
-          if (rewardId === "camp_1") {
-            const delta = (oldAms.campsite || 0);
-            if (delta > 0) {
-              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +1/campsite × ${delta})`);
-              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
-              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
-            }
-          } else if (rewardId === "cat_2") {
-            const delta = (oldAms.catering || 0) * 2;
-            if (delta > 0) {
-              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +2/catering × ${(oldAms.catering || 0)})`);
-              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
-              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
-            }
-          }
-        }
-      }
-    });
-  }, [playerData, infraRewardsMode, infraRewards]);
   // Per-turn / per-year usage trackers for rewards that fire once per turn/year.
   // Keys: "port_1:pid" (once per turn), "sec_2:pid" (once per turn — turn-start draw)
   const infraRewardUsageRef = useRef({});
   // v197.14: Track the CURRENT leader per amenity so we can detect changes and log
   // reward gains/losses. Populated after every playerData change via a useEffect below.
+  // The change-detection useEffect itself lives AFTER getInfraLeader/logTicketGain are
+  // declared (see below near the reward-helper block) — placing it up here would trigger
+  // a temporal-dead-zone error on `playerData` in the deps array, since playerData
+  // isn't declared until ~line 1929.
   const infraLeaderRef = useRef({ campsite: null, portaloo: null, catering: null, security: null });
   // Draw-3-keep-1 modal for sec_2. { pid, cards: [3 artists] } | null
   const [sec2Draw, setSec2Draw] = useState(null);
@@ -2922,6 +2850,81 @@ export default function Headliners() {
       showFloatingBonus("+1 🎪 Stage (Backstage Perks)", "#fb923c");
     }
   };
+  // v197.14/15: watch for leader changes across all four amenity types and log them so
+  // players see when a reward is gained or lost mid-turn. Uses playerData as the trigger
+  // so it fires after every amenity placement. Only runs when the mode is on and the
+  // reward pool is populated. IMPORTANT: this useEffect lives HERE (not up near the other
+  // infra state declarations) because its dependency array evaluates `playerData` at
+  // render-time, and `playerData` is declared later in the file (~line 1929). Placing
+  // this hook above `playerData`'s declaration causes a TDZ ReferenceError on mount.
+  useEffect(() => {
+    if (!infraRewardsMode || !infraRewards) return;
+    ["campsite", "portaloo", "catering", "security"].forEach(amenity => {
+      const newLeader = getInfraLeader(amenity, playerData);
+      const oldLeader = infraLeaderRef.current[amenity];
+      if (newLeader !== oldLeader) {
+        infraLeaderRef.current[amenity] = newLeader;
+        const rewardId = infraRewards[amenity];
+        const r = INFRA_REWARDS[rewardId];
+        if (!r) return;
+        if (newLeader != null) {
+          const pName = players.find(p => p.id === newLeader)?.festivalName || "?";
+          addLog("🏗️ Infra", `${pName} now holds "${r.label}" (Most ${AMENITY_LABELS[amenity]}s)`);
+          if (!players.find(p => p.id === newLeader)?.isAI) {
+            showFloatingBonus(`🏗️ ${r.label} — you're in the lead!`, "#fb923c");
+          }
+          // v197.15: symmetric ticket adjustment for the NEW leader gaining a passive
+          // ticket reward (camp_1: +1/campsite, cat_2: +2/catering). Log + popup make
+          // the reason for the ticket total change visible.
+          const newLeaderPd = playerData[newLeader] || {};
+          const newAms = newLeaderPd.amenities || {};
+          if (rewardId === "camp_1") {
+            const delta = (newAms.campsite || 0);
+            if (delta > 0) {
+              logTicketGain(newLeader, delta, `Gained ${r.label} (+1/campsite × ${delta})`);
+              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
+              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
+            }
+          } else if (rewardId === "cat_2") {
+            const delta = (newAms.catering || 0) * 2;
+            if (delta > 0) {
+              logTicketGain(newLeader, delta, `Gained ${r.label} (+2/catering × ${(newAms.catering || 0)})`);
+              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
+              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
+            }
+          }
+        }
+        if (oldLeader != null) {
+          const oldName = players.find(p => p.id === oldLeader)?.festivalName || "?";
+          if (newLeader == null) {
+            addLog("🏗️ Infra", `${oldName} lost "${r.label}" (Most ${AMENITY_LABELS[amenity]}s) — tied or dropped below 2`);
+          } else {
+            const newName = players.find(p => p.id === newLeader)?.festivalName || "?";
+            addLog("🏗️ Infra", `${oldName} lost "${r.label}" — ${newName} took the lead`);
+          }
+          // v197.15: symmetric ticket adjustment for the OLD leader losing a passive
+          // ticket reward. Show them the loss so the shrinking total isn't a mystery.
+          const oldPd = playerData[oldLeader] || {};
+          const oldAms = oldPd.amenities || {};
+          if (rewardId === "camp_1") {
+            const delta = (oldAms.campsite || 0);
+            if (delta > 0) {
+              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +1/campsite × ${delta})`);
+              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
+              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
+            }
+          } else if (rewardId === "cat_2") {
+            const delta = (oldAms.catering || 0) * 2;
+            if (delta > 0) {
+              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +2/catering × ${(oldAms.catering || 0)})`);
+              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
+              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
+            }
+          }
+        }
+      }
+    });
+  }, [playerData, infraRewardsMode, infraRewards]);
   const currentPD = playerData[currentPlayerId] || {};
   const noTurnsLeft = currentPlayerId !== undefined && (turnsLeft[currentPlayerId] || 0) <= 0;
 
