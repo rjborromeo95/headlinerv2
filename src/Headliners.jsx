@@ -1812,9 +1812,42 @@ export default function Headliners() {
   const [infraRewards, setInfraRewards] = useState(null);
   const infraRewardsRef = useRef(null);
   useEffect(() => { infraRewardsRef.current = infraRewards; }, [infraRewards]);
+  // v197.14: watch for leader changes across all four amenity types and log them so
+  // players see when a reward is gained or lost mid-turn. Uses playerData as the trigger
+  // so it fires after every amenity placement. Only runs when the mode is on and the
+  // reward pool is populated.
+  useEffect(() => {
+    if (!infraRewardsMode || !infraRewards) return;
+    ["campsite", "portaloo", "catering", "security"].forEach(amenity => {
+      // Pass the closure's playerData as the data override — this is the freshest data
+      // available inside a useEffect that depends on playerData (the ref may not have
+      // been synced yet by its own useEffect, which fires in declaration order).
+      const newLeader = getInfraLeader(amenity, playerData);
+      const oldLeader = infraLeaderRef.current[amenity];
+      if (newLeader !== oldLeader) {
+        infraLeaderRef.current[amenity] = newLeader;
+        const rewardId = infraRewards[amenity];
+        const r = INFRA_REWARDS[rewardId];
+        if (!r) return;
+        if (newLeader != null) {
+          const pName = players.find(p => p.id === newLeader)?.festivalName || "?";
+          addLog("🏗️ Infra", `${pName} now holds "${r.label}" (Most ${AMENITY_LABELS[amenity]}s)`);
+          if (!players.find(p => p.id === newLeader)?.isAI) {
+            showFloatingBonus(`🏗️ ${r.label} — you're in the lead!`, "#fb923c");
+          }
+        } else if (oldLeader != null) {
+          const oldName = players.find(p => p.id === oldLeader)?.festivalName || "?";
+          addLog("🏗️ Infra", `${oldName} lost "${r.label}" (Most ${AMENITY_LABELS[amenity]}s) — tied or dropped below 2`);
+        }
+      }
+    });
+  }, [playerData, infraRewardsMode, infraRewards]);
   // Per-turn / per-year usage trackers for rewards that fire once per turn/year.
   // Keys: "port_1:pid" (once per turn), "sec_2:pid" (once per turn — turn-start draw)
   const infraRewardUsageRef = useRef({});
+  // v197.14: Track the CURRENT leader per amenity so we can detect changes and log
+  // reward gains/losses. Populated after every playerData change via a useEffect below.
+  const infraLeaderRef = useRef({ campsite: null, portaloo: null, catering: null, security: null });
   // Draw-3-keep-1 modal for sec_2. { pid, cards: [3 artists] } | null
   const [sec2Draw, setSec2Draw] = useState(null);
   // Choose-amenity modal for sec_1. { pid, availableTypes: [...] } | null
@@ -2770,19 +2803,25 @@ export default function Headliners() {
   // Derived
   const currentPlayerId = turnOrder[currentPlayerIdx];
   const currentPlayer = players.find(p => p.id === currentPlayerId);
-  // v197.12: Infrastructure Reward helpers.
-  // getInfraLeader(amenity): pid of the strict leader in that amenity type, or null if tied
-  //   or no one has any. Ties (including 2+ players tied for most) return null — the reward
-  //   is unclaimed until someone breaks the tie.
-  // hasInfraReward(pid, rewardId): true iff the given player is the strict leader in that
-  //   reward's amenity type AND that rewardId is the reward drawn for this game.
-  const getInfraLeader = (amenity) => {
+  // v197.14: Infrastructure Reward helpers.
+  // getInfraLeader(amenity): pid of the strict leader in that amenity type WHO HAS
+  //   MORE THAN 1 of it — i.e. count >= 2. Returns null if tied for top, if the leader
+  //   has fewer than 2, or nobody has any. Uses playerDataRef.current for freshness so
+  //   the check reflects the state after the most recent amenity placement, even if
+  //   React hasn't committed the render yet.
+  // hasInfraReward(pid, rewardId): true iff the given player is the strict leader in
+  //   that reward's amenity type (with count >= 2) AND that rewardId is the reward
+  //   drawn for this game.
+  const getInfraLeader = (amenity, dataOverride) => {
     if (!infraRewardsModeRef.current) return null;
-    const counts = players.map(p => ({ pid: p.id, count: playerData[p.id]?.amenities?.[amenity] || 0 }));
+    // Priority: explicit override (from useEffect closure playerData) → ref (freshest we
+    // usually have during event handlers) → render-scoped state (fallback).
+    const src = dataOverride || playerDataRef.current || playerData || {};
+    const counts = players.map(p => ({ pid: p.id, count: src[p.id]?.amenities?.[amenity] || 0 }));
     if (counts.length === 0) return null;
     counts.sort((a, b) => b.count - a.count);
-    if (counts[0].count === 0) return null;
-    if (counts.length >= 2 && counts[0].count === counts[1].count) return null; // tied
+    if (counts[0].count < 2) return null;
+    if (counts.length >= 2 && counts[0].count === counts[1].count) return null;
     return counts[0].pid;
   };
   const hasInfraReward = (pid, rewardId) => {
@@ -3235,8 +3274,10 @@ export default function Headliners() {
     setPlayerData(prev => {
       const next = { ...prev };
       next[pid] = updater(next[pid]);
+      // v197.14: pass pid to computeTicketsForPlayer so camp_1/cat_2 infrastructure rewards
+      // are applied to each player's own ticket calc (their strict lead unlocks the bonus).
       for (const p of Object.keys(next)) {
-        next[p] = computeTicketsForPlayer(next[p]);
+        next[p] = computeTicketsForPlayer(next[p], undefined, p);
       }
       return next;
     });
@@ -8367,7 +8408,7 @@ export default function Headliners() {
       // No year-end artist effects — but still need fresh tickets/fame snapshot for positional grants
       const prev = playerDataRef.current || {};
       const fresh = {};
-      Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
+      Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid], undefined, pid); });
       setPlayerData(fresh);
       playerDataRef.current = fresh;
       beginStarDicePhase();
@@ -8458,7 +8499,7 @@ export default function Headliners() {
             try {
               setPlayerData(prev => {
                 const fresh = {};
-                Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid]); });
+                Object.keys(prev).forEach(pid => { fresh[pid] = computeTicketsForPlayer(prev[pid], undefined, pid); });
                 playerDataRef.current = fresh;
                 return fresh;
               });
@@ -9367,7 +9408,7 @@ export default function Headliners() {
         const reset = { ...pd, stageArtists: emptyStages, bonusTickets: 0, baseFame: preRoundFame[p.id] || 0, vpPerSecurity: 0, fameHighWater: 0, filledStagesHighWater: 0, starDiceVPThisYear: 0, councilDiceGrantedThisYear: [false, false, false], councilAmenityGrantedThisYear: [false, false, false] };
         // Recompute tickets/fame for the NEW year so council ticket/fame bonuses fire immediately
         // (closure's `year` is still the old year here — pass `ny` explicitly)
-        next[p.id] = computeTicketsForPlayer(reset, ny);
+        next[p.id] = computeTicketsForPlayer(reset, ny, p.id);
       }
       return next;
     });
@@ -11328,6 +11369,34 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
+            {/* v197.14: Infrastructure Rewards panel — moved OUT of the microtrends tab so
+                it's always visible during gameplay regardless of which sidebar tab is
+                selected. Shows current reward + leader per amenity. Refreshes live as
+                amenities change (getInfraLeader reads playerDataRef for freshness). */}
+            {infraRewardsMode && infraRewards && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.25)" }}>
+              <div style={{ color: "#fb923c", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🏗️ Infrastructure Rewards</div>
+              {["campsite", "portaloo", "catering", "security"].map(amenity => {
+                const rewardId = infraRewards[amenity];
+                const r = INFRA_REWARDS[rewardId];
+                if (!r) return null;
+                const leaderPid = getInfraLeader(amenity);
+                const leader = leaderPid ? players.find(p => p.id === leaderPid) : null;
+                // Show top counts for context — helps players see how close they are to the lead.
+                const src = playerDataRef.current || playerData || {};
+                const counts = players.map(p => ({ name: p.festivalName, count: src[p.id]?.amenities?.[amenity] || 0 })).sort((a, b) => b.count - a.count);
+                const countLine = counts.map(c => `${c.name}:${c.count}`).join(" · ");
+                return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                    <span style={{ fontSize: 10, color: "#fb923c", fontWeight: 700 }}>{AMENITY_EMOJI[amenity]} Most {AMENITY_LABELS[amenity]}s — {r.label}</span>
+                    <span style={{ fontSize: 10, color: leader ? "#86efac" : "#94a3b8", fontWeight: 700 }}>
+                      {leader ? leader.festivalName : "— unclaimed —"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.3 }}>{r.desc}</div>
+                  <div style={{ fontSize: 9, color: "#64748b", marginTop: 3 }}>Requires 2+ owned & strict lead · {countLine}</div>
+                </div>;
+              })}
+            </div>}
             {sidebarTab === "my" && <div style={{ marginTop: 6 }}>
               {(playerObjectives[currentPlayerId] || []).length > 0 && (() => { return <div style={{ marginBottom: 6 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: "#c4b5fd", textTransform: "uppercase" }}>🎯 Artist Objectives</div>
@@ -11378,26 +11447,6 @@ export default function Headliners() {
                   {renderTrack("🏛️ Council Incentives", activeAmenity, nextAmenityMicrotrend)}
                 </>;
               })()}
-              {/* v197.12: Infrastructure Rewards panel — shows current reward + leader per amenity. */}
-              {infraRewardsMode && infraRewards && <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.25)" }}>
-                <div style={{ color: "#fb923c", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🏗️ Infrastructure Rewards</div>
-                {["campsite", "portaloo", "catering", "security"].map(amenity => {
-                  const rewardId = infraRewards[amenity];
-                  const r = INFRA_REWARDS[rewardId];
-                  if (!r) return null;
-                  const leaderPid = getInfraLeader(amenity);
-                  const leader = leaderPid ? players.find(p => p.id === leaderPid) : null;
-                  return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                      <span style={{ fontSize: 10, color: "#fb923c", fontWeight: 700 }}>{AMENITY_EMOJI[amenity]} Most {AMENITY_LABELS[amenity]}s — {r.label}</span>
-                      <span style={{ fontSize: 10, color: leader ? "#86efac" : "#94a3b8", fontWeight: 700 }}>
-                        {leader ? leader.festivalName : "— tied / none —"}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.3 }}>{r.desc}</div>
-                  </div>;
-                })}
-              </div>}
             </div>}
             {sidebarTab === "goals" && <div style={{ marginTop: 6 }}>
               {lineupObjectives.map((lo, oi) => lo && <div key={oi} style={{ padding: 8, borderRadius: 8, background: lo.claimed1st !== null ? "rgba(34,197,94,0.08)" : "rgba(251,191,36,0.08)", border: `1px solid ${lo.claimed1st !== null ? "rgba(34,197,94,0.3)" : "rgba(251,191,36,0.3)"}`, marginBottom: 6 }}>
