@@ -1187,7 +1187,7 @@ function aiTargetHeadlinerGaps(pd) {
   };
 }
 
-function aiPickAmenityType(pd) {
+function aiPickAmenityType(pd, infraContext) {
   const a = pd.amenities || {};
   const c = (t) => a[t] || 0;
   // v152: council + target-headliner-aware scoring. The AI now bakes three signals into
@@ -1218,11 +1218,41 @@ function aiPickAmenityType(pd) {
   // still falls back correctly. But drops the AI's tendency to spam campsites past
   // the point of usefulness.
   const overCapPenalty = (t) => c(t) >= 3 ? -20 : 0;
+  // v197.18: Infrastructure Reward bonus. If a reward is active for this amenity type
+  // AND the AI doesn't currently hold it AND they could plausibly claim it (i.e., not
+  // hopelessly behind), boost that amenity's weight. Scale: +12 to overtake by 1, +6 to
+  // reach parity, +4 to just get to 2 (threshold). Doesn't fire if AI already leads —
+  // that would just make them pile more without competitive pressure.
+  const infraBonus = { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+  if (infraContext && infraContext.rewards) {
+    ["campsite", "portaloo", "security", "catering"].forEach(t => {
+      const rewardId = infraContext.rewards[t];
+      if (!rewardId) return;
+      const leader = infraContext.leaders?.[t];
+      const myCount = c(t);
+      if (leader === infraContext.playerId) return; // already holding it — no bonus
+      // Find the highest opponent count for this amenity.
+      let maxOther = 0;
+      const counts = infraContext.counts || {};
+      Object.entries(counts).forEach(([pid, am]) => {
+        if (parseInt(pid) === infraContext.playerId) return;
+        maxOther = Math.max(maxOther, am?.[t] || 0);
+      });
+      // Bonus scales with how achievable the lead is (fewer gap = higher bonus).
+      const gap = maxOther - myCount;
+      if (gap <= 0 && myCount < 2) infraBonus[t] += 8; // clear path once we hit 2
+      else if (gap === 0) infraBonus[t] += 12; // one placement takes strict lead
+      else if (gap === 1) infraBonus[t] += 10; // two placements takes lead
+      else if (gap === 2) infraBonus[t] += 6;
+      else if (gap <= 4) infraBonus[t] += 3;
+      // gap > 4 → basically hopeless, no bonus.
+    });
+  }
   const needs = [
-    { type: "security", need: Math.max(0, 3 - c("security")) * 4 + councilBonus.security + (headlinerGaps?.gaps.security || 0) * gapWeight + overCapPenalty("security") + Math.random() * 2 },
-    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 3 + councilBonus.campsite + (headlinerGaps?.gaps.campsite || 0) * gapWeight + overCapPenalty("campsite") + Math.random() * 2 },
-    { type: "catering", need: Math.max(0, 2 - c("catering")) * 3 + councilBonus.catering + (headlinerGaps?.gaps.catering || 0) * gapWeight + overCapPenalty("catering") + Math.random() * 2 },
-    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 3 + councilBonus.portaloo + (headlinerGaps?.gaps.portaloo || 0) * gapWeight + overCapPenalty("portaloo") + Math.random() * 2 },
+    { type: "security", need: Math.max(0, 3 - c("security")) * 4 + councilBonus.security + (headlinerGaps?.gaps.security || 0) * gapWeight + overCapPenalty("security") + infraBonus.security + Math.random() * 2 },
+    { type: "campsite", need: Math.max(0, 4 - c("campsite")) * 3 + councilBonus.campsite + (headlinerGaps?.gaps.campsite || 0) * gapWeight + overCapPenalty("campsite") + infraBonus.campsite + Math.random() * 2 },
+    { type: "catering", need: Math.max(0, 2 - c("catering")) * 3 + councilBonus.catering + (headlinerGaps?.gaps.catering || 0) * gapWeight + overCapPenalty("catering") + infraBonus.catering + Math.random() * 2 },
+    { type: "portaloo", need: Math.max(0, 2 - c("portaloo")) * 3 + councilBonus.portaloo + (headlinerGaps?.gaps.portaloo || 0) * gapWeight + overCapPenalty("portaloo") + infraBonus.portaloo + Math.random() * 2 },
   ];
   needs.sort((a, b) => b.need - a.need);
   return needs[0].type;
@@ -1489,7 +1519,7 @@ function aiScoreArtistForIdentity(artist, identity, ctx) {
   return 0;
 }
 
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx, infraContext) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
@@ -1676,9 +1706,15 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     }
   }
 
-  // PRIORITY 2: Pick up from pool or draw from deck if hand is small
+  // PRIORITY 2: Pick up from pool or draw from deck if hand is small.
+  // v197.18: Threshold lowered from < 5 to < 3. Old threshold made the AI reserve
+  // aggressively in Y1 — a hand of 4 with no bookable options would still trigger a
+  // reserve, and the AI would spend most of Y1 collecting cards without ever playing
+  // one (ending Y1 at 0 tickets). Lower threshold means the AI reserves only when
+  // truly starved for cards and otherwise falls to Priority 3 (build amenities) so
+  // it actually unlocks the artists it already has in hand.
   const handSize = (pd.hand || []).length;
-  if (handSize < 5) {
+  if (handSize < 3) {
     if (artistPool.length > 0) {
       // Pick best from pool
       const scored = artistPool.map((a, i) => {
@@ -1730,6 +1766,32 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // v172: if an amenity microtrend is active, boost that amenity type too
   if (activeAmenity && neededForArtists[activeAmenity] !== undefined) {
     neededForArtists[activeAmenity] += 4;
+  }
+  // v197.18: Infrastructure Reward bonus. Same shape as aiPickAmenityType — bias the
+  // AI toward amenity types where there's a reward on offer that the AI doesn't
+  // currently hold. Uses the count gap to decide how achievable the lead is.
+  if (infraContext && infraContext.rewards) {
+    ["campsite", "portaloo", "security", "catering"].forEach(t => {
+      const rewardId = infraContext.rewards[t];
+      if (!rewardId) return;
+      const leader = infraContext.leaders?.[t];
+      if (leader === infraContext.playerId) return;
+      const myCount = counts[t] || 0;
+      let maxOther = 0;
+      const cs = infraContext.counts || {};
+      Object.entries(cs).forEach(([pid, am]) => {
+        if (parseInt(pid) === infraContext.playerId) return;
+        maxOther = Math.max(maxOther, am?.[t] || 0);
+      });
+      const gap = maxOther - myCount;
+      let bonus = 0;
+      if (gap <= 0 && myCount < 2) bonus = 8;
+      else if (gap === 0) bonus = 12;
+      else if (gap === 1) bonus = 10;
+      else if (gap === 2) bonus = 6;
+      else if (gap <= 4) bonus = 3;
+      neededForArtists[t] = (neededForArtists[t] || 0) + bonus;
+    });
   }
   // v191: apply the ≥3 soft-cap penalty here too so preferredType agrees with the
   // amenity-picker cap. If we already have 3+ of a type, we don't want more.
@@ -2010,13 +2072,26 @@ export default function Headliners() {
       ...prev,
       [pid]: [...(prev[pid] || []), { source, amount, year: y }]
     }));
-    // v197.12: "VIP Passes" (cat_3) — the catering leader gets +1 ticket every time they
-    // GAIN Fame (positive amounts only, not losses). Bookkeeping-only, no popup because
-    // this can fire many times per turn.
-    if (amount > 0 && hasInfraReward(pid, "cat_3") && !source?.startsWith("Reward:")) {
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
-      const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
-      addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering)`);
+    // v197.12/19: "VIP Passes" (cat_3) — the catering leader gets +1 ticket every time
+    // they GAIN Fame (positive amounts only, not losses). Bookkeeping-only, no popup
+    // because this can fire many times per turn.
+    // v197.19: DEFERRED to setTimeout(0) so it runs AFTER the current event handler's
+    // setPlayerData has committed. Prior implementation fired synchronously — when Fame
+    // was gained via a microtrend claim triggered by an amenity placement (e.g. placing
+    // a catering matches "Catering Van" trend → +1 Fame), `hasInfraReward` read
+    // playerDataRef.current which was still the pre-placement snapshot. The player had
+    // JUST become the strict catering leader by placing that amenity, but the check
+    // saw the old count and returned false. Result: they were "the leader" per the log
+    // but the +1 ticket per Fame never fired at 3 catering. Deferring by one tick lets
+    // React commit the amenity placement first, syncs the ref, and hasInfraReward reads
+    // the fresh state.
+    if (amount > 0 && !source?.startsWith("Reward:")) {
+      setTimeout(() => {
+        if (!hasInfraReward(pid, "cat_3")) return;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
+        const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+        addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering) — ${source}`);
+      }, 0);
     }
     // Popup queue only for POSITIVE human-facing gains. Losses and AI-side changes
     // are silent (no popup) but still recorded in the ledger above.
@@ -6392,6 +6467,12 @@ export default function Headliners() {
     const fieldIdx = (overrideField != null) ? overrideField : (setupSelectedField != null ? setupSelectedField : 0);
     if (!choice) return;
     const pid = currentSetupPlayer.id;
+    // v197.19: defense-in-depth against the double-call bug that pushed 37 stages onto
+    // one AI player. If this player has already placed their setup amenity (setupAmenity
+    // is non-null in their pd), a second invocation is a race we shouldn't honor. The
+    // AI dispatch lock in aiStep is the primary fix; this is a backup so any code path
+    // that reaches confirmSetupAmenity twice still can't double-place.
+    if (playerData[pid]?.setupAmenity != null) return;
     const usedNames = playerData[pid]?.stageNames || [];
     const availNames = STAGE_NAMES.filter(n => !usedNames.includes(n));
     const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage 1`;
@@ -6715,6 +6796,16 @@ export default function Headliners() {
   // the tempted artist, and duplicate them across every re-fire until React finally
   // commits and useEffect reschedules aiStep with a fresh closure.
   const aiTurnStartResolvedRef = useRef(null);
+  // v197.19: per-setup-step lock. Same pattern as aiTurnStartResolvedRef — prevents aiStep
+  // from firing the same setup step twice with a stale closure. Root cause of the bug it
+  // guards: at line ~7130 the AI's pickAmenity handler sets aiProcessing.current = false
+  // BEFORE calling confirmSetupAmenity inside a setTimeout. If aiStep fires again before
+  // that setTimeout runs (via any useEffect dep change), it sees setupStep still
+  // "pickAmenity" and re-enters the block — leading to N calls to confirmSetupAmenity,
+  // and confirmSetupAmenity appends a NEW stage each time it fires. This produced a game
+  // where one AI ended setup with 37 stages and 37 security. The key includes setupIndex
+  // + setupStep so it naturally invalidates when either advances.
+  const aiSetupResolvedRef = useRef(null);
 
   const isCurrentPlayerAI = () => {
     if (phase === "setup") return players[setupIndex]?.isAI;
@@ -7049,9 +7140,25 @@ export default function Headliners() {
 
     // ─── SETUP PHASE ───
     if (phase === "setup") {
+      // v197.19: per-step lock. When the AI kicks off an async setTimeout to call the
+      // step-completion function (confirmSetupDraft, confirmSetupAmenity), we set
+      // aiProcessing = false BEFORE the state has committed. If aiStep re-fires (e.g.
+      // because setSetupSelectedAmenity triggered a re-render that ripped through the
+      // useEffect deps), it would find setupStep still on the current step and enter
+      // again, scheduling ANOTHER confirmSetupAmenity call — each of which appends a
+      // new stage. This lock keys on (setupIndex:setupStep) so it invalidates naturally
+      // when either advances. See aiTurnStartResolvedRef for the same pattern.
+      const setupLockKey = `${setupIndex}:${setupStep}`;
+      if (aiSetupResolvedRef.current === setupLockKey) {
+        aiProcessing.current = false; return;
+      }
       const pid = players[setupIndex]?.id;
-      if (setupStep === "viewObjective") { confirmViewObjective(); scheduleNext(400); return; }
+      if (setupStep === "viewObjective") {
+        aiSetupResolvedRef.current = setupLockKey;
+        confirmViewObjective(); scheduleNext(400); return;
+      }
       if (setupStep === "draftArtist" && setupDraftOptions.length >= 2) {
+        aiSetupResolvedRef.current = setupLockKey;
         const picks = aiDraftSelect(setupDraftOptions);
         setSetupDraftSelected(picks);
         aiProcessing.current = false;
@@ -7059,6 +7166,7 @@ export default function Headliners() {
         return;
       }
       if (setupStep === "pickAmenity") {
+        aiSetupResolvedRef.current = setupLockKey;
         // v189: council-informed pick removed; use fame-scarcity heuristic. Only one field now.
         const pid = currentSetupPlayer.id;
         const pd = playerData[pid];
@@ -7069,7 +7177,10 @@ export default function Headliners() {
         setTimeout(() => { confirmSetupAmenity(amenityChoice, 0); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
         return;
       }
-      if (setupStep === "confirm") { confirmSetupPlacement(); scheduleNext(600); return; }
+      if (setupStep === "confirm") {
+        aiSetupResolvedRef.current = setupLockKey;
+        confirmSetupPlacement(); scheduleNext(600); return;
+      }
       aiProcessing.current = false; return;
     }
 
@@ -7346,7 +7457,24 @@ export default function Headliners() {
         playedThisYear: (yearEvents[currentPlayerId]?.artistsPlayedThisYear) || 0,
         stagesTwoFull: (pd.stageArtists || []).filter(s => s.length === 2).length,
       };
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx);
+      // v197.18: build infrastructure-reward context for the AI decision. Includes
+      // (a) which rewards are active this game per amenity, (b) current strict leader
+      // per amenity (or null if tied/below-2), (c) every player's amenity counts so the
+      // AI can see how far it is from taking a reward. Empty when the mode is off.
+      const infraContext = infraRewardsModeRef.current && infraRewardsRef.current ? {
+        playerId: currentPlayerId,
+        rewards: infraRewardsRef.current,
+        leaders: {
+          campsite: getInfraLeader("campsite"),
+          portaloo: getInfraLeader("portaloo"),
+          security: getInfraLeader("security"),
+          catering: getInfraLeader("catering"),
+        },
+        counts: Object.fromEntries(
+          players.map(pl => [pl.id, (playerData[pl.id]?.amenities || {})])
+        ),
+      } : null;
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       if (decision.action === "book") {
@@ -11436,11 +11564,16 @@ export default function Headliners() {
                 const rewardId = infraRewards[amenity];
                 const r = INFRA_REWARDS[rewardId];
                 if (!r) return null;
-                const leaderPid = getInfraLeader(amenity);
+                // v197.17: pass the closure's playerData explicitly. Panel is rendered
+                // BEFORE the playerDataRef useEffect syncs, so the ref is stale for the
+                // current render — falling back to it gives a one-render-behind view that
+                // shows "unclaimed" briefly right after amenity placements. Using the
+                // closure playerData guarantees we render against the newest committed
+                // state that triggered this render.
+                const leaderPid = getInfraLeader(amenity, playerData);
                 const leader = leaderPid ? players.find(p => p.id === leaderPid) : null;
-                // Show top counts for context — helps players see how close they are to the lead.
-                const src = playerDataRef.current || playerData || {};
-                const counts = players.map(p => ({ name: p.festivalName, count: src[p.id]?.amenities?.[amenity] || 0 })).sort((a, b) => b.count - a.count);
+                // Same freshness applies to the count-line display below.
+                const counts = players.map(p => ({ name: p.festivalName, count: playerData[p.id]?.amenities?.[amenity] || 0 })).sort((a, b) => b.count - a.count);
                 const countLine = counts.map(c => `${c.name}:${c.count}`).join(" · ");
                 return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
