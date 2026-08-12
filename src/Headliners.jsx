@@ -58,6 +58,31 @@ function mutateAmenity(pd, fieldIdx, type, delta) {
   return { ...pd, fields, amenities: sumFields(fields) };
 }
 const AMENITY_LABELS = { campsite: "Campsite", portaloo: "Portaloo", security: "Security", catering: "Catering Van" };
+const AMENITY_EMOJI = { campsite: "⛺", portaloo: "🚽", security: "🛡️", catering: "🍔" };
+
+// v197.12: Infrastructure Rewards catalog. Three variants per amenity type; one is
+// drawn per amenity at game start when the mode is on. The reward goes to whichever
+// player has a STRICT LEAD in that amenity type — ties mean no one holds the reward.
+const INFRA_REWARDS = {
+  camp_1: { amenity: "campsite", label: "Big Base",       desc: "Each of your campsites is worth +1 additional ticket." },
+  camp_2: { amenity: "campsite", label: "Sold Out",       desc: "Year End: +12 tickets." },
+  camp_3: { amenity: "campsite", label: "Loyal Following", desc: "When you play an artist, +1 ticket." },
+  port_1: { amenity: "portaloo", label: "Quick Turnaround", desc: "Once per turn, refresh the artist pool for free." },
+  port_2: { amenity: "portaloo", label: "Traffic Flow",   desc: "When you pick an amenity, also draw 1 artist from the pool or deck." },
+  port_3: { amenity: "portaloo", label: "Word of Mouth",  desc: "When you complete a microtrend, draw 1 artist from the pool or deck." },
+  cat_1:  { amenity: "catering", label: "Backstage Perks", desc: "If Fame or a Stage is in the amenity pool after you refresh it, gain 1 Fame or 1 stage progress." },
+  cat_2:  { amenity: "catering", label: "Concessions",    desc: "Each of your catering vans is worth 2 tickets." },
+  cat_3:  { amenity: "catering", label: "VIP Passes",     desc: "When you gain a Fame, +1 ticket." },
+  sec_1:  { amenity: "security", label: "Bouncer Rights", desc: "When you take an amenity from the amenity pool, choose which amenity you receive." },
+  sec_2:  { amenity: "security", label: "Scouted Talent", desc: "Draw 3 artists at the beginning of your turn. Keep 1; discard the rest." },
+  sec_3:  { amenity: "security", label: "Reputation",     desc: "Artists cost 1 less Fame to play." },
+};
+const INFRA_REWARDS_BY_AMENITY = {
+  campsite: ["camp_1", "camp_2", "camp_3"],
+  portaloo: ["port_1", "port_2", "port_3"],
+  catering: ["cat_1", "cat_2", "cat_3"],
+  security: ["sec_1", "sec_2", "sec_3"],
+};
 const AMENITY_ICONS = { campsite: "⛺", portaloo: "🚽", security: "👮‍♀️", catering: "🍔" };
 const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f87171", catering: "#fbbf24" };
 // v166: dice faces are now 6 pure options (one per side of a d6). Removed the compound
@@ -576,8 +601,8 @@ function genreGradient(genre) {
   if (gs.length === 1) return GENRE_COLORS[gs[0]] || "#6b7280";
   return `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)`;
 }
-function canAffordArtist(artist, pd) {
-  if (pd.fame < artist.fame) return false;
+function canAffordArtist(artist, pd, fameReduction = 0) {
+  if (pd.fame < Math.max(0, artist.fame - fameReduction)) return false;
   const a = pd.amenities || {};
   return (a.campsite||0) >= artist.campCost && (a.security||0) >= artist.securityCost && (a.catering||0) >= artist.cateringCost && (a.portaloo||0) >= artist.portalooCost;
 }
@@ -1775,6 +1800,25 @@ export default function Headliners() {
   const totalYearsRef = useRef(3);
   const stageOpenFameBonusRef = useRef(false);
   const preRoundArtistDrawsRef = useRef(false);
+  // v197.12: Infrastructure Rewards mode — an anti-tie race for each amenity type
+  // grants a game-specific benefit to whoever leads strictly (ties = no benefit).
+  // At game start, one of 3 reward variants is drawn per amenity type (12 total variants,
+  // 4 drawn per game). Toggles the whole system on/off.
+  const [infraRewardsMode, setInfraRewardsMode] = useState(false);
+  const infraRewardsModeRef = useRef(false);
+  useEffect(() => { infraRewardsModeRef.current = infraRewardsMode; }, [infraRewardsMode]);
+  // Which reward variant is in play this game, per amenity type. Set at game start.
+  //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
+  const [infraRewards, setInfraRewards] = useState(null);
+  const infraRewardsRef = useRef(null);
+  useEffect(() => { infraRewardsRef.current = infraRewards; }, [infraRewards]);
+  // Per-turn / per-year usage trackers for rewards that fire once per turn/year.
+  // Keys: "port_1:pid" (once per turn), "sec_2:pid" (once per turn — turn-start draw)
+  const infraRewardUsageRef = useRef({});
+  // Draw-3-keep-1 modal for sec_2. { pid, cards: [3 artists] } | null
+  const [sec2Draw, setSec2Draw] = useState(null);
+  // Choose-amenity modal for sec_1. { pid, availableTypes: [...] } | null
+  const [sec1Choice, setSec1Choice] = useState(null);
   // v189: retained as always-false constants (removed toggles) so downstream code that
   // reads these refs continues to work without touching every callsite.
   const preRoundArtistDraws = false;
@@ -1959,6 +2003,14 @@ export default function Headliners() {
       ...prev,
       [pid]: [...(prev[pid] || []), { source, amount, year: y }]
     }));
+    // v197.12: "VIP Passes" (cat_3) — the catering leader gets +1 ticket every time they
+    // GAIN Fame (positive amounts only, not losses). Bookkeeping-only, no popup because
+    // this can fire many times per turn.
+    if (amount > 0 && hasInfraReward(pid, "cat_3") && !source?.startsWith("Reward:")) {
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
+      const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+      addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering)`);
+    }
     // Popup queue only for POSITIVE human-facing gains. Losses and AI-side changes
     // are silent (no popup) but still recorded in the ledger above.
     if (amount <= 0) return;
@@ -2718,6 +2770,73 @@ export default function Headliners() {
   // Derived
   const currentPlayerId = turnOrder[currentPlayerIdx];
   const currentPlayer = players.find(p => p.id === currentPlayerId);
+  // v197.12: Infrastructure Reward helpers.
+  // getInfraLeader(amenity): pid of the strict leader in that amenity type, or null if tied
+  //   or no one has any. Ties (including 2+ players tied for most) return null — the reward
+  //   is unclaimed until someone breaks the tie.
+  // hasInfraReward(pid, rewardId): true iff the given player is the strict leader in that
+  //   reward's amenity type AND that rewardId is the reward drawn for this game.
+  const getInfraLeader = (amenity) => {
+    if (!infraRewardsModeRef.current) return null;
+    const counts = players.map(p => ({ pid: p.id, count: playerData[p.id]?.amenities?.[amenity] || 0 }));
+    if (counts.length === 0) return null;
+    counts.sort((a, b) => b.count - a.count);
+    if (counts[0].count === 0) return null;
+    if (counts.length >= 2 && counts[0].count === counts[1].count) return null; // tied
+    return counts[0].pid;
+  };
+  const hasInfraReward = (pid, rewardId) => {
+    if (!infraRewardsModeRef.current) return false;
+    const rewards = infraRewardsRef.current || {};
+    const reward = INFRA_REWARDS[rewardId];
+    if (!reward) return false;
+    // Only the reward that was drawn for this game matters.
+    if (rewards[reward.amenity] !== rewardId) return false;
+    return getInfraLeader(reward.amenity) === pid;
+  };
+  // Convenience: what reward (if any) does this player currently hold for a given amenity?
+  const getPlayerInfraReward = (pid, amenity) => {
+    if (!infraRewardsModeRef.current) return null;
+    if (getInfraLeader(amenity) !== pid) return null;
+    return (infraRewardsRef.current || {})[amenity] || null;
+  };
+  // v197.12: "Reputation" (sec_3) — the security leader can play artists 1 Fame lower
+  // than normal. Returns the effective Fame requirement for a specific player+artist.
+  const effectiveArtistFame = (artist, pid) => {
+    const reduction = hasInfraReward(pid, "sec_3") ? 1 : 0;
+    return Math.max(0, (artist?.fame || 0) - reduction);
+  };
+  // Same idea as canAffordArtist but with sec_3 applied. Callers pass pid so we know
+  // whether to reduce the Fame requirement. Non-Fame checks (amenity costs) unchanged.
+  const canAffordArtistWithRewards = (artist, pd, pid) => {
+    if (!artist || !pd) return false;
+    if ((pd.fame || 0) < effectiveArtistFame(artist, pid)) return false;
+    const a = pd.amenities || {};
+    return (a.campsite||0) >= artist.campCost && (a.security||0) >= artist.securityCost && (a.catering||0) >= artist.cateringCost && (a.portaloo||0) >= artist.portalooCost;
+  };
+  // Short helper for passing to canAffordArtist as 3rd arg — 1 iff the player holds sec_3.
+  const sec3Reduction = (pid) => (hasInfraReward(pid, "sec_3") ? 1 : 0);
+  // v197.13: Backstage Perks (cat_1) — if a Fame or Stage face is in the amenity pool
+  // after a refresh (fresh roll), the catering leader gains 1 Fame (if Fame face rolled)
+  // or 1 stage progress (if Stage face rolled). If both present, prefer Fame.
+  // For MVP: auto-grant based on what's rolled (no choice modal). If both, Fame wins.
+  const grantCat1IfEligible = (pid, freshDice) => {
+    if (!hasInfraReward(pid, "cat_1")) return;
+    const hasFame = freshDice.includes("fame");
+    const hasStage = freshDice.includes("stage");
+    if (!hasFame && !hasStage) return;
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    if (hasFame) {
+      logFameGain(pid, 1, "Backstage Perks (Most Catering)");
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+      addLog("🏗️ Reward", `${pName}: +1 🔥 Fame from Backstage Perks (Fame die in pool)`);
+      showFloatingBonus("+1 🔥 Fame (Backstage Perks)", "#fb923c");
+    } else {
+      grantStageProgress(pid, "Backstage Perks (Most Catering)");
+      addLog("🏗️ Reward", `${pName}: +1 🎪 stage progress from Backstage Perks (Stage die in pool)`);
+      showFloatingBonus("+1 🎪 Stage (Backstage Perks)", "#fb923c");
+    }
+  };
   const currentPD = playerData[currentPlayerId] || {};
   const noTurnsLeft = currentPlayerId !== undefined && (turnsLeft[currentPlayerId] || 0) <= 0;
 
@@ -2731,14 +2850,25 @@ export default function Headliners() {
   // Council fame + ticket rewards are folded in here so they apply continuously while qualifying.
   // yearOverride lets callers force a different year (e.g. at year transition where the closure's
   // `year` still reflects the previous year).
-  function computeTicketsForPlayer(pd, yearOverride) {
+  function computeTicketsForPlayer(pd, yearOverride, pid) {
     if (!pd) return pd;
     // Read year from a ref so callers wrapped in useCallback([]) (which captured an old
     // closure) still get today's year. yearOverride wins if explicitly provided.
     const y = (yearOverride != null) ? yearOverride : (yearRef.current || year || 1);
     const fields = pd.fields || emptyFields();
     const am = sumFields(fields);
-    let t = (am.campsite || 0) * 2;
+    // v197.12: Infrastructure Reward "Big Base" (camp_1) adds +1 to each campsite's value.
+    // Applied only when the player has strict lead in campsites AND the drawn reward is camp_1.
+    // pid is optional — hypothetical pds passed for previews don't get the bonus. That's fine
+    // because previews shouldn't influence what the actual scoreboard shows.
+    const campsiteValue = 2 + (pid != null && hasInfraReward(pid, "camp_1") ? 1 : 0);
+    let t = (am.campsite || 0) * campsiteValue;
+    // v197.12: "Concessions" (cat_2) — each catering van is worth 2 tickets on top of its
+    // amenity utility. Additive to whatever base scoring catering has (none currently, so
+    // this becomes the full contribution).
+    if (pid != null && hasInfraReward(pid, "cat_2")) {
+      t += (am.catering || 0) * 2;
+    }
     // v126: artists contribute BOTH their base tickets AND their VP to the unified score.
     // Previously these were separate accounting; now both simply count as "tickets sold" from
     // that artist's presence in the lineup. Amenity effects, agent effects, and bonuses still
@@ -2760,10 +2890,6 @@ export default function Headliners() {
       if (c.reward?.type === "fame") councilFame += c.reward.perYear[yIdx] || 0;
     }
     t += councilTickets;
-    // v126: fame is now driven purely by explicit fame-gaining events (baseFame accumulator
-    // + council fame rewards). The old `floor(tickets/10)` bridge is gone — tickets are now
-    // the score itself (see the v126 unification: VP → tickets merged into a single number),
-    // so double-counting them as fame would compound the same quantity twice.
     let fame = pd.baseFame || 0;
     fame += councilFame;
     fame = Math.min(FAME_MAX, fame);
@@ -2890,7 +3016,7 @@ export default function Headliners() {
     setPlayerData(prev => {
       const next = { ...prev };
       for (const pid of Object.keys(next)) {
-        next[pid] = computeTicketsForPlayer(next[pid]);
+        next[pid] = computeTicketsForPlayer(next[pid], undefined, pid);
       }
       return next;
     });
@@ -4349,9 +4475,9 @@ export default function Headliners() {
   }
 
   /** Check if an artist is free to play (won from goal) */
-  function canAffordArtistOrFree(artist, pd) {
+  function canAffordArtistOrFree(artist, pd, fameReduction = 0) {
     if (artist.freePlay) return true;
-    return canAffordArtist(artist, pd);
+    return canAffordArtist(artist, pd, fameReduction);
   }
 
   function triggerDiceRoll(count, pid, artistName, resultText, callback) {
@@ -5788,6 +5914,14 @@ export default function Headliners() {
       setTimeout(() => applyGenreMatchEffect(artist, pid), 300);
     }
 
+    // v197.12: Infrastructure Reward "Loyal Following" (camp_3) — the campsite leader
+    // gains +1 ticket each time they play an artist. Fires here at the end of booking
+    // so it stacks on top of the artist's own base + effect tickets.
+    if (hasInfraReward(pid, "camp_3")) {
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
+      addLog("🏗️ Reward", `${festival}: +1 🎟️ from Loyal Following (Most Campsites)`);
+    }
+
     // v134: drawOnPlay council trigger — "When you play an artist, draw an artist."
     // Fires once per qualifying council (up to 3 possible: Official Partner, Liquid Lunches,
     // Number One Fans). Draws from the deck; artists go straight to the player's hand.
@@ -5875,6 +6009,14 @@ export default function Headliners() {
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
+        // v197.12: "Word of Mouth" (port_3) — portaloo leader draws 1 artist on microtrend claim.
+        if (hasInfraReward(pid, "port_3")) {
+          const drawn = drawFromDeck(1);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
+            addLog("🏗️ Reward", `${festival}: drew ${drawn[0].name} from Word of Mouth (Most Portaloos)`);
+          }
+        }
         setTimeout(() => checkMidYearAchievements(pid), 80);
         // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
         // updates land first; the bonus draw appears as a follow-up log line.
@@ -5907,6 +6049,14 @@ export default function Headliners() {
         setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
         bumpYearlyStat(pid, "microtrends");
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
+        // v197.12: "Word of Mouth" (port_3) also fires on forecast claims.
+        if (hasInfraReward(pid, "port_3")) {
+          const drawn = drawFromDeck(1);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
+            addLog("🏗️ Reward", `${festival}: drew ${drawn[0].name} from Word of Mouth (Most Portaloos)`);
+          }
+        }
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
         setTimeout(() => checkMidYearAchievements(pid), 80);
         setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -6360,6 +6510,28 @@ export default function Headliners() {
     const pool = fullDeck.splice(0, 5);
     setArtistDeck(fullDeck); setArtistPool(pool); setDiscardPile([]);
 
+    // v197.12: Roll infrastructure rewards if the mode is enabled. One reward variant
+    // per amenity type is chosen randomly from that type's 3 options — this determines
+    // what benefits are on offer for the rest of the game. Broadcast to log so players
+    // know what they're chasing.
+    if (infraRewardsModeRef.current) {
+      const drawn = {};
+      Object.entries(INFRA_REWARDS_BY_AMENITY).forEach(([amenity, ids]) => {
+        drawn[amenity] = ids[Math.floor(Math.random() * ids.length)];
+      });
+      setInfraRewards(drawn);
+      infraRewardsRef.current = drawn;
+      infraRewardUsageRef.current = {};
+      addLogH("Infrastructure Rewards — this game's benefits", "round");
+      Object.entries(drawn).forEach(([amenity, id]) => {
+        const r = INFRA_REWARDS[id];
+        addLog("🏗️ Reward", `Most ${AMENITY_LABELS[amenity]}s → ${r.label}: ${r.desc}`);
+      });
+    } else {
+      setInfraRewards(null);
+      infraRewardsRef.current = null;
+    }
+
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
     const schedule = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR;
     const tl = {}; order.forEach(id => { tl[id] = schedule[1]; }); setTurnsLeft(tl);
@@ -6710,7 +6882,7 @@ export default function Headliners() {
           if (aiIdentityGenres.length > 0 && genres.some(g => aiIdentityGenres.includes(g))) score += 8;
           if (activeGenre && genres.includes(activeGenre)) score += 6;
           else if (forecastGenre && genres.includes(forecastGenre)) score += 4;
-          if ((pd.fame || 0) >= (a.fame || 0) && canAffordArtist(a, pd)) score += 8;
+          if ((pd.fame || 0) >= effectiveArtistFame(a, pid) && canAffordArtist(a, pd, sec3Reduction(pid))) score += 8;
           return score;
         };
 
@@ -6755,8 +6927,8 @@ export default function Headliners() {
         const genreOk = (a) => pe.genres.length === 0 || getGenres(a.genre).some(g => pe.genres.includes(g));
         const bookedNames = new Set((pd.stageArtists || []).flat().map(a => a.name));
         const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-        const handCands = (pd.hand || []).filter(a => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name)).map(a => ({ a, source: "hand" }));
-        const poolCands = artistPool.filter(a => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid)).map(a => ({ a, source: "pool" }));
+        const handCands = (pd.hand || []).filter(a => genreOk(a) && canAffordArtist(a, pd, sec3Reduction(pid)) && !bookedNames.has(a.name)).map(a => ({ a, source: "hand" }));
+        const poolCands = artistPool.filter(a => genreOk(a) && canAffordArtist(a, pd, sec3Reduction(pid)) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid)).map(a => ({ a, source: "pool" }));
         const cands = [...handCands, ...poolCands].sort((x, y) => (y.a.vp + y.a.tickets) - (x.a.vp + x.a.tickets));
         if (cands.length > 0 && openStages.length > 0) {
           const { a, source } = cands[0];
@@ -6911,6 +7083,24 @@ export default function Headliners() {
         aiTurnStartResolvedRef.current = turnStartKey;
         setShowTurnStart(false);
         setTurnNumber(prev => prev + 1);
+        // v197.13: Scouted Talent (sec_2) for AI — draw 3, auto-keep best.
+        if (hasInfraReward(currentPlayerId, "sec_2")) {
+          const usageKey = `sec_2:${currentPlayerId}:${turnNumber + 1}`;
+          if (!infraRewardUsageRef.current[usageKey]) {
+            infraRewardUsageRef.current[usageKey] = true;
+            const drawn = drawFromDeck(3);
+            if (drawn.length > 0) {
+              // Auto-keep highest (fame*2 + tickets)
+              let bestIdx = 0; let bestScore = -1;
+              drawn.forEach((a, i) => { const s = (a.fame||0)*2 + (a.tickets||0); if (s > bestScore) { bestScore = s; bestIdx = i; } });
+              const kept = drawn[bestIdx];
+              const discarded = drawn.filter((_, i) => i !== bestIdx);
+              setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), kept] } }));
+              setDiscardPile(prev => [...prev, ...discarded]);
+              addLog("🏗️ Reward", `${currentPlayer.festivalName}: Scouted Talent kept ${kept.name}, discarded ${discarded.map(a => a.name).join(", ")}`);
+            }
+          }
+        }
         // v167: AI stage-open policy. The AI wants to expand to a 2nd stage
         // eagerly (opening a stage is worth 3 more artist slots ≈ ~15 tickets of
         // scoring capacity). It only goes for the 3rd stage when its amenities are
@@ -7237,7 +7427,7 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
-  const handlePickAmenity = () => { setTurnAction("pickAmenity"); if (dice.length === 0) setDice(rollDice()); };
+  const handlePickAmenity = () => { setTurnAction("pickAmenity"); if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); } };
   // Direct amenity placement when player picks a die. Build 1: defaults to field 0.
   // Build 2 will accept a fieldIdx parameter and the UI will prompt for selection.
   // Check microtrends — amenity-kind microtrends are claimed by the first player to place
@@ -7350,6 +7540,46 @@ export default function Headliners() {
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       return;
     }
+    // v197.13: Bouncer Rights (sec_1) — the security leader can substitute which amenity
+    // they receive when picking an amenity die. We show a modal listing all 4 amenity
+    // types; whichever the player picks becomes the placement. AI auto-picks the type
+    // they currently have LEAST of (basic economic heuristic). Skip modal if player is AI.
+    if (hasInfraReward(currentPlayerId, "sec_1")) {
+      const isAI = currentPlayer?.isAI;
+      if (isAI) {
+        // Auto-pick amenity type with lowest current count
+        const am = playerData[currentPlayerId]?.amenities || {};
+        const types = ["campsite", "portaloo", "security", "catering"];
+        types.sort((a, b) => (am[a] || 0) - (am[b] || 0));
+        const chosenType = types[0];
+        const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
+        addLog(currentPlayer.festivalName, `Bouncer Rights: chose ${AMENITY_LABELS[chosenType]} (substituting from ${AMENITY_LABELS[dv]})`);
+        // v197.12: Traffic Flow (port_2) — draw 1 artist on amenity pick.
+        if (hasInfraReward(currentPlayerId, "port_2")) {
+          const drawn = drawFromDeck(1);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), ...drawn] } }));
+            addLog("🏗️ Reward", `${currentPlayer.festivalName}: drew ${drawn[0].name} from Traffic Flow`);
+          }
+        }
+        placeAmenityCounter(chosenType, 0);
+        setSelectedDie(null);
+        setPickingFieldFor(null);
+        return;
+      }
+      // Human: open modal to pick amenity type
+      setSec1Choice({ pid: currentPlayerId, dieIdx: idx, origType: dv });
+      return;
+    }
+    // v197.12: Traffic Flow (port_2) — the portaloo leader draws 1 artist when picking
+    // an amenity die (campsite/portaloo/security/catering — not fame/stage).
+    if (hasInfraReward(currentPlayerId, "port_2")) {
+      const drawn = drawFromDeck(1);
+      if (drawn.length > 0) {
+        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), ...drawn] } }));
+        addLog("🏗️ Reward", `${currentPlayer.festivalName}: drew ${drawn[0].name} from Traffic Flow (Most Portaloos)`);
+      }
+    }
     // v189: single field per player — auto-place, no field picker step
     const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
     placeAmenityCounter(dv, 0);
@@ -7373,8 +7603,10 @@ export default function Headliners() {
     setPickingFieldFor(null);
   };
   const handleRerollDice = () => {
-    setDice(rollDice());
+    const fresh = rollDice();
+    setDice(fresh);
     addLog("Dice", "Rerolled all amenity dice");
+    grantCat1IfEligible(currentPlayerId, fresh);
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
   const handleArtistAction = () => { takeUndoSnapshot(); setTurnAction("artist"); setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null); };
@@ -7620,7 +7852,7 @@ export default function Headliners() {
       return;
     }
     // Detect which path is being used (for logging only; booking treats them identically)
-    const usedGenrePath = !canAffordArtist(artist, currentPD) && canBookHeadlinerViaGenre(artist, currentPD, stageIdx);
+    const usedGenrePath = !canAffordArtist(artist, currentPD, sec3Reduction(currentPlayerId)) && canBookHeadlinerViaGenre(artist, currentPD, stageIdx);
     // Dupe-guard: before consuming the source (hand/pool/discard), check that no player —
     // including the current one — already has this artist on a stage. If we discover the dupe
     // only inside bookArtistToStage's setPlayerData updater, the splice has already happened
@@ -8117,6 +8349,17 @@ export default function Headliners() {
         }
       }));
       allEffects[p.id] = effects;
+      // v197.12: "Sold Out" (camp_2) — the campsite leader gets a flat +12 tickets at
+      // year-end, regardless of any artist effects. Injected as a synthetic effect on
+      // a stand-in "Reward" pseudo-artist so it flows through the normal display machinery.
+      if (hasInfraReward(p.id, "camp_2")) {
+        effects.push({
+          artist: { name: "🏗️ Sold Out (Most Campsites)", fame: 0, tickets: 0, effect: "" },
+          type: "autoVPTix",
+          desc: "Year End: +12 tickets from Sold Out reward",
+          autoVP: 0, autoTix: 12,
+        });
+      }
       if (effects.length > 0) anyEffects = true;
     });
 
@@ -9459,6 +9702,13 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenFameBonus ? "On — opening a stage grants +1 Fame at the start of the next year." : "Off — opening a stage is free of Fame reward. Fame is scarcer overall."}</div>
             </div>
           </label>
+          <label onClick={() => setInfraRewardsMode(!infraRewardsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: infraRewardsMode ? "2px solid #22c55e" : "1px solid #4c1d95", background: infraRewardsMode ? "rgba(34,197,94,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${infraRewardsMode ? "#22c55e" : "#4c1d95"}`, background: infraRewardsMode ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{infraRewardsMode ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: infraRewardsMode ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🏗️ Infrastructure Rewards (Most Campsites / Portaloos / Catering / Security)</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{infraRewardsMode ? "On — each amenity type has a game-specific benefit for whoever leads strictly. 4 rewards drawn from a pool of 12 at game start; ties = no benefit." : "Off — amenities don't grant special leader bonuses."}</div>
+            </div>
+          </label>
         </div>
       </div>
       <div style={{ ...card, marginTop: 16, padding: 16 }}>
@@ -9701,6 +9951,71 @@ export default function Headliners() {
           <p style={{ color: "#6b7280", fontSize: 12, marginTop: 12 }}>Click anywhere to continue</p>
         </div>
       </div>}
+      {/* v197.13: Bouncer Rights (sec_1) — human picks any amenity type. */}
+      {sec1Choice && (() => {
+        const picker = players.find(p => p.id === sec1Choice.pid);
+        const finalize = (chosen) => {
+          const nd = [...dice]; nd.splice(sec1Choice.dieIdx, 1); setDice(nd);
+          addLog(picker?.festivalName || "?", `Bouncer Rights: chose ${AMENITY_LABELS[chosen]} (substituting from ${AMENITY_LABELS[sec1Choice.origType]})`);
+          // Traffic Flow (port_2) — draw 1 if also holding port_2.
+          if (hasInfraReward(sec1Choice.pid, "port_2")) {
+            const drawn = drawFromDeck(1);
+            if (drawn.length > 0) {
+              setPlayerData(p => ({ ...p, [sec1Choice.pid]: { ...p[sec1Choice.pid], hand: [...(p[sec1Choice.pid].hand || []), ...drawn] } }));
+              addLog("🏗️ Reward", `${picker?.festivalName || "?"}: drew ${drawn[0].name} from Traffic Flow`);
+            }
+          }
+          placeAmenityCounter(chosen, 0);
+          setSelectedDie(null);
+          setPickingFieldFor(null);
+          setSec1Choice(null);
+        };
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 500, width: "100%" }}>
+            <h3 style={{ color: "#fb923c", marginBottom: 8 }}>🛡️ Bouncer Rights</h3>
+            <p style={{ color: "#c4b5fd", fontSize: 12, marginBottom: 4 }}>You rolled {AMENITY_EMOJI[sec1Choice.origType]} {AMENITY_LABELS[sec1Choice.origType]}, but Most Security lets you choose which amenity you receive.</p>
+            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 14 }}>Pick any amenity type:</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {["campsite", "portaloo", "catering", "security"].map(t => (
+                <button key={t} onClick={() => finalize(t)} style={{
+                  ...bp, padding: "12px 18px", fontSize: 13,
+                  background: t === sec1Choice.origType ? "rgba(74,222,128,0.2)" : undefined,
+                  border: t === sec1Choice.origType ? "2px solid #4ade80" : undefined,
+                }}>
+                  {AMENITY_EMOJI[t]} {AMENITY_LABELS[t]}
+                  {t === sec1Choice.origType && <div style={{ fontSize: 9, marginTop: 2, opacity: 0.8 }}>(rolled)</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>;
+      })()}
+      {/* v197.13: Scouted Talent (sec_2) — draw 3, keep 1. */}
+      {sec2Draw && (() => {
+        const picker = players.find(p => p.id === sec2Draw.pid);
+        const pickOne = (idx) => {
+          const kept = sec2Draw.cards[idx];
+          const discarded = sec2Draw.cards.filter((_, i) => i !== idx);
+          setPlayerData(p => ({ ...p, [sec2Draw.pid]: { ...p[sec2Draw.pid], hand: [...(p[sec2Draw.pid].hand || []), kept] } }));
+          setDiscardPile(prev => [...prev, ...discarded]);
+          addLog("🏗️ Reward", `${picker?.festivalName || "?"}: kept ${kept.name} from Scouted Talent (discarded ${discarded.map(a => a.name).join(", ")})`);
+          setSec2Draw(null);
+        };
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 700, width: "100%" }}>
+            <h3 style={{ color: "#fb923c", marginBottom: 8 }}>🛡️ Scouted Talent</h3>
+            <p style={{ color: "#c4b5fd", fontSize: 12, marginBottom: 14 }}>You drew 3 artists at the start of your turn — pick one to keep. The other two go to the discard pile.</p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              {sec2Draw.cards.map((a, i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <ArtistCard artist={a} showCost onClick={() => pickOne(i)} />
+                  <div style={{ fontSize: 10, color: "#fb923c", fontWeight: 700 }}>Click to keep</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>;
+      })()}
       {/* Booked artist popup (non-headliner) */}
       {showBookedArtist && !showHeadliner && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 945, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowBookedArtist(null)}>
         <div style={{ textAlign: "center", animation: "bookReveal 0.4s" }}>
@@ -10482,8 +10797,8 @@ export default function Headliners() {
             </div>;
           }
           // Phase 1: artist selection. Eligible = genre match + affordable + not already booked.
-          const handEligible = (pd.hand || []).map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name));
-          const poolEligible = artistPool.map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid));
+          const handEligible = (pd.hand || []).map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd, sec3Reduction(pid)) && !bookedNames.has(a.name));
+          const poolEligible = artistPool.map((a, i) => ({ a, i })).filter(({ a }) => genreOk(a) && canAffordArtist(a, pd, sec3Reduction(pid)) && !bookedNames.has(a.name) && !isAgentClaimedByOther(a.name, pid));
           const noneEligible = handEligible.length === 0 && poolEligible.length === 0;
           return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%" }}>
@@ -10751,21 +11066,24 @@ export default function Headliners() {
           <button onClick={() => {
             setShowTurnStart(false);
             setTurnNumber(prev => prev + 1);
+            // v197.13: Scouted Talent (sec_2) — draw 3 artists at turn start, keep 1.
+            // Fires once per turn per player. Modal for humans; AI auto-picks in aiStep.
+            if (hasInfraReward(currentPlayerId, "sec_2")) {
+              const usageKey = `sec_2:${currentPlayerId}:${turnNumber + 1}`;
+              if (!infraRewardUsageRef.current[usageKey]) {
+                infraRewardUsageRef.current[usageKey] = true;
+                const drawn = drawFromDeck(3);
+                if (drawn.length > 0) {
+                  setSec2Draw({ pid: currentPlayerId, cards: drawn });
+                  addLog("🏗️ Reward", `${currentPlayer.festivalName}: Scouted Talent — drew ${drawn.length} artists, keep 1`);
+                }
+              }
+            }
             // v185: if a queued contest placement from an earlier turn already opened
             // a pendingAgentArtist for this player, DO NOT call resolvePoolAgents here.
-            // That call would overwrite the queued artist with a fresh tempt result,
-            // and the winner would silently lose their contest prize. The queued modal
-            // will show next — player resolves it — checkNextTempt fires afterward to
-            // chain-resolve any remaining tempts. This was the cause of the "won a
-            // contest but the artist disappears" bug.
             if (pendingAgentArtist) return;
-            // Check if this player has an agent on a pool artist to resolve
             const resolution = resolvePoolAgents(currentPlayerId);
             if (resolution && resolution.type === "uncontested") {
-              // v180: fire uncontested tempt bonus (+2 Fame) at this entry point too.
-              // This path was missed in v179 — it's the human turn-start "Let's Go!"
-              // path, which resolves pool agents but wasn't calling the helper. Now
-              // all three uncontested resolution entry points fire it.
               grantUncontestedTemptBonus(resolution.pid);
               setPendingAgentArtist({ pid: resolution.pid, artist: resolution.artist });
             } else if (resolution && resolution.type === "contested") {
@@ -11060,6 +11378,26 @@ export default function Headliners() {
                   {renderTrack("🏛️ Council Incentives", activeAmenity, nextAmenityMicrotrend)}
                 </>;
               })()}
+              {/* v197.12: Infrastructure Rewards panel — shows current reward + leader per amenity. */}
+              {infraRewardsMode && infraRewards && <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.25)" }}>
+                <div style={{ color: "#fb923c", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🏗️ Infrastructure Rewards</div>
+                {["campsite", "portaloo", "catering", "security"].map(amenity => {
+                  const rewardId = infraRewards[amenity];
+                  const r = INFRA_REWARDS[rewardId];
+                  if (!r) return null;
+                  const leaderPid = getInfraLeader(amenity);
+                  const leader = leaderPid ? players.find(p => p.id === leaderPid) : null;
+                  return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                      <span style={{ fontSize: 10, color: "#fb923c", fontWeight: 700 }}>{AMENITY_EMOJI[amenity]} Most {AMENITY_LABELS[amenity]}s — {r.label}</span>
+                      <span style={{ fontSize: 10, color: leader ? "#86efac" : "#94a3b8", fontWeight: 700 }}>
+                        {leader ? leader.festivalName : "— tied / none —"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.3 }}>{r.desc}</div>
+                  </div>;
+                })}
+              </div>}
             </div>}
             {sidebarTab === "goals" && <div style={{ marginTop: 6 }}>
               {lineupObjectives.map((lo, oi) => lo && <div key={oi} style={{ padding: 8, borderRadius: 8, background: lo.claimed1st !== null ? "rgba(34,197,94,0.08)" : "rgba(251,191,36,0.08)", border: `1px solid ${lo.claimed1st !== null ? "rgba(34,197,94,0.3)" : "rgba(251,191,36,0.3)"}`, marginBottom: 6 }}>
@@ -11303,7 +11641,7 @@ export default function Headliners() {
                   // Amenity path takes precedence — if affordable, it's a "normal" bookable
                   // stage, not a genre-match stage. This keeps the UI's colour intent clear:
                   // gold means "you're getting a discount here."
-                  if (canAffordArtist(selectedArtist.artist, currentPD)) return;
+                  if (canAffordArtist(selectedArtist.artist, currentPD, sec3Reduction(currentPlayerId))) return;
                   if (canBookHeadlinerViaGenre(selectedArtist.artist, currentPD, si)) set.add(si);
                 });
                 return set;
@@ -11321,7 +11659,30 @@ export default function Headliners() {
 
           {/* Available Artist Pool */}
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#c4b5fd", marginBottom: 6 }}>Available Artists ({artistPool.length})</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#c4b5fd" }}>Available Artists ({artistPool.length})</div>
+              {/* v197.13: Quick Turnaround (port_1) — free pool refresh once per turn */}
+              {(() => {
+                if (!hasInfraReward(currentPlayerId, "port_1")) return null;
+                const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
+                const used = infraRewardUsageRef.current[usageKey];
+                return <button onClick={() => {
+                  if (used) return;
+                  infraRewardUsageRef.current[usageKey] = true;
+                  refreshPool();
+                  addLog("🏗️ Reward", `${currentPlayer.festivalName}: refreshed pool via Quick Turnaround (Most Portaloos)`);
+                }} disabled={used} style={{
+                  ...bs, fontSize: 11, padding: "6px 12px",
+                  opacity: used ? 0.4 : 1,
+                  cursor: used ? "not-allowed" : "pointer",
+                  background: used ? "#2a2a4a" : "rgba(251,146,60,0.2)",
+                  border: used ? "1px solid #334155" : "1px solid rgba(251,146,60,0.5)",
+                  color: used ? "#94a3b8" : "#fb923c",
+                }} title={used ? "Already used this turn" : "Refresh the artist pool for free (once per turn)"}>
+                  🔄 {used ? "Used" : "Refresh Pool"}
+                </button>;
+              })()}
+            </div>
             <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
               {artistPool.map((a, i) => {
                 const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
@@ -11423,7 +11784,7 @@ export default function Headliners() {
               <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{temptMode ? "Spend 2 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage (+2 🔥 Fame refunded, net 0). If contested → dice roll decides, 1 🔥 Fame refunded to contestants." : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties)."}</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {artistPool.map((a, i) => {
-                  const canAfford = canAffordArtist(a, currentPD);
+                  const canAfford = canAffordArtist(a, currentPD, sec3Reduction(currentPlayerId));
                   const canTempt = temptMode ? ((currentPD.fame || 0) >= 2) : true;
                   const clickable = temptMode ? canTempt : canAfford;
                   const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
