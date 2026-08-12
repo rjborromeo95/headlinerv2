@@ -1835,9 +1835,55 @@ export default function Headliners() {
           if (!players.find(p => p.id === newLeader)?.isAI) {
             showFloatingBonus(`🏗️ ${r.label} — you're in the lead!`, "#fb923c");
           }
-        } else if (oldLeader != null) {
+          // v197.15: symmetric ticket adjustment for the NEW leader gaining a passive
+          // ticket reward (camp_1: +1/campsite, cat_2: +2/catering). Their ticket total
+          // WILL update via computeTicketsForPlayer, but they'd otherwise have no idea
+          // WHY the number jumped. Log + floating popup make the causality visible.
+          const newLeaderPd = playerData[newLeader] || {};
+          const newAms = newLeaderPd.amenities || {};
+          if (rewardId === "camp_1") {
+            const delta = (newAms.campsite || 0);
+            if (delta > 0) {
+              logTicketGain(newLeader, delta, `Gained ${r.label} (+1/campsite × ${delta})`);
+              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
+              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
+            }
+          } else if (rewardId === "cat_2") {
+            const delta = (newAms.catering || 0) * 2;
+            if (delta > 0) {
+              logTicketGain(newLeader, delta, `Gained ${r.label} (+2/catering × ${(newAms.catering || 0)})`);
+              addLog("🏗️ Infra", `${pName}: +${delta} 🎟️ from gaining ${r.label}`);
+              if (!players.find(p => p.id === newLeader)?.isAI) showFloatingBonus(`+${delta} 🎟️ from ${r.label}`, "#4ade80");
+            }
+          }
+        }
+        if (oldLeader != null) {
           const oldName = players.find(p => p.id === oldLeader)?.festivalName || "?";
-          addLog("🏗️ Infra", `${oldName} lost "${r.label}" (Most ${AMENITY_LABELS[amenity]}s) — tied or dropped below 2`);
+          if (newLeader == null) {
+            addLog("🏗️ Infra", `${oldName} lost "${r.label}" (Most ${AMENITY_LABELS[amenity]}s) — tied or dropped below 2`);
+          } else {
+            const newName = players.find(p => p.id === newLeader)?.festivalName || "?";
+            addLog("🏗️ Infra", `${oldName} lost "${r.label}" — ${newName} took the lead`);
+          }
+          // v197.15: symmetric ticket adjustment for the OLD leader losing a passive
+          // ticket reward. Show them the loss so the shrinking total isn't a mystery.
+          const oldPd = playerData[oldLeader] || {};
+          const oldAms = oldPd.amenities || {};
+          if (rewardId === "camp_1") {
+            const delta = (oldAms.campsite || 0);
+            if (delta > 0) {
+              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +1/campsite × ${delta})`);
+              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
+              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
+            }
+          } else if (rewardId === "cat_2") {
+            const delta = (oldAms.catering || 0) * 2;
+            if (delta > 0) {
+              logTicketGain(oldLeader, -delta, `Lost ${r.label} (was +2/catering × ${(oldAms.catering || 0)})`);
+              addLog("🏗️ Infra", `${oldName}: −${delta} 🎟️ from losing ${r.label}`);
+              if (!players.find(p => p.id === oldLeader)?.isAI) showFloatingBonus(`−${delta} 🎟️ from losing ${r.label}`, "#ef4444");
+            }
+          }
         }
       }
     });
@@ -8393,9 +8439,17 @@ export default function Headliners() {
       // v197.12: "Sold Out" (camp_2) — the campsite leader gets a flat +12 tickets at
       // year-end, regardless of any artist effects. Injected as a synthetic effect on
       // a stand-in "Reward" pseudo-artist so it flows through the normal display machinery.
+      // v197.15: include all fields ArtistCard reads — missing `genre` was crashing
+      // getGenres(undefined) at the year-end effects display.
       if (hasInfraReward(p.id, "camp_2")) {
         effects.push({
-          artist: { name: "🏗️ Sold Out (Most Campsites)", fame: 0, tickets: 0, effect: "" },
+          artist: {
+            name: "🏗️ Sold Out (Most Campsites)",
+            fame: 0, tickets: 12, vp: 0,
+            genre: "Reward",
+            campCost: 0, securityCost: 0, cateringCost: 0, portalooCost: 0,
+            effect: "Infrastructure Reward — see game log for details",
+          },
           type: "autoVPTix",
           desc: "Year End: +12 tickets from Sold Out reward",
           autoVP: 0, autoTix: 12,
