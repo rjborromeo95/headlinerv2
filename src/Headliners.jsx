@@ -2088,7 +2088,13 @@ export default function Headliners() {
     if (amount > 0 && !source?.startsWith("Reward:")) {
       setTimeout(() => {
         if (!hasInfraReward(pid, "cat_3")) return;
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount } }));
+        // v197.20: recompute tickets inline after adding bonusTickets. Without this,
+        // bonusTickets increased but pd.tickets stayed stale until the next unrelated
+        // recalc fired — so the visual ticket total didn't reflect the reward gain.
+        setPlayerData(p => {
+          const updated = { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount };
+          return { ...p, [pid]: computeTicketsForPlayer(updated, undefined, pid) };
+        });
         const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
         addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering) — ${source}`);
       }, 0);
@@ -2866,7 +2872,18 @@ export default function Headliners() {
     // Priority: explicit override (from useEffect closure playerData) → ref (freshest we
     // usually have during event handlers) → render-scoped state (fallback).
     const src = dataOverride || playerDataRef.current || playerData || {};
-    const counts = players.map(p => ({ pid: p.id, count: src[p.id]?.amenities?.[amenity] || 0 }));
+    // v197.20: read amenity counts directly from `fields` instead of the `amenities`
+    // cache. The `amenities` object is derived from `fields` via sumFields(), and can
+    // drift out of sync if any setPlayerData path updates the pd without re-running
+    // computeTicketsForPlayer. Symptom: in Y2/Y3 the panel showed "unclaimed" even
+    // though amenities visibly persisted. Reading straight from fields is the ground
+    // truth: fields survive year transitions unchanged (see startNextYear reset —
+    // stageArtists/bonusTickets/baseFame are cleared but `.fields` is left alone).
+    const counts = players.map(p => {
+      const fields = src[p.id]?.fields || [];
+      const count = fields.reduce((sum, f) => sum + (f?.[amenity] || 0), 0);
+      return { pid: p.id, count };
+    });
     if (counts.length === 0) return null;
     counts.sort((a, b) => b.count - a.count);
     if (counts[0].count < 2) return null;
@@ -2934,11 +2951,13 @@ export default function Headliners() {
   // this hook above `playerData`'s declaration causes a TDZ ReferenceError on mount.
   useEffect(() => {
     if (!infraRewardsMode || !infraRewards) return;
+    let needRecalc = false;
     ["campsite", "portaloo", "catering", "security"].forEach(amenity => {
       const newLeader = getInfraLeader(amenity, playerData);
       const oldLeader = infraLeaderRef.current[amenity];
       if (newLeader !== oldLeader) {
         infraLeaderRef.current[amenity] = newLeader;
+        needRecalc = true;
         const rewardId = infraRewards[amenity];
         const r = INFRA_REWARDS[rewardId];
         if (!r) return;
@@ -2999,6 +3018,17 @@ export default function Headliners() {
         }
       }
     });
+    // v197.20: force a ticket recompute for all players when ANY leader changes.
+    // camp_1 (+1/campsite) and cat_2 (+2/catering) are applied inside
+    // computeTicketsForPlayer via hasInfraReward. When leaders change, the previous
+    // recalc used STALE leader info (because the amenity placement's recalc ran BEFORE
+    // this useEffect updated infraLeaderRef). Without a follow-up recompute, camp_1 keeps
+    // applying to the OLD leader and never applies to the NEW leader — so the visible
+    // ticket totals don't reflect the reward change. Deferred to setTimeout(0) so React
+    // finishes this render pass first.
+    if (needRecalc) {
+      setTimeout(() => recalcTickets(), 0);
+    }
   }, [playerData, infraRewardsMode, infraRewards]);
   const currentPD = playerData[currentPlayerId] || {};
   const noTurnsLeft = currentPlayerId !== undefined && (turnsLeft[currentPlayerId] || 0) <= 0;
@@ -6082,8 +6112,14 @@ export default function Headliners() {
     // v197.12: Infrastructure Reward "Loyal Following" (camp_3) — the campsite leader
     // gains +1 ticket each time they play an artist. Fires here at the end of booking
     // so it stacks on top of the artist's own base + effect tickets.
+    // v197.20: atomically update bonusTickets AND recompute tickets so the visual total
+    // reflects the reward gain immediately (was previously waiting for the next unrelated
+    // recalc to catch up).
     if (hasInfraReward(pid, "camp_3")) {
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 } }));
+      setPlayerData(p => {
+        const updated = { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 };
+        return { ...p, [pid]: computeTicketsForPlayer(updated, undefined, pid) };
+      });
       addLog("🏗️ Reward", `${festival}: +1 🎟️ from Loyal Following (Most Campsites)`);
     }
 
@@ -11572,8 +11608,13 @@ export default function Headliners() {
                 // state that triggered this render.
                 const leaderPid = getInfraLeader(amenity, playerData);
                 const leader = leaderPid ? players.find(p => p.id === leaderPid) : null;
-                // Same freshness applies to the count-line display below.
-                const counts = players.map(p => ({ name: p.festivalName, count: playerData[p.id]?.amenities?.[amenity] || 0 })).sort((a, b) => b.count - a.count);
+                // v197.20: same ground-truth read as getInfraLeader — count from fields
+                // directly rather than the potentially-stale amenities cache.
+                const counts = players.map(p => {
+                  const fields = playerData[p.id]?.fields || [];
+                  const count = fields.reduce((sum, f) => sum + (f?.[amenity] || 0), 0);
+                  return { name: p.festivalName, count };
+                }).sort((a, b) => b.count - a.count);
                 const countLine = counts.map(c => `${c.name}:${c.count}`).join(" · ");
                 return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
@@ -12213,19 +12254,31 @@ export default function Headliners() {
                 if (!isTempt) return;
                 setTemptPlacements(prev => ({ ...prev, [pa.pid]: (prev[pa.pid] || []).filter(p => !(p.type === "pool" && p.artistName === pa.artist.name)) }));
               };
+              // v197.20: unify hand-placement into a single callback. Always offered as
+              // an option — even when a stage is a genre match, the player might prefer
+              // to hold the artist for later (fame timing, better stage arrangement).
+              // Previously "Add to Hand" only appeared when no stage was playable, forcing
+              // an immediate stage decision the moment the tempt resolved.
+              const goToHand = () => {
+                setPlayerData(p => ({ ...p, [pa.pid]: { ...p[pa.pid], hand: [...p[pa.pid].hand, pa.artist] } }));
+                const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
+                if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
+                if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
+                addLog(isTempt ? "💫 Tempt" : "🕵️ Agent", `Added ${pa.artist.name} to hand`);
+                setPendingAgentArtist(null);
+                if (isTempt) checkNextTempt(pa.pid);
+              };
               return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 950, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <div style={{ ...card, textAlign: "center", maxWidth: 400 }}>
                   <h3 style={{ color: isTempt ? "#fbbf24" : "#60a5fa", marginBottom: 12 }}>{isTempt ? "💫" : "🕵️"} {isTempt ? "Tempted" : "Agent Secured"} {pa.artist.name}!</h3>
                   <ArtistCard artist={pa.artist} showCost />
-                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>{playable ? "Uncontested! Pick a genre-match stage:" : `No stage is a genre match — ${pa.artist.name} will go to your hand.`}</p>
-                  {playable && <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                  <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 12 }}>
+                    {playable ? "Book onto a genre-match stage, or add to your hand:" : `No stage is a genre match — ${pa.artist.name} can go to your hand.`}
+                  </p>
+                  {playable && <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 10 }}>
                     {openStages.map(si => <button key={si} onClick={() => {
                       const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
                       if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-                      // v194: all tempt-to-stage placements are genre-match by definition.
-                      // Fire genreMatchEffect via viaGenre=true when the artist has one AND
-                      // the placement fits headliner-eligibility (2 existing artists sharing
-                      // ≥1 genre with the incoming). canBookHeadlinerViaGenre handles that.
                       const viaGenreMatch = canBookHeadlinerViaGenre(pa.artist, pd || {}, si);
                       bookArtistToStage(pa.artist, si, pa.pid, true, viaGenreMatch);
                       if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
@@ -12235,14 +12288,7 @@ export default function Headliners() {
                       if (isTempt) checkNextTempt(pa.pid);
                     }} style={bp}>{(pd.stageNames || [])[si] || `Stage ${si + 1}`}</button>)}
                   </div>}
-                  {!playable && <button onClick={() => {
-                    setPlayerData(p => ({ ...p, [pa.pid]: { ...p[pa.pid], hand: [...p[pa.pid].hand, pa.artist] } }));
-                    const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === pa.artist.name);
-                    if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
-                    if (isTempt) { popTemptPlacement(); } else { exhaustAgent(pa.pid); }
-                    setPendingAgentArtist(null);
-                    if (isTempt) checkNextTempt(pa.pid);
-                  }} style={{ ...bs, marginTop: 8 }}>Add to Hand</button>}
+                  <button onClick={goToHand} style={{ ...bs, marginTop: playable ? 4 : 8 }}>Add to Hand</button>
                 </div>
               </div>;
             })()}
