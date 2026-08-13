@@ -5292,8 +5292,42 @@ export default function Headliners() {
             continue;
           }
           // De La Soul: "may remove 1 amenity of your choice" → +3 Fame
+          // v197.22: also handles The Pharcyde: "may remove 1 amenity of your choice
+          // from your festival. Gain 1 amenity of your choice." — a two-step compound
+          // where the benefit isn't fame/tickets but a follow-up amenity-choice modal.
+          // Detected by the presence of "gain 1 amenity" or "+1 amenity of your choice"
+          // in the effect text. When detected, we chain the removeAmenities → placeAmenity
+          // via the `followUp` field. Bug this fixes: the "+1 amenity"/"gain 1 amenity"
+          // handler at line ~5947 sits OUTSIDE the times loop, so the `continue` here
+          // only exits the loop — the outer handler still fires and OVERWRITES this
+          // pendingEffect with a bare placeAmenity, dropping the remove step entirely.
+          // Symptom: player got the "add amenity" modal but was never asked to remove one.
           if (el.includes("may remove 1 amenity of your choice")) {
             const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+            const isPharcyde = el.includes("gain 1 amenity of your choice") || el.includes("+1 amenity of your choice");
+            if (isPharcyde) {
+              if (total > 0) {
+                setPendingEffect({
+                  type: "removeAmenities",
+                  artistName: artist.name,
+                  filterType: null,
+                  removalsRemaining: 1,
+                  benefit: null, // no direct fame/ticket benefit — gain is the followUp
+                  followUp: { type: "placeAmenity", artistName: artist.name, placeCount: 1 },
+                });
+                setPendingEffectPid(pid);
+                addLog("Effect", `${artist.name}: choose 1 amenity to sacrifice, then choose 1 to gain (or decline the whole trade)`);
+              } else {
+                // No amenities to remove — skip the whole trade (the "may" makes it optional).
+                setPendingEffect({
+                  type: "effectAborted",
+                  artistName: artist.name,
+                  reason: "You have no amenities to sacrifice — the trade is skipped.",
+                });
+                setPendingEffectPid(pid);
+              }
+              continue;
+            }
             if (total > 0) {
               setPendingEffect({
                 type: "removeAmenities",
@@ -5897,10 +5931,16 @@ export default function Headliners() {
         }
       }
       // Generic "may remove 1 amenity of your choice" (De La Soul, Missy Elliott general) — pick highest
+      // v197.22: also handles The Pharcyde ("...remove 1 amenity...gain 1 amenity").
+      // Auto-remove the least-painful amenity (most abundant), then fire the placeAmenity
+      // pending effect so the AI proceeds to place a new amenity. The outer generic
+      // "+1 amenity"/"gain 1 amenity" handler explicitly skips when "may remove" is
+      // present (see comment there), so we need to fire it manually here for Pharcyde.
       if (el.includes("may remove 1 amenity of your choice")) {
         const pdSnap = playerDataRef.current?.[pid] || playerData[pid] || {};
         const am = pdSnap.amenities || {};
         const types = ["catering","security","portaloo","campsite"].filter(t => (am[t] || 0) > 0);
+        const isPharcyde = el.includes("gain 1 amenity of your choice") || el.includes("+1 amenity of your choice");
         if (types.length > 0) {
           // Pick the type with the most (most abundant → least painful to lose)
           types.sort((a, b) => (am[b] || 0) - (am[a] || 0));
@@ -5912,6 +5952,15 @@ export default function Headliners() {
             addLog("Effect", `${artist.name}: sacrificed 1 ${AMENITY_LABELS[chosen]}`);
             showFloatingBonus(`-1 ${AMENITY_ICONS[chosen]}`, "#dc2626");
           }
+          if (isPharcyde) {
+            setPendingEffect({ type: "placeAmenity", artistName: artist.name, placeCount: 1 });
+            setPendingEffectPid(pid);
+            addLog("Effect", `${artist.name}: gain 1 amenity of your choice (Pharcyde chain)`);
+          }
+        } else if (isPharcyde) {
+          // No amenities to sacrifice — trade skipped (the "may" makes it optional and
+          // the gain step is conditional on the sacrifice happening).
+          addLog("Effect", `${artist.name}: no amenity to sacrifice — trade skipped`);
         }
       }
 
@@ -5944,7 +5993,15 @@ export default function Headliners() {
       setPendingEffectPid(pid);
       addLog("Effect", `${artist.name}: +${times} Security — place on your board!`);
     }
-    if (el.includes("+1 amenity") || el.includes("gain 1 amenity")) {
+    // v197.22: SKIP when effect also has "may remove" — that's Pharcyde ("...remove 1
+    // amenity...Gain 1 amenity..."), which is fully handled elsewhere:
+    //   - Human: intercept at ~line 5295 sets removeAmenities with followUp: placeAmenity
+    //   - AI: handler at ~line 5900 auto-removes, then fires placeAmenity via the same
+    //     pharcyde-detect branch (added below).
+    // Without this skip, the outer setPendingEffect(placeAmenity) here OVERWRITES the
+    // intercept's removeAmenities modal for humans, so the player never sees the remove
+    // prompt — they just get the "add amenity" modal directly. Bug this fixes.
+    if ((el.includes("+1 amenity") || el.includes("gain 1 amenity")) && !el.includes("may remove")) {
       setPendingEffect({ type: "placeAmenity", artistName: artist.name, placeCount: times });
       setPendingEffectPid(pid);
       addLog("Effect", `${artist.name}: +${times} Amenity — choose and place!`);
@@ -6232,13 +6289,19 @@ export default function Headliners() {
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
-        // v197.12: "Word of Mouth" (port_3) — portaloo leader draws 1 artist on microtrend claim.
+        // v197.12/22: "Word of Mouth" (port_3) — portaloo leader draws 1 artist on
+        // microtrend claim. v197.22: converted from silent auto-draw-from-deck to the
+        // interactive pool-or-deck picker so the player can see the pool and choose the
+        // best artist for their situation. AI dispatcher already handles this pendingEffect
+        // type (auto-picks best from pool if any playable, else deck).
         if (hasInfraReward(pid, "port_3")) {
-          const drawn = drawFromDeck(1);
-          if (drawn.length > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
-            addLog("🏗️ Reward", `${festival}: drew ${drawn[0].name} from Word of Mouth (Most Portaloos)`);
-          }
+          setPendingEffect({
+            type: "drawFromPoolOrDeck",
+            artistName: "Word of Mouth (Most Portaloos)",
+            drawsRemaining: 1,
+          });
+          setPendingEffectPid(pid);
+          addLog("🏗️ Reward", `${festival}: draw 1 artist from pool or deck (Word of Mouth)`);
         }
         setTimeout(() => checkMidYearAchievements(pid), 80);
         // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
@@ -6272,13 +6335,16 @@ export default function Headliners() {
         setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
         bumpYearlyStat(pid, "microtrends");
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
-        // v197.12: "Word of Mouth" (port_3) also fires on forecast claims.
+        // v197.12/22: "Word of Mouth" (port_3) also fires on forecast claims.
+        // Interactive pool-or-deck picker (see comment at first site).
         if (hasInfraReward(pid, "port_3")) {
-          const drawn = drawFromDeck(1);
-          if (drawn.length > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...drawn] } }));
-            addLog("🏗️ Reward", `${festival}: drew ${drawn[0].name} from Word of Mouth (Most Portaloos)`);
-          }
+          setPendingEffect({
+            type: "drawFromPoolOrDeck",
+            artistName: "Word of Mouth (Most Portaloos)",
+            drawsRemaining: 1,
+          });
+          setPendingEffectPid(pid);
+          addLog("🏗️ Reward", `${festival}: draw 1 artist from pool or deck (Word of Mouth)`);
         }
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
         setTimeout(() => checkMidYearAchievements(pid), 80);
@@ -9201,15 +9267,24 @@ export default function Headliners() {
       }
     });
     
-    // PASS 1: Calculate tickets for all players
+    // PASS 1: Calculate tickets for all players.
+    // v197.22: previously duplicated the ticket formula inline here (campsites × 2 + stage
+    // artists + bonusTickets), which meant infrastructure rewards camp_1 (+1/campsite) and
+    // cat_2 (+2/catering) were computed everywhere ELSE but silently dropped by year-end
+    // scoring. Symptom: player's mid-year total showed 6 (with Big Base included), but the
+    // year-end leaderboard's raw number showed 4 (Big Base stripped). Now the pass calls
+    // computeTicketsForPlayer, which is the single source of truth for ticket math and
+    // knows about all infra rewards.
+    // Sync playerDataRef to snap FIRST so hasInfraReward's leader check sees the year-end
+    // snapshot state, not the pre-scoring state that lives in playerDataRef.current.
+    playerDataRef.current = snap;
     const playerTickets = {};
     for (const p of players) {
       const pd = snap[p.id];
       if (!pd) continue;
-      let t = ((pd.amenities?.campsite) || 0) * 2;
-      (pd.stageArtists || []).forEach(sa => sa.forEach(a => { t += (a.tickets || 0) + (a.vp || 0); }));
-      t += pd.bonusTickets || 0;
-      playerTickets[p.id] = t;
+      const computed = computeTicketsForPlayer(pd, undefined, p.id);
+      snap[p.id] = computed;
+      playerTickets[p.id] = computed.tickets;
     }
     
     // Find player(s) with most tickets (used for positional star-dice bonuses, which still fire)
