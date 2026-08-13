@@ -2093,7 +2093,10 @@ export default function Headliners() {
         // recalc fired — so the visual ticket total didn't reflect the reward gain.
         setPlayerData(p => {
           const updated = { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + amount };
-          return { ...p, [pid]: computeTicketsForPlayer(updated, undefined, pid) };
+          const next = { ...p, [pid]: updated };
+          playerDataRef.current = next;
+          next[pid] = computeTicketsForPlayer(next[pid], undefined, pid);
+          return next;
         });
         const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
         addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering) — ${source}`);
@@ -3208,6 +3211,10 @@ export default function Headliners() {
   const recalcTickets = useCallback(() => {
     setPlayerData(prev => {
       const next = { ...prev };
+      // v197.21: same ref pre-sync as recalcAfterUpdate — see comment there. Without it,
+      // hasInfraReward inside computeTicketsForPlayer reads stale leader state during the
+      // recompute pass.
+      playerDataRef.current = next;
       for (const pid of Object.keys(next)) {
         next[pid] = computeTicketsForPlayer(next[pid], undefined, pid);
       }
@@ -3428,6 +3435,17 @@ export default function Headliners() {
     setPlayerData(prev => {
       const next = { ...prev };
       next[pid] = updater(next[pid]);
+      // v197.21: sync playerDataRef BEFORE recomputing tickets. computeTicketsForPlayer
+      // calls hasInfraReward → getInfraLeader, which reads playerDataRef.current for
+      // leader detection. Without this pre-sync the ref still shows the pre-update state
+      // (React's ref-sync useEffect hasn't run yet — it fires after commit, but we're
+      // still inside the functional updater). Symptom: after placing a 2nd/3rd campsite
+      // that made you the strict leader, camp_1 (+1/campsite) failed to include the
+      // bonus in the same recalc pass — the ticket total didn't reflect Big Base until
+      // the NEXT unrelated recalc. This mutation is safe because we're rewriting the
+      // ref to the same value the useEffect would sync to anyway; we're just doing it
+      // one microtask earlier so the reward check inside the loop sees fresh amenities.
+      playerDataRef.current = next;
       // v197.14: pass pid to computeTicketsForPlayer so camp_1/cat_2 infrastructure rewards
       // are applied to each player's own ticket calc (their strict lead unlocks the bonus).
       for (const p of Object.keys(next)) {
@@ -6118,7 +6136,11 @@ export default function Headliners() {
     if (hasInfraReward(pid, "camp_3")) {
       setPlayerData(p => {
         const updated = { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 1 };
-        return { ...p, [pid]: computeTicketsForPlayer(updated, undefined, pid) };
+        const next = { ...p, [pid]: updated };
+        // v197.21: sync ref before computeTicketsForPlayer sees fresh state (see recalcAfterUpdate).
+        playerDataRef.current = next;
+        next[pid] = computeTicketsForPlayer(next[pid], undefined, pid);
+        return next;
       });
       addLog("🏗️ Reward", `${festival}: +1 🎟️ from Loyal Following (Most Campsites)`);
     }
@@ -11473,6 +11495,31 @@ export default function Headliners() {
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
+              {/* v197.21: infrastructure reward badges. Prominent, orange, tooltipped —
+                  shows exactly which rewards this player currently holds. Panel gives the
+                  full picture; this makes the answer to "is X getting anything?" visible
+                  at a glance next to their name without needing to look at the sidebar. */}
+              {infraRewardsMode && infraRewards && (() => {
+                const held = ["campsite", "portaloo", "catering", "security"]
+                  .map(a => ({ amenity: a, rewardId: infraRewards[a], isLeader: getInfraLeader(a, playerData) === p.id }))
+                  .filter(x => x.rewardId && x.isLeader)
+                  .map(x => ({ ...x, reward: INFRA_REWARDS[x.rewardId] }));
+                if (held.length === 0) return null;
+                return <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {held.map(h => (
+                    <span key={h.amenity} title={`${h.reward.label}: ${h.reward.desc}`} style={{
+                      display: "inline-flex", alignItems: "center", gap: 3,
+                      padding: "3px 8px", borderRadius: 6,
+                      background: "linear-gradient(135deg, rgba(251,146,60,0.25), rgba(251,191,36,0.18))",
+                      border: "1px solid rgba(251,146,60,0.6)",
+                      fontSize: 10, fontWeight: 700, color: "#fed7aa",
+                      boxShadow: "0 0 6px rgba(251,146,60,0.35)",
+                    }}>
+                      🏗️ {AMENITY_EMOJI[h.amenity]} {h.reward.label}
+                    </span>
+                  ))}
+                </div>;
+              })()}
               <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>🎤 {(pd.stageArtists || []).flat().length} artists • 🃏 {(pd.hand || []).length} in hand</div>
               {/* v132: pending-tempt notification (real-time, so other players can consider contesting) */}
               {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 6, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 10, color: "#fbbf24", fontWeight: 600 }}>
@@ -11616,13 +11663,34 @@ export default function Headliners() {
                   return { name: p.festivalName, count };
                 }).sort((a, b) => b.count - a.count);
                 const countLine = counts.map(c => `${c.name}:${c.count}`).join(" · ");
-                return <div key={amenity} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: leaderPid ? "rgba(34,197,94,0.08)" : "rgba(30,41,59,0.5)", border: `1px solid ${leaderPid ? "rgba(34,197,94,0.3)" : "#334155"}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                return <div key={amenity} style={{
+                  padding: 8, borderRadius: 6, marginBottom: 6,
+                  background: leaderPid ? "linear-gradient(135deg, rgba(34,197,94,0.15), rgba(251,146,60,0.08))" : "rgba(30,41,59,0.5)",
+                  border: `1px solid ${leaderPid ? "rgba(34,197,94,0.5)" : "#334155"}`,
+                  boxShadow: leaderPid ? "0 0 8px rgba(34,197,94,0.2)" : "none",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
                     <span style={{ fontSize: 10, color: "#fb923c", fontWeight: 700 }}>{AMENITY_EMOJI[amenity]} Most {AMENITY_LABELS[amenity]}s — {r.label}</span>
-                    <span style={{ fontSize: 10, color: leader ? "#86efac" : "#94a3b8", fontWeight: 700 }}>
-                      {leader ? leader.festivalName : "— unclaimed —"}
-                    </span>
                   </div>
+                  {/* v197.21: prominent holder banner. Was a tiny name in the corner —
+                      now a full-width badge so "who's getting this" is impossible to miss. */}
+                  {leader ? (
+                    <div style={{
+                      padding: "4px 8px", borderRadius: 4, marginBottom: 4,
+                      background: "rgba(34,197,94,0.2)", border: "1px solid rgba(34,197,94,0.5)",
+                      fontSize: 11, fontWeight: 800, color: "#86efac", textAlign: "center",
+                    }}>
+                      ✨ ACTIVE — {leader.festivalName} ✨
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: "3px 8px", borderRadius: 4, marginBottom: 4,
+                      background: "rgba(100,116,139,0.15)",
+                      fontSize: 10, fontWeight: 600, color: "#94a3b8", textAlign: "center",
+                    }}>
+                      — unclaimed —
+                    </div>
+                  )}
                   <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.3 }}>{r.desc}</div>
                   <div style={{ fontSize: 9, color: "#64748b", marginTop: 3 }}>Requires 2+ owned & strict lead · {countLine}</div>
                 </div>;
