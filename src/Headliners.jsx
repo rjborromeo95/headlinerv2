@@ -9224,8 +9224,10 @@ export default function Headliners() {
     // include the +N/−3N adjustment. Previously routed through applyIdentityAtYearEnd
     // which used setPlayerData (async) — the update didn't land before beginRoundEnd's
     // snapshot below, so Curated tickets were off by a year. Now we compute the delta,
-    // record it in the identityLog + ticketsLog, AND apply it inline to the snap used
-    // for this year's total.
+    // record it in the identityLog + ticketsLog, and fold it via the recompute below.
+    // v197.23: no longer fires a standalone setPlayerData here — the fold happens inside
+    // the sync recompute a few lines down, so we avoid a double-application race where
+    // the standalone setPlayerData had committed by the time the recompute ran.
     const curatedDeltas = {};
     if (identitiesModeRef.current) {
       const y = yearRef.current || year || 1;
@@ -9240,15 +9242,39 @@ export default function Headliners() {
           ? `Identity: Curated (+1 per artist, ${played} played)`
           : `Identity: Curated (${played - 6} artists over cap)`;
         curatedDeltas[p.id] = { delta, source };
-        // Log for hover + panel
         setIdentityLog(prev => ({ ...prev, [p.id]: [...(prev[p.id] || []), { source, amount: delta, year: y, kind: "ticket" }] }));
         logTicketGain(p.id, delta, source);
-        // Update state so future years read the correct bonusTickets baseline
-        setPlayerData(prev => ({ ...prev, [p.id]: { ...prev[p.id], bonusTickets: Math.max(0, (prev[p.id]?.bonusTickets || 0) + delta) } }));
         const pName = players.find(pl => pl.id === p.id)?.festivalName || "?";
         addLog("🎭 Curated", `${pName} played ${played} artist${played === 1 ? "" : "s"} → ${delta > 0 ? "+" : ""}${delta} 🎟️ (${delta > 0 ? "under cap" : "over cap"})`);
       });
     }
+    // v197.23: force a synchronous recompute of tickets for all players BEFORE we take
+    // the snapshot below. This guarantees pd.tickets and pd.bonusTickets reflect every
+    // year-end setPlayerData that ran during resolveYearEndEffect (Coldplay YE +N,
+    // Kendrick per-security, Foo Fighters per-3-amenities, Sold Out camp_2 YE +12,
+    // etc.) plus Fatboy Slim's +6 headliner bonus applied at play time. Without this
+    // recompute, playerDataRef could still be pointing at pre-year-end state if the
+    // ref-sync useEffect hadn't fired yet (a specific race after the 100ms setTimeout
+    // from beginStarDicePhase). Reported symptom: Y3 player had 32 tickets from
+    // artists + Fatboy 6+6 in the breakdown, but the leaderboard showed 18.
+    // Sync the ref inside the updater to the SAME object returned so the read on the
+    // very next line sees fresh state without waiting for the useEffect.
+    setPlayerData(prev => {
+      const fresh = {};
+      for (const pid of Object.keys(prev)) {
+        const cur = prev[pid];
+        // Fold curated delta here (once, atomically) so we don't double-apply via a
+        // separate setPlayerData call above.
+        let bonusAdjusted = cur.bonusTickets || 0;
+        if (curatedDeltas[pid]) {
+          bonusAdjusted = Math.max(0, bonusAdjusted + curatedDeltas[pid].delta);
+        }
+        const adjusted = { ...cur, bonusTickets: bonusAdjusted };
+        fresh[pid] = computeTicketsForPlayer(adjusted, undefined, pid);
+      }
+      playerDataRef.current = fresh;
+      return fresh;
+    });
     // Collect all data BEFORE any setState
     const logs = [];
     const nat = { ...allTickets };
@@ -9258,15 +9284,9 @@ export default function Headliners() {
     // star-VP additions (and any other in-flight player state) are visible in the leaderboard.
     const latestPD = playerDataRef.current || playerData;
     const snap = JSON.parse(JSON.stringify(latestPD));
-    // v159: fold Curated deltas into the snap so the ticket calc below picks them up
-    // in the CURRENT year's total. Without this, the setPlayerData above hasn't flushed
-    // by the time we snapshot, so Curated tickets would land a year late.
-    Object.entries(curatedDeltas).forEach(([pid, { delta }]) => {
-      if (snap[pid]) {
-        snap[pid].bonusTickets = Math.max(0, (snap[pid].bonusTickets || 0) + delta);
-      }
-    });
-    
+    // v197.23: NO LONGER folding curatedDeltas here — already folded into snap via the
+    // recompute above. (Removing the double-fold that was here previously.)
+
     // PASS 1: Calculate tickets for all players.
     // v197.22: previously duplicated the ticket formula inline here (campsites × 2 + stage
     // artists + bonusTickets), which meant infrastructure rewards camp_1 (+1/campsite) and
