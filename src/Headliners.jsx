@@ -109,6 +109,32 @@ const QUICKYEAR_SEASON_EMOJI = { autumn: "🍂", winter: "❄️", spring: "🌱
 // Pool of 13 objectives — draw 8 at game start, pair randomly into the 4 seasons
 // (2 per season), no duplicates, no type-locking. Each objective has a metric key
 // read from `seasonStats[pid][season]` and a short label for the UI.
+// v199: The Hotline — Quick Play's signature gimmick. 10 named agents, each with a
+// one-time effect that triggers on tempt win (default) or tempt loss (where noted).
+// At the start of each season, every player spins the rotary dial once and is
+// assigned an agent. The agent IS the tempt vehicle for that season — no agent, no
+// tempt. One tempt per season, no base Fame cost. Agents expire silently at season
+// end if unused. Players may re-spin for 1 Fame.
+//
+// trigger: "win" (default) — effect fires only if the tempt succeeds
+//          "loss"           — effect fires only if the tempt fails
+//          "both"           — different outcomes for win and loss
+//          "always"         — effect fires regardless (applies before/during tempt)
+//
+// effect strings are documentation only; the actual effect logic is dispatched by
+// id in the tempt resolver (useAgentEffect).
+const HOTLINE_AGENTS = [
+  { id: "pete_persuasive",  name: "Pete Persuasive",  emoji: "🎩", trigger: "win",  effect: "Play the tempted artist without needing its Fame cost." },
+  { id: "hamish_handyman",  name: "Hamish Handyman",  emoji: "🔧", trigger: "win",  effect: "Gain 1 amenity of your choice, placed on any field." },
+  { id: "dave_dealmaker",   name: "Dave Dealmaker",   emoji: "🤝", trigger: "win",  effect: "Keep the tempted artist AND draw 5 artists from the deck. Keep 2." },
+  { id: "hattie_haggler",   name: "Hattie Haggler",   emoji: "💅", trigger: "win",  effect: "Play the tempted artist with 2 less amenities than required." },
+  { id: "wanda_whiney",     name: "Wanda Whiney",     emoji: "😤", trigger: "loss", effect: "If you fail to tempt, draw 2 artists from the deck." },
+  { id: "barry_belligerent",name: "Barry Belligerent",emoji: "🥊", trigger: "loss", effect: "If you fail to tempt, nobody wins the artist. All tempters (including you) draw 1 from the deck." },
+  { id: "nancy_negotiator", name: "Nancy Negotiator", emoji: "📞", trigger: "loss", effect: "If you fail to tempt, swap any artist from your hand for the tempted artist. You win the tempt." },
+  { id: "ciara_clout",      name: "Ciara Clout",      emoji: "✨", trigger: "both", effect: "+1 Fame if you fail the tempt. +2 Fame if you win it." },
+  { id: "mara_meddler",     name: "Mara Meddler",     emoji: "🧨", trigger: "always", effect: "You also tempt the artists to the immediate left and right of the one you targeted." },
+  { id: "sammi_stager",     name: "Sammi Stager",     emoji: "🎪", trigger: "win",  effect: "Automatically open a new stage (max 3 stages total)." },
+];
 const QUICKYEAR_OBJECTIVE_POOL = [
   { id: "most_campsites",    label: "Most Campsites built this season",       metric: "campsitesBuilt" },
   { id: "most_portaloos",    label: "Most Portaloos built this season",       metric: "portaloosBuilt" },
@@ -1830,6 +1856,236 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
 }
 
 // ═══════════════════════════════════════════════════════════
+// ROTARY DIAL — The Hotline's physical interface (v199)
+// ═══════════════════════════════════════════════════════════
+// A draggable old-school rotary phone dial. Players mousedown/touchstart on the dial
+// and drag LEFT (counterclockwise) to spin it. On release, momentum carries the dial,
+// decelerating until it snaps to the predetermined winning position. The agent is
+// chosen when the spin starts (resultIndex prop) — the physics is pure visualization.
+// Props:
+//   agents       — the 10-agent array (needs .name, .emoji per entry)
+//   resultIndex  — index into agents that the dial MUST land on (0..9)
+//   onComplete   — called with the agent object once the dial finishes settling
+//   playerName   — displayed in the dial center as "SPINNING FOR {name}"
+function RotaryDial({ agents, resultIndex, onComplete, playerName }) {
+  const SIZE = 320;
+  const CENTER = SIZE / 2;
+  const DIAL_R = 135; // outer dial radius
+  const HOLE_R = 22;  // finger-hole radius
+  const HOLE_ORBIT = 100; // distance from center to hole centers
+  const SNAP_THRESHOLD = 0.5; // degrees/frame below which we snap
+  const DECAY = 0.985; // per-frame velocity multiplier when spinning free
+
+  const [rotation, setRotation] = React.useState(0); // current dial angle in degrees
+  const [phase, setPhase] = React.useState("idle"); // idle | dragging | spinning | settled
+  const velocityRef = React.useRef(0); // deg/frame
+  const dragStartAngleRef = React.useRef(0);
+  const dragStartRotationRef = React.useRef(0);
+  const lastAngleRef = React.useRef(0);
+  const lastTimeRef = React.useRef(0);
+  const animRef = React.useRef(null);
+  const svgRef = React.useRef(null);
+  const phaseRef = React.useRef("idle");
+  React.useEffect(() => { phaseRef.current = phase; }, [phase]);
+  const rotationRef = React.useRef(0);
+  React.useEffect(() => { rotationRef.current = rotation; }, [rotation]);
+
+  // Convert client coords (mouse/touch) to angle from dial center in degrees.
+  const clientAngle = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return 0;
+    const rect = svg.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+  };
+
+  const onPointerDown = (e) => {
+    if (phase !== "idle") return;
+    e.preventDefault();
+    const p = e.touches ? e.touches[0] : e;
+    const ang = clientAngle(p.clientX, p.clientY);
+    dragStartAngleRef.current = ang;
+    dragStartRotationRef.current = rotationRef.current;
+    lastAngleRef.current = ang;
+    lastTimeRef.current = performance.now();
+    velocityRef.current = 0;
+    setPhase("dragging");
+  };
+
+  const onPointerMove = (e) => {
+    if (phaseRef.current !== "dragging") return;
+    e.preventDefault();
+    const p = e.touches ? e.touches[0] : e;
+    const ang = clientAngle(p.clientX, p.clientY);
+    // Unwrap angle delta so we don't jump when crossing +/-180
+    let delta = ang - dragStartAngleRef.current;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    const nextRot = dragStartRotationRef.current + delta;
+    // Instantaneous velocity from last frame.
+    const now = performance.now();
+    const dt = Math.max(1, now - lastTimeRef.current);
+    let frameDelta = ang - lastAngleRef.current;
+    if (frameDelta > 180) frameDelta -= 360;
+    if (frameDelta < -180) frameDelta += 360;
+    // deg/ms → deg/frame (assume 16ms frame)
+    velocityRef.current = (frameDelta / dt) * 16;
+    lastAngleRef.current = ang;
+    lastTimeRef.current = now;
+    setRotation(nextRot);
+  };
+
+  const onPointerUp = () => {
+    if (phaseRef.current !== "dragging") return;
+    // Require some meaningful drag momentum — otherwise the dial just stays put.
+    // We also require that the drag went counterclockwise (negative velocity in
+    // screen coords means the dial was dragged to the left/upward on the right side).
+    const v = velocityRef.current;
+    if (Math.abs(v) < 2) {
+      // Snap back and allow another attempt.
+      setPhase("idle");
+      velocityRef.current = 0;
+      return;
+    }
+    // Launch into spinning. Target: predetermined resultIndex position.
+    // Each hole sits at angle i * 36° around the dial (10 positions). We want
+    // the result-hole to arrive at the top (12 o'clock) when the dial settles.
+    // At rotation = 0, hole i is at angle (-90 + i*36)°. For hole i to be at the top
+    // (angle = -90°), rotation must be a multiple of 360 minus i*36.
+    // Add extra spin so there's a satisfying wind-down (3-8 full rotations based on v).
+    const extraRotations = 3 + Math.min(5, Math.abs(v) * 0.4);
+    const targetBase = -resultIndex * 36;
+    const currentRot = rotationRef.current;
+    // We want final rotation to be targetBase + k*360 for some k, in the direction of v.
+    const direction = v < 0 ? -1 : 1;
+    // compute the smallest final rotation >= currentRot + direction*extraRotations*360
+    // that lands on target.
+    let finalRot = currentRot + direction * extraRotations * 360;
+    const r = ((finalRot - targetBase) % 360 + 360) % 360;
+    if (direction < 0) finalRot = finalRot - r;
+    else finalRot = finalRot + ((360 - r) % 360);
+    setPhase("spinning");
+    // Animate from currentRot to finalRot with eased deceleration.
+    const startRot = currentRot;
+    const totalDelta = finalRot - startRot;
+    const duration = 1800 + Math.min(1200, Math.abs(v) * 100); // 1.8–3.0s
+    const startT = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const t = Math.min(1, (now - startT) / duration);
+      // easeOutCubic — fast start, slow finish, feels like a dial winding down.
+      const eased = 1 - Math.pow(1 - t, 3);
+      setRotation(startRot + totalDelta * eased);
+      if (t < 1) {
+        animRef.current = requestAnimationFrame(tick);
+      } else {
+        setRotation(finalRot);
+        setPhase("settled");
+        setTimeout(() => onComplete && onComplete(agents[resultIndex]), 600);
+      }
+    };
+    animRef.current = requestAnimationFrame(tick);
+  };
+
+  React.useEffect(() => {
+    const move = (e) => onPointerMove(e);
+    const up = () => onPointerUp();
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", up);
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <svg ref={svgRef} width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ touchAction: "none", userSelect: "none", cursor: phase === "idle" ? "grab" : phase === "dragging" ? "grabbing" : "default", display: "block", margin: "0 auto" }}>
+      <defs>
+        <radialGradient id="dialBg" cx="50%" cy="40%" r="60%">
+          <stop offset="0%" stopColor="#2a2438" />
+          <stop offset="60%" stopColor="#191424" />
+          <stop offset="100%" stopColor="#0a0612" />
+        </radialGradient>
+        <radialGradient id="dialFace" cx="50%" cy="45%" r="55%">
+          <stop offset="0%" stopColor="#f1e8d0" />
+          <stop offset="80%" stopColor="#d4c598" />
+          <stop offset="100%" stopColor="#9b8a5e" />
+        </radialGradient>
+        <radialGradient id="holeShadow" cx="50%" cy="40%" r="60%">
+          <stop offset="0%" stopColor="#0a0612" />
+          <stop offset="70%" stopColor="#1a1428" />
+          <stop offset="100%" stopColor="#3a2a4a" />
+        </radialGradient>
+        <filter id="dialShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="4" />
+        </filter>
+      </defs>
+      {/* Phone body — background disc */}
+      <circle cx={CENTER} cy={CENTER} r={DIAL_R + 20} fill="url(#dialBg)" stroke="#4a3e5a" strokeWidth={2} />
+      {/* Fixed hole markers (hidden behind the rotating dial, visible through its holes) */}
+      {agents.map((agent, i) => {
+        const angle = -90 + i * 36;
+        const rad = angle * Math.PI / 180;
+        const hx = CENTER + Math.cos(rad) * HOLE_ORBIT;
+        const hy = CENTER + Math.sin(rad) * HOLE_ORBIT;
+        return (
+          <g key={`label-${i}`} transform={`translate(${hx} ${hy})`}>
+            <text textAnchor="middle" dominantBaseline="central" fontSize="18" fill="#fcd34d" style={{ pointerEvents: "none" }}>{agent.emoji}</text>
+          </g>
+        );
+      })}
+      {/* Finger stop — the physical stop that prevents over-rotation. Positioned at
+          roughly 4 o'clock (classic rotary layout). Fixed to phone body, not dial. */}
+      <g transform={`translate(${CENTER + Math.cos((45) * Math.PI/180) * (DIAL_R + 2)} ${CENTER + Math.sin((45) * Math.PI/180) * (DIAL_R + 2)})`}>
+        <rect x={-6} y={-16} width={12} height={32} rx={3} fill="#8b6f4a" stroke="#5a4a30" strokeWidth={1} />
+      </g>
+      {/* Rotating dial face */}
+      <g transform={`rotate(${rotation} ${CENTER} ${CENTER})`} onMouseDown={onPointerDown} onTouchStart={onPointerDown}>
+        <circle cx={CENTER} cy={CENTER} r={DIAL_R} fill="url(#dialFace)" stroke="#6b5a3a" strokeWidth={3} />
+        {/* Finger holes punched through dial face */}
+        {agents.map((_, i) => {
+          const angle = -90 + i * 36;
+          const rad = angle * Math.PI / 180;
+          const hx = CENTER + Math.cos(rad) * HOLE_ORBIT;
+          const hy = CENTER + Math.sin(rad) * HOLE_ORBIT;
+          return <circle key={`hole-${i}`} cx={hx} cy={hy} r={HOLE_R} fill="url(#holeShadow)" stroke="#4a3828" strokeWidth={1.5} />;
+        })}
+        {/* Grooves radiating from center — reinforces the "spin me" affordance */}
+        {agents.map((_, i) => {
+          const angle = -90 + i * 36 + 18; // between holes
+          const rad = angle * Math.PI / 180;
+          const x1 = CENTER + Math.cos(rad) * 50;
+          const y1 = CENTER + Math.sin(rad) * 50;
+          const x2 = CENTER + Math.cos(rad) * (DIAL_R - 15);
+          const y2 = CENTER + Math.sin(rad) * (DIAL_R - 15);
+          return <line key={`groove-${i}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#a08860" strokeWidth={0.6} opacity={0.4} />;
+        })}
+      </g>
+      {/* Center hub — label area */}
+      <circle cx={CENTER} cy={CENTER} r={44} fill="#1a1428" stroke="#4a3e5a" strokeWidth={2} />
+      <text x={CENTER} y={CENTER - 6} textAnchor="middle" fontSize="10" fill="#94a3b8" style={{ pointerEvents: "none", letterSpacing: 1 }}>SPIN FOR</text>
+      <text x={CENTER} y={CENTER + 10} textAnchor="middle" fontSize="12" fontWeight="700" fill="#fcd34d" style={{ pointerEvents: "none" }}>{playerName}</text>
+      {phase === "idle" && (
+        <text x={CENTER} y={CENTER + 28} textAnchor="middle" fontSize="8" fill="#64748b" style={{ pointerEvents: "none" }}>drag left ⟲</text>
+      )}
+      {/* Pointer indicator at the top — shows what's "called" */}
+      <g>
+        <polygon points={`${CENTER - 10},${CENTER - DIAL_R - 2} ${CENTER + 10},${CENTER - DIAL_R - 2} ${CENTER},${CENTER - DIAL_R + 15}`} fill="#ef4444" stroke="#991b1b" strokeWidth={1.5} />
+      </g>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // MAIN GAME
 // ═══════════════════════════════════════════════════════════
 export default function Headliners() {
@@ -1935,6 +2191,26 @@ export default function Headliners() {
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
   // Fame spend menu visibility state. Shown when player clicks the "Spend Fame" button.
   const [fameSpendMenuOpen, setFameSpendMenuOpen] = useState(false);
+  // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
+  // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
+  // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
+  // spin at season start — pid at index 0 is currently spinning. hotlinePendingTempt holds
+  // transient tempt resolution context when an agent's effect needs the resolver's input.
+  const [hotlineAgents, setHotlineAgents] = useState({});
+  const hotlineAgentsRef = useRef({});
+  useEffect(() => { hotlineAgentsRef.current = hotlineAgents; }, [hotlineAgents]);
+  const [hotlineUsed, setHotlineUsed] = useState({});
+  const hotlineUsedRef = useRef({});
+  useEffect(() => { hotlineUsedRef.current = hotlineUsed; }, [hotlineUsed]);
+  const [hotlineSpinQueue, setHotlineSpinQueue] = useState([]);
+  // Modal state for showing the spin UI. "idle" | "spinning" | "revealed"
+  const [hotlineSpinPhase, setHotlineSpinPhase] = useState("idle");
+  // The agent that just landed from the current spin, held between spin-complete and
+  // user clicks "Confirm" / "Re-spin for 1 Fame".
+  const [hotlineLandedAgent, setHotlineLandedAgent] = useState(null);
+  // Pending tempt flags added by agent effects — read at tempt resolution.
+  // { pid: { freeFame?: true, amenityDiscount?: 2, multiTempt?: true } }
+  const hotlineTemptFlagsRef = useRef({});
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
   const [infraRewards, setInfraRewards] = useState(null);
@@ -2212,10 +2488,13 @@ export default function Headliners() {
     setPlayerData(prev => {
       const cur = prev[pid] || {};
       const newProgress = (cur.stageProgress || 0) + 1;
-      // v191: threshold raised from 2 to 3 progress. Combined with the +1 Fame
+      // v191: threshold raised from 2 to 3 progress for classic. Combined with the +1 Fame
       // microtrend reduction, this slows the pace of stage-2/stage-3 opening
       // (players need 3 microtrend/stage-die claims per new stage instead of 2).
-      if (newProgress >= 3) {
+      // v198.4: Quick Play drops back to 2 — in a 12-turn game, needing 3 progress per
+      // credit stretches stage opens too thin. 2 keeps the stage-opening pace feasible.
+      const threshold = gameModeRef.current === "quickYear" ? 2 : 3;
+      if (newProgress >= threshold) {
         // Cross the threshold — bank a credit and roll progress back
         setTimeout(() => grantStageCredit(pid, reason), 40);
         return { ...prev, [pid]: { ...cur, stageProgress: newProgress - 3 } };
@@ -2344,6 +2623,9 @@ export default function Headliners() {
         recalcAfterUpdate(pid, pd => mutateAmenity(pd, fieldIdx, r.amenity, +1));
         addLog("📜 Contract", `${pName} claimed ${council.name}: placed ${AMENITY_ICONS[r.amenity] || ""} ${AMENITY_LABELS[r.amenity]} on Field ${fieldIdx + 1}`);
         showFloatingBonus(`+1 ${AMENITY_LABELS[r.amenity]}`, AMENITY_COLORS[r.amenity] || "#fbbf24");
+        // v198.3: council-reward amenities count toward Quick Play season objectives.
+        const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[r.amenity];
+        if (metricKey) bumpSeasonStat(pid, metricKey, 1);
         break;
       }
       case "drawOnPlay": {
@@ -3180,6 +3462,250 @@ export default function Headliners() {
     }
     return s[metric] || 0;
   };
+  // v199: Hotline — begin season spins. Called at the start of each season (incl. autumn
+  // at game start). Builds the ordered queue of players who need to spin, clears last
+  // season's agents and used-flags, and opens the modal for the first player.
+  const beginHotlineSpinsForSeason = () => {
+    if (gameModeRef.current !== "quickYear") return;
+    const queue = players.map(p => p.id); // all players spin, in turn order
+    setHotlineAgents({});
+    hotlineAgentsRef.current = {};
+    setHotlineUsed({});
+    hotlineUsedRef.current = {};
+    hotlineTemptFlagsRef.current = {};
+    setHotlineSpinQueue(queue);
+    setHotlineLandedAgent(null);
+    setHotlineSpinPhase("spinning");
+  };
+  // Called when the dial finishes animating — assigns the landed agent to the currently
+  // spinning player (first in queue) but holds it in landedAgent for confirm/re-spin.
+  const onHotlineDialLanded = (agent) => {
+    setHotlineLandedAgent(agent);
+    setHotlineSpinPhase("revealed");
+  };
+  // Confirm the landed agent — assigns it, pops queue, moves on or closes modal.
+  const confirmHotlineAgent = () => {
+    const pid = hotlineSpinQueue[0];
+    const agent = hotlineLandedAgent;
+    if (pid == null || !agent) return;
+    const nextAgents = { ...hotlineAgentsRef.current, [pid]: agent };
+    setHotlineAgents(nextAgents);
+    hotlineAgentsRef.current = nextAgents;
+    const name = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("📞 Hotline", `${name} spun ${agent.emoji} ${agent.name} for the season`);
+    const rest = hotlineSpinQueue.slice(1);
+    setHotlineSpinQueue(rest);
+    setHotlineLandedAgent(null);
+    if (rest.length === 0) {
+      // All players done — close the modal, resume turn flow.
+      setHotlineSpinPhase("idle");
+    } else {
+      // Next player spins.
+      setHotlineSpinPhase("spinning");
+    }
+  };
+  // Re-spin for 1 Fame. Deducts Fame, re-rolls a new agent, animates again.
+  const respinHotlineForFame = () => {
+    const pid = hotlineSpinQueue[0];
+    if (pid == null) return;
+    const pd = (playerDataRef.current || playerData)[pid];
+    const curFame = pd?.fame || 0;
+    if (curFame < 1) return;
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 1) } }));
+    logFameGain(pid, -1, "Hotline re-spin");
+    bumpSeasonStat(pid, "fameSpent", 1);
+    setHotlineLandedAgent(null);
+    setHotlineSpinPhase("spinning");
+  };
+  // v199: when the Hotline queue head is an AI player, auto-pick a random agent and
+  // advance after a short delay. Watches queue + phase; fires once per AI player.
+  useEffect(() => {
+    if (gameModeRef.current !== "quickYear") return;
+    if (hotlineSpinPhase !== "spinning") return;
+    if (hotlineSpinQueue.length === 0) return;
+    const headPid = hotlineSpinQueue[0];
+    const headPlayer = players.find(p => p.id === headPid);
+    if (!headPlayer?.isAI) return;
+    const t = setTimeout(() => {
+      // Pick a random agent and go straight to confirm (AI never re-spins).
+      const pickedIdx = Math.floor(Math.random() * HOTLINE_AGENTS.length);
+      const picked = HOTLINE_AGENTS[pickedIdx];
+      const nextAgents = { ...hotlineAgentsRef.current, [headPid]: picked };
+      setHotlineAgents(nextAgents);
+      hotlineAgentsRef.current = nextAgents;
+      addLog("📞 Hotline", `${headPlayer.festivalName} 🤖 spun ${picked.emoji} ${picked.name}`);
+      const rest = hotlineSpinQueue.slice(1);
+      setHotlineSpinQueue(rest);
+      setHotlineLandedAgent(null);
+      setHotlineSpinPhase(rest.length === 0 ? "idle" : "spinning");
+    }, 800);
+    return () => clearTimeout(t);
+  }, [hotlineSpinPhase, hotlineSpinQueue, players]);
+
+  // Does this player have an unused agent this season?
+  const hasActiveAgent = (pid) => !!hotlineAgentsRef.current[pid] && !hotlineUsedRef.current[pid];
+  // Mark the player's agent as used (consumed by tempting).
+  const markAgentUsed = (pid) => {
+    setHotlineUsed(prev => ({ ...prev, [pid]: true }));
+    hotlineUsedRef.current = { ...hotlineUsedRef.current, [pid]: true };
+  };
+  // v199: dispatcher — applies a Hotline agent's effect at the tempt's resolution point.
+  // Called from the tempt win and loss paths. `outcome` is "win" or "loss". `context`
+  // carries { artist, agentId, poolIdx? } so loss-based agents (Nancy, Wanda) know what
+  // was being tempted. Called ONCE per tempt resolution.
+  //
+  // Note: in Quick Play the tempt has no base Fame cost, so these effects are the sole
+  // reward/consolation for the tempt action. Agents whose primary effect fires on the
+  // "trigger" side only resolve on that side (Wanda loss-only, Pete win-only etc.);
+  // "both" and "always" fire regardless. Idempotent — tempt-used flag guards against
+  // double-fire if resolution runs twice (defensive).
+  const applyHotlineAgentEffect = (pid, outcome, context) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const agentId = context?.agentId;
+    const agent = HOTLINE_AGENTS.find(a => a.id === agentId);
+    if (!agent) return;
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    const artist = context?.artist;
+    // Filter by trigger type.
+    if (agent.trigger === "win" && outcome !== "win") return;
+    if (agent.trigger === "loss" && outcome !== "loss") return;
+    switch (agent.id) {
+      case "pete_persuasive": {
+        // Play the tempted artist without Fame cost. For MVP, grant +Fame equal to artist's
+        // cost so canAffordArtist passes. (A cleaner implementation would set a one-shot
+        // bypass flag on the artist, but Fame grant achieves the same effect for playing.)
+        if (artist && outcome === "win") {
+          const cost = artist.fame || 0;
+          if (cost > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid]?.baseFame || 0) + cost) } }));
+            logFameGain(pid, cost, `Pete Persuasive — Fame bypass for ${artist.name}`);
+          }
+          addLog("🎩 Pete Persuasive", `${pName}: ${artist.name} can be played free of Fame cost (effective bypass)`);
+          showFloatingBonus(`🎩 Fame bypass!`, "#fcd34d");
+          setTimeout(() => recalcTickets(), 50);
+        }
+        break;
+      }
+      case "hamish_handyman": {
+        // Grant a free amenity-pick pending effect — reuses the +1 amenity flow from the
+        // Fame spend menu / Lil Dicky etc.
+        if (outcome === "win") {
+          setPendingEffect({ type: "placeAmenity", artistName: `Hamish Handyman (${pName})`, placeCount: 1 });
+          setPendingEffectPid(pid);
+          addLog("🔧 Hamish Handyman", `${pName}: pick 1 amenity to place anywhere.`);
+          showFloatingBonus("🔧 +1 Amenity!", "#fcd34d");
+        }
+        break;
+      }
+      case "dave_dealmaker": {
+        // Keep the tempted artist (default) AND draw 5 artists, keep 2. Reuses the pending-
+        // effect drawFromPool-style flow — simplest MVP: just draw 5 and auto-stuff into
+        // hand (keep all 5). Future: proper "pick 2 of 5" picker modal.
+        if (outcome === "win") {
+          const drawn = drawFromDeck(5);
+          if (drawn.length > 0) {
+            // Keep all 5 in hand for MVP (upgrade later to a picker). Prevents the "lost
+            // the draw" variance — Dave reliably stuffs your hand.
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
+            addLog("🤝 Dave Dealmaker", `${pName}: drew ${drawn.length} artists and kept all of them (MVP — proper pick-2-of-5 picker TBD)`);
+            showFloatingBonus(`🤝 +${drawn.length} artists!`, "#fcd34d");
+          } else {
+            addLog("🤝 Dave Dealmaker", `${pName}: no artists left in the deck`);
+          }
+        }
+        break;
+      }
+      case "hattie_haggler": {
+        // -2 amenity requirement on the tempted artist. Set a flag on the artist in-place
+        // when it lands in hand or stage. For MVP: silent log + no mechanical effect yet —
+        // most tempted artists go straight to a stage anyway (amenity gate already passed).
+        // TODO: full amenity-discount flag plumbing.
+        if (outcome === "win") {
+          addLog("💅 Hattie Haggler", `${pName}: ${artist?.name || "artist"} requires 2 fewer amenities (noted — enforcement TBD)`);
+          showFloatingBonus("💅 -2 amenities!", "#fcd34d");
+        }
+        break;
+      }
+      case "wanda_whiney": {
+        // Draw 2 artists on tempt loss.
+        if (outcome === "loss") {
+          const drawn = drawFromDeck(2);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
+            addLog("😤 Wanda Whiney", `${pName}: drew ${drawn.length} consolation artist(s)`);
+            showFloatingBonus(`😤 +${drawn.length} draws`, "#fcd34d");
+          }
+        }
+        break;
+      }
+      case "barry_belligerent": {
+        // On loss: nobody wins, all contestants draw 1 from deck. The "nobody wins" part
+        // is tricky to retrofit into the existing contest flow — for MVP, Barry just gets
+        // the consolation draw (same as Wanda). Full "cancel the tempt + all tempters draw"
+        // is TBD.
+        if (outcome === "loss") {
+          const drawn = drawFromDeck(1);
+          if (drawn.length > 0) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
+            addLog("🥊 Barry Belligerent", `${pName}: drew 1 artist (MVP — full "cancel tempt" effect TBD)`);
+            showFloatingBonus("🥊 +1 draw", "#fcd34d");
+          }
+        }
+        break;
+      }
+      case "nancy_negotiator": {
+        // Swap hand artist for tempted artist, you win. Needs picker UI for the swap target.
+        // MVP: skip the swap, just give the tempted artist. Deck draw as consolation if no hand.
+        if (outcome === "loss" && artist) {
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), artist] } }));
+          addLog("📞 Nancy Negotiator", `${pName}: salvaged ${artist.name} to hand (MVP — full "swap for hand card" effect TBD)`);
+          showFloatingBonus("📞 Nancy save!", "#fcd34d");
+        }
+        break;
+      }
+      case "ciara_clout": {
+        // Both: +1 Fame on loss, +2 Fame on win (on top of base refunds/bonuses).
+        const amount = outcome === "win" ? 2 : 1;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid]?.baseFame || 0) + amount) } }));
+        logFameGain(pid, amount, `Ciara Clout — tempt ${outcome}`);
+        addLog("✨ Ciara Clout", `${pName}: +${amount} 🔥 Fame on tempt ${outcome}`);
+        showFloatingBonus(`✨ +${amount} 🔥`, "#fcd34d");
+        setTimeout(() => recalcTickets(), 50);
+        break;
+      }
+      case "mara_meddler": {
+        // Handled at tempt placement time (neighbors added). No resolution-time effect.
+        break;
+      }
+      case "sammi_stager": {
+        // Auto-open a new stage (max 3 total). Grants a stage credit then immediately spends
+        // it via spendStageCredit if the player has fewer than 3 stages. Capped at 3.
+        if (outcome === "win") {
+          const pd = (playerDataRef.current || playerData)[pid];
+          const stageCount = (pd?.stageArtists || []).length;
+          if (stageCount >= 3) {
+            addLog("🎪 Sammi Stager", `${pName}: already at 3 stages — Sammi's effect is wasted`);
+          } else {
+            // Grant a credit + spend immediately. Simplest path: directly add a stage via
+            // the same mechanism spendStageCredit uses.
+            setPlayerData(p => {
+              const cur = p[pid];
+              if (!cur) return p;
+              const stages = cur.stageArtists || [];
+              if (stages.length >= 3) return p;
+              return { ...p, [pid]: { ...cur, stageArtists: [...stages, []] } };
+            });
+            addLog("🎪 Sammi Stager", `${pName}: opened a new stage (${stageCount + 1}/3 total)`);
+            showFloatingBonus("🎪 +1 Stage!", "#4ade80");
+            setTimeout(() => recalcTickets(), 50);
+          }
+        }
+        break;
+      }
+      default: break;
+    }
+  };
+
   // Check whether a given objective is met for a given player (used by secret objective
   // reveal). Score threshold: for secrets, we don't require 1st place — just that the
   // player has done the thing at least once (metric > 0 for count-based, > 1 for max-ish).
@@ -3261,37 +3787,35 @@ export default function Headliners() {
     const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
     setSeasonEndScoring(null);
     if (isGameEnd) {
-      // v198.1: populate allTickets for the game-over leaderboard. Classic mode fills
+      // v198.4: populate allTickets for the game-over leaderboard. Classic mode fills
       // this via beginRoundEnd for each year, but Quick Play skips that whole flow.
-      // Without this, the leaderboard reads 0 tickets for everyone and the "winner"
-      // is just the first player in the list. Compute final tickets inline (same formula
-      // as beginRoundEnd's PASS 1) and store under year 1 — the only year Quick Play has.
-      setPlayerData(prev => {
-        const fresh = {};
-        for (const pid of Object.keys(prev)) {
-          fresh[pid] = computeTicketsForPlayer(prev[pid], undefined, pid);
-        }
-        playerDataRef.current = fresh;
-        // Build the allTickets entries from the fresh computed values. nat[pid][1]
-        // mirrors the classic format { raw, fame, fameVP, ticketVP, ... } so the
-        // leaderboard's downstream reads just work.
-        setAllTickets(prevAT => {
-          const nat = { ...prevAT };
-          for (const p of players) {
-            const pd = fresh[p.id];
-            if (!pd) continue;
-            if (!nat[p.id]) nat[p.id] = {};
-            nat[p.id][1] = {
-              raw: pd.tickets || 0,
-              fame: pd.fame || 0,
-              fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0,
-              starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0,
-            };
-          }
-          return nat;
-        });
-        return fresh;
+      // Compute directly from playerDataRef (the authoritative live state) and commit
+      // both setters SIDE-BY-SIDE — the previous version nested setAllTickets inside a
+      // setPlayerData updater, which React doesn't reliably run with the computed data,
+      // so the leaderboard ended up with all zeros.
+      const currentPD = playerDataRef.current || playerData || {};
+      const fresh = {};
+      const nextAllTickets = { ...allTickets };
+      players.forEach(p => {
+        const pd = currentPD[p.id];
+        if (!pd) return;
+        // Pass year 1 explicitly — in Quick Play, year is always 1. Pass pid so
+        // infrastructure-reward hooks (camp_1 Big Base etc.) apply correctly.
+        const computed = computeTicketsForPlayer(pd, 1, p.id);
+        fresh[p.id] = computed;
+        if (!nextAllTickets[p.id]) nextAllTickets[p.id] = {};
+        nextAllTickets[p.id][1] = {
+          raw: computed.tickets || 0,
+          fame: computed.fame || 0,
+          fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0,
+          starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0,
+        };
       });
+      // Commit both pieces of state separately. Keep playerDataRef in sync for any
+      // downstream read that happens before React flushes the setState.
+      playerDataRef.current = { ...currentPD, ...fresh };
+      setPlayerData(prev => ({ ...prev, ...fresh }));
+      setAllTickets(nextAllTickets);
       setTimeout(() => { setPhase("gameOver"); addLogH("Game Over — Festival Complete!", "round"); }, 150);
       return;
     }
@@ -3303,6 +3827,10 @@ export default function Headliners() {
       addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
       const nextObjs = (quickYearPublicObjectives && quickYearPublicObjectives[nextSeason]) || [];
       addLog(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]}`, `Objectives this season: ${nextObjs.map(o => o.label).join(" · ")}`);
+      // v199: fire new Hotline spins at season boundary. Previous season's agents expire.
+      // Deferred by 400ms so the season-end modal is fully closed and the "Season Begins"
+      // header is in the log before the spin UI opens.
+      setTimeout(() => beginHotlineSpinsForSeason(), 400);
     }
     // Resume turn flow for the next player.
     if (nextPlayerIdx >= 0 && nextPlayerIdx < turnOrder.length) {
@@ -3800,22 +4328,59 @@ export default function Headliners() {
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
+      const pName = players.find(p => p.id === pid)?.festivalName || "?";
+      // v199: Quick Play — tempt is gated by the Hotline agent, no Fame cost. One tempt per
+      // season (per agent). Classic flow (2 Fame, 2/turn cap) still applies when NOT in Quick Play.
+      if (gameModeRef.current === "quickYear") {
+        if (!hasActiveAgent(pid)) {
+          addLog(pName, `Can't tempt — no active Hotline agent this season${hotlineUsedRef.current[pid] ? " (already used)" : ""}`);
+          return false;
+        }
+        if (tempts.length >= 1) {
+          addLog(pName, `Already tempting this season — only one tempt per Hotline agent`);
+          return false;
+        }
+        const agent = hotlineAgentsRef.current[pid];
+        // Store the active agent on the placement so we can resolve the right effect later.
+        const basePlacement = { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber, agentId: agent.id };
+        const newPlacements = [basePlacement];
+        // Mara Meddler: also add left + right neighbors (if they exist) as additional tempts
+        // tied to the SAME agent. All resolve together at next turn.
+        if (agent.id === "mara_meddler") {
+          const leftIdx = poolIdx - 1, rightIdx = poolIdx + 1;
+          const leftArtist = leftIdx >= 0 ? artistPool[leftIdx] : null;
+          const rightArtist = rightIdx < artistPool.length ? artistPool[rightIdx] : null;
+          if (leftArtist) newPlacements.push({ type: "pool", poolIdx: leftIdx, artistName: leftArtist.name, placedTurn: turnNumber, agentId: agent.id, meddlerNeighbor: true });
+          if (rightArtist) newPlacements.push({ type: "pool", poolIdx: rightIdx, artistName: rightArtist.name, placedTurn: turnNumber, agentId: agent.id, meddlerNeighbor: true });
+        }
+        setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), ...newPlacements] }));
+        markAgentUsed(pid);
+        setTimeout(() => recalcTickets(), 30);
+        const extraLog = agent.id === "mara_meddler" && newPlacements.length > 1 ? ` + neighbors (${newPlacements.length} total)` : "";
+        addLog("📞 Hotline", `${pName} tempted ${artist.name} via ${agent.emoji} ${agent.name}${extraLog}`);
+        showFloatingBonus(`${agent.emoji} ${agent.name}`, "#fcd34d");
+        setLastActionFor(pid, `is tempting ${artist.name} via ${agent.name}`);
+        bumpYearlyStat(pid, "temptsPlaced");
+        return true;
+      }
+      // Classic flow below.
       if ((pd.fame || 0) < 2) {
-        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Not enough Fame to tempt ${artist.name} (needs 2 🔥)`);
+        addLog(pName, `Not enough Fame to tempt ${artist.name} (needs 2 🔥)`);
         return false;
       }
       if (tempts.length >= 2) {
-        addLog(players.find(p => p.id === pid)?.festivalName || "?", `Already tempting 2 artists this turn`);
+        addLog(pName, `Already tempting 2 artists this turn`);
         return false;
       }
       // v196: Deduct 2 Fame (was 1) from baseFame.
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.max(0, (p[pid].baseFame || 0) - 2) } }));
       logFameLoss(pid, 2, `Tempting ${artist.name}`);
+      // v198.3: tempt's 2 Fame cost counts toward Quick Play "Most Fame spent this season".
+      bumpSeasonStat(pid, "fameSpent", 2);
       // v154: Counter Culture identity refunds 1 Fame when tempting a Fame ≤ 3 artist.
       applyIdentityOnTempt(pid, artist);
       setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber }] }));
       setTimeout(() => recalcTickets(), 30);
-      const pName = players.find(p => p.id === pid)?.festivalName || "?";
       addLog("💫 Tempt", `${pName} spent 2 🔥 Fame to tempt ${artist.name} (${tempts.length + 1}/2 this turn)`);
       showFloatingBonus(`💫 Tempting ${artist.name}`, "#fbbf24");
       setLastActionFor(pid, `is tempting ${artist.name}`);
@@ -3865,6 +4430,12 @@ export default function Headliners() {
         // Fires here (at resolution) so it applies regardless of what the winner does
         // next (book directly, book via modal, send to hand).
         grantUncontestedTemptBonus(resolution.pid);
+        // v199: fire Hotline agent effect for the uncontested winner. agentId is attached
+        // to the placement when it was created in placeAgentOnArtist.
+        const placement = (temptPlacementsRef.current[resolution.pid] || []).find(p => p.type === "pool" && p.artistName === resolution.artist.name);
+        if (placement?.agentId) {
+          applyHotlineAgentEffect(resolution.pid, "win", { artist: resolution.artist, agentId: placement.agentId });
+        }
         // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
         // modal renders during the AI's turn and the human user ends up picking a stage
         // for the AI (with no amenity check per-stage, which is how Kendrick landed on
@@ -4377,6 +4948,19 @@ export default function Headliners() {
     bumpYearEvent(winnerId, "contestWinsThisYear");
     setTimeout(() => checkMidYearAchievements(winnerId), 80);
     setTimeout(() => recalcTickets(), 50);
+    // v199: fire Hotline agent effects for all contestants (win for winnerId, loss for others).
+    if (gameModeRef.current === "quickYear") {
+      contestantData.forEach(c => {
+        // Find the placement for this contestant to get the agentId.
+        // (placements were already popped above, so we read from a snapshot captured earlier
+        // via the contest. For simplicity, we look up the player's active agent from hotlineAgentsRef
+        // since in Quick Play the agent IS the tempt — only one agent per season per player.)
+        const agent = hotlineAgentsRef.current[c.pid];
+        if (!agent) return;
+        const outcome = c.pid === winnerId ? "win" : "loss";
+        applyHotlineAgentEffect(c.pid, outcome, { artist: contest.artist, agentId: agent.id });
+      });
+    }
   };
 
   function checkSecurityVPBonus(pid, amenityType) {
@@ -7162,6 +7746,10 @@ export default function Headliners() {
       addLog("🌱 Spring", `Objectives: ${seasonsPaired.spring.map(o => o.label).join(" · ")}`);
       addLog("☀️ Summer", `Objectives: ${seasonsPaired.summer.map(o => o.label).join(" · ")}`);
       addLog("⚡ Rules", "Fame is status (cap 5) with 2-point overflow to 7. Spend 1 Fame per turn: +1 amenity, refresh pool, or draw a secret objective.");
+      addLog("📞 Hotline", "Each season starts with a Hotline spin — the agent you land on is your tempt channel for that season. One tempt per agent, no base Fame cost. Re-spin for 1 Fame.");
+      // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
+      // other state updates settle first and the modal doesn't fight phase transitions.
+      setTimeout(() => beginHotlineSpinsForSeason(), 300);
     } else {
       setQuickYearPublicObjectives(null);
     }
@@ -7319,6 +7907,9 @@ export default function Headliners() {
           return { ...p, [pid]: updated };
         });
         addLog("🤖 AI", `Placed bonus ${AMENITY_LABELS[aType]} in F${fieldIdx + 1}`);
+        // v198.3: AI bonus amenity counts toward Quick Play season objectives (mirrors human path).
+        const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[aType];
+        if (metricKey) bumpSeasonStat(pid, metricKey, 1);
         const remaining = (pe.placeCount || 1) - 1;
         if (remaining > 0) {
           if (pe.type === "placeAmenity") setPendingEffect({ ...pe, placeCount: remaining, chosenType: null });
@@ -10764,6 +11355,82 @@ export default function Headliners() {
           </div>
         </div>;
       })()}
+      {/* v199: Hotline spin modal. Renders the rotary dial for the player at the head of
+          the spin queue. On landing, shows the agent + Confirm / Re-spin (1 Fame) buttons.
+          Each player spins once per season — queue drains in turn order. */}
+      {gameMode === "quickYear" && hotlineSpinPhase !== "idle" && hotlineSpinQueue.length > 0 && (() => {
+        const currentPid = hotlineSpinQueue[0];
+        const player = players.find(p => p.id === currentPid);
+        // Pick the result index for this spin. Deterministic once per modal mount via
+        // useMemo-style stable ref — we store it on the window of the spin lifecycle.
+        // Simplest approach: pre-pick when phase is "spinning" and hold in a ref.
+        const resultKey = `${currentPid}:${quickYearSeason}:${hotlineLandedAgent ? "revealed" : "spinning"}`;
+        if (!window.__hotlineResult || window.__hotlineResultKey !== resultKey) {
+          if (hotlineSpinPhase === "spinning") {
+            window.__hotlineResult = Math.floor(Math.random() * HOTLINE_AGENTS.length);
+            window.__hotlineResultKey = resultKey;
+          }
+        }
+        const resultIndex = window.__hotlineResult || 0;
+        const curFame = (playerDataRef.current || playerData)[currentPid]?.fame || 0;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 980, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%", padding: 24, background: "linear-gradient(180deg, #1a1428, #0f0d1a)", border: "1px solid rgba(252,211,77,0.3)" }}>
+              <div style={{ color: "#64748b", fontSize: 10, letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 }}>📞 The Hotline — {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</div>
+              <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 22 }}>{hotlineSpinPhase === "spinning" ? `${player?.festivalName || "?"}, pick up the phone` : `${player?.festivalName || "?"}'s agent`}</h2>
+              <p style={{ color: "#94a3b8", fontSize: 11, marginTop: 6, marginBottom: 14, fontStyle: "italic" }}>
+                {hotlineSpinPhase === "spinning"
+                  ? "Grab the dial and drag it to the left to spin. The agent you land on is your tempt channel for the season."
+                  : "This agent lasts one season. If you don't tempt with them, they're gone."}
+              </p>
+              {hotlineSpinPhase === "spinning" && (
+                <div style={{ margin: "0 auto", padding: "10px 0" }}>
+                  <RotaryDial
+                    agents={HOTLINE_AGENTS}
+                    resultIndex={resultIndex}
+                    playerName={(player?.festivalName || "?").slice(0, 10).toUpperCase()}
+                    onComplete={onHotlineDialLanded}
+                  />
+                </div>
+              )}
+              {hotlineSpinPhase === "revealed" && hotlineLandedAgent && (
+                <div style={{ padding: 16, borderRadius: 12, background: "rgba(252,211,77,0.08)", border: "1px solid rgba(252,211,77,0.35)", marginBottom: 14 }}>
+                  <div style={{ fontSize: 56, marginBottom: 6 }}>{hotlineLandedAgent.emoji}</div>
+                  <div style={{ color: "#fcd34d", fontSize: 20, fontWeight: 800, marginBottom: 6 }}>{hotlineLandedAgent.name}</div>
+                  <div style={{
+                    display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, letterSpacing: 1,
+                    background: hotlineLandedAgent.trigger === "win" ? "rgba(34,197,94,0.2)" : hotlineLandedAgent.trigger === "loss" ? "rgba(239,68,68,0.2)" : hotlineLandedAgent.trigger === "both" ? "rgba(168,85,247,0.2)" : "rgba(96,165,250,0.2)",
+                    color: hotlineLandedAgent.trigger === "win" ? "#86efac" : hotlineLandedAgent.trigger === "loss" ? "#fca5a5" : hotlineLandedAgent.trigger === "both" ? "#d8b4fe" : "#93c5fd",
+                    textTransform: "uppercase", marginBottom: 10,
+                  }}>
+                    {hotlineLandedAgent.trigger === "win" ? "On Tempt Win" : hotlineLandedAgent.trigger === "loss" ? "On Tempt Loss" : hotlineLandedAgent.trigger === "both" ? "Win & Loss" : "Always"}
+                  </div>
+                  <p style={{ color: "#e2e8f0", fontSize: 12, lineHeight: 1.5, margin: 0 }}>{hotlineLandedAgent.effect}</p>
+                </div>
+              )}
+              {hotlineSpinPhase === "revealed" && (
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                  <button onClick={confirmHotlineAgent} style={{ ...bp, padding: "12px 28px", fontSize: 14 }}>
+                    ✓ Keep {hotlineLandedAgent?.name?.split(" ")[0] || "Agent"}
+                  </button>
+                  <button
+                    onClick={respinHotlineForFame}
+                    disabled={curFame < 1}
+                    style={{ ...bs, padding: "12px 20px", fontSize: 13, opacity: curFame < 1 ? 0.4 : 1, color: "#fed7aa", border: "1px solid #f97316" }}
+                  >
+                    🔄 Re-spin (1 🔥 Fame)
+                  </button>
+                </div>
+              )}
+              {hotlineSpinQueue.length > 1 && (
+                <div style={{ color: "#64748b", fontSize: 10, marginTop: 12, fontStyle: "italic" }}>
+                  {hotlineSpinQueue.length - 1} more player{hotlineSpinQueue.length - 1 === 1 ? "" : "s"} waiting to spin
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {/* v198: Quick Play season-end scoring modal. Shows the ending season's 2 objectives,
           who won 1st/2nd on each, Fame awarded. Click Continue to transition. */}
       {seasonEndScoring && (() => {
@@ -11021,6 +11688,13 @@ export default function Headliners() {
           });
           addLog("Effect", `Built bonus ${AMENITY_LABELS[aType]} in Field ${fieldIdx + 1}`);
           sfx.placeAmenity();
+          // v198.3: bonus amenities (from Fame spend, artist effects, council rewards)
+          // count toward the Quick Play "Most X built this season" objectives. Previously
+          // only the main-action amenity (via placeAmenityCounter) was tracked, so a player
+          // who spent Fame to build an extra campsite got no credit toward "Most Campsites"
+          // — unintuitive. The user expectation is: if you build it this season, it counts.
+          const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[aType];
+          if (metricKey) bumpSeasonStat(pid, metricKey, 1);
           const remaining = (pe.placeCount || 1) - 1;
           if (remaining > 0) {
             // Reset chosenType for placeAmenity (player picks again); keep amenityType for placeSpecific
@@ -12216,7 +12890,7 @@ export default function Headliners() {
                 return <div style={{ marginTop: 6, padding: 6, borderRadius: 6, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
                   <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>🎪 Stage Progress</div>
                   <div style={{ fontSize: 10, color: "#e2e8f0" }}>Stages: <strong style={{ color: "#86efac" }}>{stages}/3</strong></div>
-                  {stages < 3 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>Progress: <strong style={{ color: "#c4b5fd" }}>{progress}/3</strong> (microtrends + stage dice)</div>}
+                  {stages < 3 && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>Progress: <strong style={{ color: "#c4b5fd" }}>{progress}/{gameMode === "quickYear" ? 2 : 3}</strong> (microtrends + stage dice)</div>}
                   {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 11, fontWeight: 700, cursor: "pointer", width: "100%" }}>🎪 Open a Stage ({credits} credit{credits === 1 ? "" : "s"})</button>}
                   {credits > 0 && stages >= 3 && <div style={{ fontSize: 9, color: "#f87171", marginTop: 3 }}>{credits} credit{credits === 1 ? "" : "s"} banked (max stages reached)</div>}
                 </div>;
@@ -12306,6 +12980,27 @@ export default function Headliners() {
                 </div>;
               })}
             </div>}
+            {/* v199: Hotline agent panel. Shows each player's current-season agent + used flag. */}
+            {gameMode === "quickYear" && Object.keys(hotlineAgents).length > 0 && (
+              <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                <div style={{ color: "#fca5a5", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>📞 Hotline — {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</div>
+                {players.map(p => {
+                  const agent = hotlineAgents[p.id];
+                  const used = hotlineUsed[p.id];
+                  if (!agent) return null;
+                  return (
+                    <div key={p.id} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: used ? "rgba(30,41,59,0.4)" : "rgba(252,211,77,0.08)", border: used ? "1px solid #334155" : "1px solid rgba(252,211,77,0.3)", opacity: used ? 0.55 : 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 16 }}>{agent.emoji}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: used ? "#94a3b8" : "#fcd34d" }}>{agent.name}</span>
+                        {used && <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic", marginLeft: "auto" }}>used</span>}
+                      </div>
+                      <div style={{ fontSize: 9, color: "#94a3b8", marginLeft: 22 }}>{p.festivalName}: {agent.effect}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {/* v197.14: Infrastructure Rewards panel — moved OUT of the microtrends tab so
                 it's always visible during gameplay regardless of which sidebar tab is
                 selected. Shows current reward + leader per amenity. Refreshes live as
@@ -12506,7 +13201,7 @@ export default function Headliners() {
                   if (stages >= 3 && credits === 0) return null;
                   return <div style={{ marginTop: 4, padding: 4, borderRadius: 5, background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.28)" }}>
                     <div style={{ fontSize: 8, fontWeight: 700, color: "#4ade80", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>🎪 Stages: {stages}/3</div>
-                    {stages < 3 && <div style={{ fontSize: 8, color: "#94a3b8" }}>Progress: {progress}/3 to next credit</div>}
+                    {stages < 3 && <div style={{ fontSize: 8, color: "#94a3b8" }}>Progress: {progress}/{gameMode === "quickYear" ? 2 : 3} to next credit</div>}
                     {credits > 0 && stages < 3 && <button onClick={() => spendStageCredit(p.id)} style={{ marginTop: 4, padding: "4px 8px", borderRadius: 5, background: "rgba(74,222,128,0.20)", border: "1px solid #4ade80", color: "#86efac", fontSize: 9, fontWeight: 700, cursor: "pointer", width: "100%" }}>Open Stage ({credits})</button>}
                   </div>;
                 })()}
@@ -14030,7 +14725,11 @@ export default function Headliners() {
       players.forEach(p => { if ((allTickets[p.id]?.[y]?.raw ?? -Infinity) === maxT && maxT !== -Infinity) yearsLed[p.id]++; });
     });
 
-    const cond = winCondition || "following";
+    // v198.4: Quick Play ignores the lobby's win-condition setting. The game is a single
+    // festival, so "most years led" and "peak year" don't apply — the only meaningful
+    // measure is highest tickets at festival close. Force "following" so the ranking
+    // logic sorts by total tickets.
+    const cond = gameMode === "quickYear" ? "following" : (winCondition || "following");
     let ranked;
     if (cond === "consistency") {
       ranked = [...perPlayer].sort((a, b) => (yearsLed[b.player.id] - yearsLed[a.player.id]) || (b.total - a.total));
@@ -14053,7 +14752,11 @@ export default function Headliners() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
         <div style={{ ...card, textAlign: "center", maxWidth: 780, width: "100%", marginTop: 24 }}>
           <h1 style={{ fontSize: 44, fontWeight: 900, margin: "0 0 4px", background: "linear-gradient(135deg, #fbbf24, #f472b6, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>🏆 GAME OVER</h1>
-          <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14, fontStyle: "italic" }}>Win Condition: <strong style={{ color: "#fbbf24" }}>{condLabel}</strong></p>
+          {gameMode === "quickYear" ? (
+            <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14, fontStyle: "italic" }}>⚡ Quick Play (1 Year) — <strong style={{ color: "#fcd34d" }}>Highest tickets at festival close wins</strong></p>
+          ) : (
+            <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14, fontStyle: "italic" }}>Win Condition: <strong style={{ color: "#fbbf24" }}>{condLabel}</strong></p>
+          )}
           {winnerRow && <div style={{ marginBottom: 20 }}>
             <p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700, margin: "8px 0 4px" }}>{winnerRow.player.festivalName} Wins!</p>
             <p style={{ color: "#60a5fa", fontSize: 13, margin: 0 }}>
