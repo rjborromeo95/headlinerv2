@@ -7555,6 +7555,16 @@ export default function Headliners() {
     setSetupDraftSelected([]);
     // v143: before setup begins, the first non-AI player picks the win condition. If
     // all players are AI, pick randomly and jump straight to setup.
+    // v199.8: Quick Play (1-year mode) skips the win-condition choice entirely — the
+    // mode is designed around cumulative tickets across 4 seasons, so "Following"
+    // (highest cumulative tickets wins) is the only one that makes sense. Setting it
+    // here means no choice modal, no lobby selector surfaces, no mode-aware branching.
+    if (gameModeRef.current === "quickYear") {
+      setWinCondition("following");
+      winConditionRef.current = "following";
+      setPhase("setup"); addLogH("Setup Phase", "year");
+      return;
+    }
     const firstHuman = players.find(p => !p.isAI);
     if (firstHuman) {
       setPhase("winConditionChoice");
@@ -12890,7 +12900,7 @@ export default function Headliners() {
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: "100vh" }}>
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
-          {winCondition && <div style={{ padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(251,191,36,0.14), rgba(124,58,237,0.06))", border: "1px solid rgba(251,191,36,0.4)", marginBottom: 10, fontSize: 10, color: "#fbbf24", textAlign: "center", fontWeight: 700, letterSpacing: 0.5 }} title={winCondition === "consistency" ? "Most years led in tickets wins. Ties → cumulative total." : winCondition === "following" ? "Highest cumulative tickets across all years wins." : "Highest single-year ticket count wins."}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of the Town"}</div>}
+          {winCondition && gameMode !== "quickYear" && <div style={{ padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(251,191,36,0.14), rgba(124,58,237,0.06))", border: "1px solid rgba(251,191,36,0.4)", marginBottom: 10, fontSize: 10, color: "#fbbf24", textAlign: "center", fontWeight: 700, letterSpacing: 0.5 }} title={winCondition === "consistency" ? "Most years led in tickets wins. Ties → cumulative total." : winCondition === "following" ? "Highest cumulative tickets across all years wins." : "Highest single-year ticket count wins."}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of the Town"}</div>}
           {gameMode === "quickYear" ? (() => {
             const nPlayers = players.length || 1;
             const roundsCompleted = Math.floor(quickYearTurnsTaken / nPlayers);
@@ -13259,7 +13269,7 @@ export default function Headliners() {
           <div style={{ display: "flex", gap: 8, alignItems: "stretch", minWidth: "max-content" }}>
             <div style={{ padding: "6px 12px", borderRadius: 10, background: "rgba(124,58,237,0.15)", border: "1px solid #7c3aed40", whiteSpace: "nowrap" }}>
               <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13 }}>Year {year}/{totalYears}</span>
-              {winCondition && <span title={winCondition === "consistency" ? "Most years led in tickets wins" : winCondition === "following" ? "Highest cumulative tickets wins" : "Highest single-year tickets wins"} style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8, fontWeight: 700 }}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of Town"}</span>}
+              {winCondition && gameMode !== "quickYear" && <span title={winCondition === "consistency" ? "Most years led in tickets wins" : winCondition === "following" ? "Highest cumulative tickets wins" : "Highest single-year tickets wins"} style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8, fontWeight: 700 }}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of Town"}</span>}
               <span style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}>📦{artistDeck.length}</span>
               <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 8 }} title="Star Dice pool">🎲{dicePool}</span>
             </div>
