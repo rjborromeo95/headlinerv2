@@ -3479,7 +3479,10 @@ export default function Headliners() {
         nextTaken.add(picked.id);
         setSeasonAgentsTaken(nextTaken);
         seasonAgentsTakenRef.current = nextTaken;
-        addLog("📞 Hotline", `${headPlayer.festivalName} 🤖 spun ${picked.emoji} ${picked.name}`);
+        // v199.7: don't reveal the agent name in the public log — opponents only see
+        // that the player spun. The agent only becomes public when its effect fires
+        // during a tempt resolution (that log entry will name it).
+        addLog("📞 Hotline", `${headPlayer.festivalName} 🤖 spun their Hotline agent for ${QUICKYEAR_SEASON_LABELS[quickYearSeasonRef.current]}`);
         processHotlineQueue(queue.slice(1));
       }, 900);
     }
@@ -3508,7 +3511,10 @@ export default function Headliners() {
     setSeasonAgentsTaken(nextTaken);
     seasonAgentsTakenRef.current = nextTaken;
     const name = players.find(p => p.id === pid)?.festivalName || "?";
-    addLog("📞 Hotline", `${name} spun ${agent.emoji} ${agent.name} for the season`);
+    // v199.7: don't reveal the agent name in the public log — opponents only see
+    // that the player spun. The agent only becomes public when its effect fires
+    // during a tempt resolution (that log entry will name it).
+    addLog("📞 Hotline", `${name} spun their Hotline agent for ${QUICKYEAR_SEASON_LABELS[quickYearSeason]}`);
     setHotlineLandedAgent(null);
     // v199.1: let processHotlineQueue handle the next player (auto-picks for AI).
     processHotlineQueue(hotlineSpinQueue.slice(1));
@@ -4463,20 +4469,19 @@ export default function Headliners() {
         // Fires here (at resolution) so it applies regardless of what the winner does
         // next (book directly, book via modal, send to hand).
         grantUncontestedTemptBonus(resolution.pid);
-        // v199.5: fire Hotline agent effect for uncontested winner. Context flags
-        // wasUncontested=true so Sunshine Susie fires. Neighbors come from current pool
-        // position (Tony Tactic needs these).
+        // v199.8: fire Hotline agent effect for uncontested winner using the PLACEMENT-TIME
+        // agentId (resolution.agentId, set by resolvePoolAgents from the tempt placement).
+        // Falls back to current agent for robustness. This fixes cross-season uncontested
+        // tempts (an Autumn tempt resolved in Winter still fires the Autumn agent).
         if (gameModeRef.current === "quickYear") {
-          const agent = hotlineAgentsRef.current[resolution.pid];
-          if (agent) {
-            // Find the artist's current pool position for neighbor snapshot. Pool may
-            // have been mutated by this point — use best-effort.
+          const agentId = resolution.agentId || hotlineAgentsRef.current[resolution.pid]?.id;
+          if (agentId) {
             const poolIdx = artistPool.findIndex(a => a.name === resolution.artist.name);
             const leftN = poolIdx > 0 ? artistPool[poolIdx - 1] : null;
             const rightN = poolIdx >= 0 && poolIdx + 1 < artistPool.length ? artistPool[poolIdx + 1] : null;
             applyHotlineAgentEffect(resolution.pid, "win", {
               artist: resolution.artist,
-              agentId: agent.id,
+              agentId,
               wasUncontested: true,
               contestOpponent: null,
               neighborLeft: leftN,
@@ -4750,15 +4755,19 @@ export default function Headliners() {
       }
       const artist = currentPool[poolIdx];
       // Contestants = every player who has a tempt on the same artist.
+      // v199.8: include agentId per contestant — this is the agent that was active WHEN
+      // THEY TEMPTED, not whatever agent they have now. Critical for cross-season tempts:
+      // if a tempt was placed late in Autumn and resolves in Winter (after Hotline respin),
+      // the Autumn agent still fires. Fixes the Fiona-Fighter-skipped bug.
       const contestants = [];
       Object.entries(currentTempts).forEach(([oPid, list]) => {
         (list || []).forEach(p => {
           if (p.type === "pool" && p.artistName === placement.artistName) {
-            contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn });
+            contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn, agentId: p.agentId });
           }
         });
       });
-      if (contestants.length === 1) return { type: "uncontested", artist, poolIdx, pid };
+      if (contestants.length === 1) return { type: "uncontested", artist, poolIdx, pid, agentId: placement.agentId };
       return { type: "contested", artist, poolIdx, contestants };
     }
 
@@ -4886,33 +4895,37 @@ export default function Headliners() {
     setArtistPool(newPool);
     // v199.5: genre auto-win agents. If any contestant holds a genre agent whose genre
     // matches the artist's genre, that contestant auto-wins the contest (overrides the
-    // dice-roll winner). Earliest placement wins ties. The 6 genre agents are:
-    // Ricky Rapper (Hip Hop), Sarah Star (Pop), Vinny Vinyl (Electronic), Rocky Rocker (Rock),
-    // Hannah Hipster (Indie), Franny Funktown (Funk).
+    // dice-roll winner). Earliest placement wins ties.
+    // v199.8: read each contestant's placement-time agentId (stored on the tempt placement
+    // and carried through resolvePoolAgents → contestantData). This fixes cross-season
+    // tempts: if an Autumn tempt resolves in Winter, the Autumn agent still fires.
     if (gameModeRef.current === "quickYear") {
       const artistGenre = (artist.genre || "").toLowerCase();
+      const getContestantAgent = (c) => {
+        // Prefer placement-time agentId (from the tempt placement), fall back to current
+        // hotlineAgents in case the placement didn't carry it (legacy / defensive).
+        const id = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+        return id ? HOTLINE_AGENT_POOL.find(a => a.id === id) : null;
+      };
       const genreAutoWinners = contestantData.filter(c => {
-        const ag = hotlineAgentsRef.current[c.pid];
+        const ag = getContestantAgent(c);
         return ag?.trigger === "genre_win" && ag.genre && artistGenre.includes(ag.genre.toLowerCase());
       });
       if (genreAutoWinners.length > 0) {
-        // Multiple genre agents could match (e.g., multi-genre artist like Hip Hop/Pop with
-        // both Ricky and Sarah in play). Earliest placer wins — use the contest's own order.
         const forcedWinner = genreAutoWinners[0];
         if (forcedWinner.pid !== winnerId) {
-          const oldName = players.find(p => p.id === winnerId)?.festivalName || "?";
           const newName = players.find(p => p.id === forcedWinner.pid)?.festivalName || "?";
-          const forcedAgent = hotlineAgentsRef.current[forcedWinner.pid];
+          const forcedAgent = getContestantAgent(forcedWinner);
           addLog(`${forcedAgent.emoji} ${forcedAgent.name}`, `${newName}'s ${forcedAgent.name} overrides the contest — auto-wins ${artist.name} (${forcedAgent.genre} match)`);
           winnerId = forcedWinner.pid;
           contest = { ...contest, winnerId };
         }
       }
-      // v199.6: Patty Promises pre-flag — if the (possibly forced) contest winner has
-      // Patty, mark the artist BEFORE the book-decision so bookArtistToStage can award
-      // the +4 genre-match bonus. Doing it in the dispatcher-at-end would be too late
-      // because by then the artist is already booked.
-      const winnerAgent = hotlineAgentsRef.current[winnerId];
+      // v199.6: Patty Promises pre-flag — if the (possibly forced) contest winner has Patty,
+      // mark the artist BEFORE the book-decision so bookArtistToStage can award the +4
+      // genre-match bonus. Uses placement-time agent per the same v199.8 reasoning.
+      const winnerContestant = contestantData.find(c => c.pid === winnerId);
+      const winnerAgent = winnerContestant ? getContestantAgent(winnerContestant) : null;
       if (winnerAgent?.id === "patty_promises") {
         artist._pattyPromises = true;
         contest = { ...contest, artist };
@@ -5030,25 +5043,21 @@ export default function Headliners() {
     bumpYearEvent(winnerId, "contestWinsThisYear");
     setTimeout(() => checkMidYearAchievements(winnerId), 80);
     setTimeout(() => recalcTickets(), 50);
-    // v199.5: fire Hotline agent effects for all contestants.
-    // Context includes:
-    //   - contestOpponent: for losers, the pid of the winner (Charlie Compensation needs this)
-    //   - wasUncontested: false here (contested path); uncontested path sets true
-    //   - neighborLeft/neighborRight: current pool neighbors of the tempted artist's old pos
-    //     (Tony Tactic needs these). The pool has already had the artist removed.
+    // v199.8: fire Hotline agent effects using the PLACEMENT-TIME agentId per contestant
+    // (not whatever agent they have now). This fixes the Fiona-Fighter-skipped bug for
+    // tempts that cross a season boundary — the agent that was in play when the tempt was
+    // placed still fires at resolution, regardless of whether the player has since respun.
     if (gameModeRef.current === "quickYear") {
-      // Capture pool neighbors from the ORIGINAL pool (before artist removal) via idx.
-      // We used `idx` above to find the artist's position in the pre-removal pool.
       const origPool = artistPool; // closure-captured, pre-newPool mutation
       const neighborLeft = idx > 0 ? origPool[idx - 1] : null;
       const neighborRight = idx >= 0 && idx + 1 < origPool.length ? origPool[idx + 1] : null;
       contestantData.forEach(c => {
-        const agent = hotlineAgentsRef.current[c.pid];
-        if (!agent) return;
+        const agentId = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+        if (!agentId) return;
         const outcome = c.pid === winnerId ? "win" : "loss";
         applyHotlineAgentEffect(c.pid, outcome, {
           artist: contest.artist,
-          agentId: agent.id,
+          agentId,
           contestOpponent: outcome === "loss" ? winnerId : null,
           wasUncontested: false,
           neighborLeft,
@@ -13091,27 +13100,37 @@ export default function Headliners() {
                 </div>;
               })}
             </div>}
-            {/* v199: Hotline agent panel. Shows each player's current-season agent + used flag. */}
-            {gameMode === "quickYear" && Object.keys(hotlineAgents).length > 0 && (
-              <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
-                <div style={{ color: "#fca5a5", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>📞 Hotline — {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</div>
-                {players.map(p => {
-                  const agent = hotlineAgents[p.id];
-                  const used = hotlineUsed[p.id];
-                  if (!agent) return null;
-                  return (
-                    <div key={p.id} style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: used ? "rgba(30,41,59,0.4)" : "rgba(252,211,77,0.08)", border: used ? "1px solid #334155" : "1px solid rgba(252,211,77,0.3)", opacity: used ? 0.55 : 1 }}>
+            {/* v199.7: Hotline agent panel. Only shows the CURRENT player's own agent card.
+                Opponents' agents are private — the only indication other players have an
+                agent is a one-line "N opponents have agents" count (no names, no effects).
+                Agents become visible to all once used, via the game log. */}
+            {gameMode === "quickYear" && Object.keys(hotlineAgents).length > 0 && (() => {
+              const myAgent = hotlineAgents[currentPlayerId];
+              const myUsed = hotlineUsed[currentPlayerId];
+              const opponentsWithAgents = players.filter(p => p.id !== currentPlayerId && hotlineAgents[p.id]).length;
+              return (
+                <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                  <div style={{ color: "#fca5a5", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>📞 Hotline — {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</div>
+                  {myAgent ? (
+                    <div style={{ padding: 6, borderRadius: 6, marginBottom: 4, background: myUsed ? "rgba(30,41,59,0.4)" : "rgba(252,211,77,0.08)", border: myUsed ? "1px solid #334155" : "1px solid rgba(252,211,77,0.3)", opacity: myUsed ? 0.55 : 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                        <span style={{ fontSize: 16 }}>{agent.emoji}</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: used ? "#94a3b8" : "#fcd34d" }}>{agent.name}</span>
-                        {used && <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic", marginLeft: "auto" }}>used</span>}
+                        <span style={{ fontSize: 16 }}>{myAgent.emoji}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: myUsed ? "#94a3b8" : "#fcd34d" }}>{myAgent.name}</span>
+                        {myUsed && <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic", marginLeft: "auto" }}>used</span>}
                       </div>
-                      <div style={{ fontSize: 9, color: "#94a3b8", marginLeft: 22 }}>{p.festivalName}: {agent.effect}</div>
+                      <div style={{ fontSize: 9, color: "#94a3b8", marginLeft: 22 }}>{myAgent.effect}</div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  ) : (
+                    <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic", padding: 4 }}>Waiting for your Hotline spin this season.</div>
+                  )}
+                  {opponentsWithAgents > 0 && (
+                    <div style={{ fontSize: 9, color: "#64748b", fontStyle: "italic", marginTop: 4, paddingTop: 4, borderTop: "1px dashed rgba(100,116,139,0.2)" }}>
+                      {opponentsWithAgents} opponent{opponentsWithAgents === 1 ? " has" : "s have"} a secret agent this season.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {/* v197.14: Infrastructure Rewards panel — moved OUT of the microtrends tab so
                 it's always visible during gameplay regardless of which sidebar tab is
                 selected. Shows current reward + leader per amenity. Refreshes live as
