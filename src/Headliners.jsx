@@ -13732,15 +13732,41 @@ export default function Headliners() {
               <button onClick={cancelFieldPlacement} style={{ ...bs, marginTop: 8, fontSize: 11 }}>← Cancel</button>
             </div>}
 
-            {/* Deploy Agent / Tempt — pool claim only */}
-            {(turnAction === "deployAgent" || turnAction === "agentPool") && <div style={{ textAlign: "center" }}>
-              <p style={{ color: temptMode ? "#fbbf24" : "#60a5fa", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{temptMode ? "💫 Tempt a Pool Artist" : "🕵️ Claim a Pool Artist"}</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{temptMode ? "Spend 2 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage (+2 🔥 Fame refunded, net 0). If contested → dice roll decides, 1 🔥 Fame refunded to contestants." : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties)."}</p>
+            {/* Deploy Agent / Tempt — pool claim only.
+                v199.2: Quick Play Hotline rewrites both the title and the description to
+                reflect the agent-powered tempt (no Fame cost, no per-artist Fame gate).
+                Classic flow (temptMode + non-quickYear) keeps the 2-Fame rules exactly. */}
+            {(turnAction === "deployAgent" || turnAction === "agentPool") && (() => {
+              const inQuickTempt = gameMode === "quickYear" && temptMode;
+              const qyAgent = inQuickTempt ? hotlineAgents[currentPlayerId] : null;
+              return <div style={{ textAlign: "center" }}>
+                <p style={{ color: temptMode ? "#fbbf24" : "#60a5fa", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                  {inQuickTempt
+                    ? `📞 Tempt via ${qyAgent?.name || "your agent"}`
+                    : (temptMode ? "💫 Tempt a Pool Artist" : "🕵️ Claim a Pool Artist")}
+                </p>
+                <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>
+                  {inQuickTempt
+                    ? (qyAgent
+                      ? `No Fame cost — this tempt is powered by ${qyAgent.emoji} ${qyAgent.name}. Pick any pool artist. ${qyAgent.effect}`
+                      : "No active agent this season — can't tempt.")
+                    : (temptMode
+                      ? "Spend 2 🔥 Fame to court a pool artist. Next turn: uncontested → book to stage (+2 🔥 Fame refunded, net 0). If contested → dice roll decides, 1 🔥 Fame refunded to contestants."
+                      : "Place your agent on an artist you can afford. Next turn: uncontested → book to stage. Contested → dice roll tiebreak (earliest placer wins ties).")}
+                </p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {artistPool.map((a, i) => {
                   const canAfford = canAffordArtist(a, currentPD, sec3Reduction(currentPlayerId));
-                  const canTempt = temptMode ? ((currentPD.fame || 0) >= 2) : true;
+                  // v199.2: in Quick Play tempt flow, every pool artist is clickable regardless
+                  // of Fame or amenity costs — the Hotline agent is the gate. The old "Need 2 🔥 Fame"
+                  // overlay should NEVER show in Quick Play.
+                  const canTempt = inQuickTempt
+                    ? !!qyAgent
+                    : (temptMode ? ((currentPD.fame || 0) >= 2) : true);
                   const clickable = temptMode ? canTempt : canAfford;
+                  const lockedReason = !clickable
+                    ? (inQuickTempt ? "No agent" : temptMode ? "Need 2 🔥 Fame" : "Can't afford")
+                    : null;
                   const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                   return <div key={i} style={{ position: "relative" }}>
                     <ArtistCard artist={a} showCost small onClick={() => {
@@ -13748,7 +13774,7 @@ export default function Headliners() {
                       placeAgentOnArtist(currentPlayerId, i);
                       setTurnAction(null);
                     }} />
-                    {!clickable && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>{temptMode ? "Need 2 🔥 Fame" : "Can't afford"}</div>}
+                    {lockedReason && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#f87171" }}>{lockedReason}</div>}
                     {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                       {agentsOnIt.map(([pid], ai) => {
                         const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -13806,7 +13832,8 @@ export default function Headliners() {
                 </div>;
               })()}
               <button onClick={() => setTurnAction(null)} style={{ ...bs, fontSize: 12, marginTop: 12 }}>← Cancel</button>
-            </div>}
+            </div>;
+            })()}
 
             {/* Pending agent artist booking (uncontested) */}
             {/* v133: fame-gain popup — click-through celebration whenever the current
