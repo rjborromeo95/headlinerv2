@@ -97,6 +97,33 @@ const TURNS_PER_YEAR = { 1: 6, 2: 7, 3: 8, 4: 9 };
 // plays or tickets, so a flat schedule tightens the endgame without hurting scoring.
 const TURNS_PER_YEAR_FLAT = { 1: 6, 2: 6, 3: 6, 4: 6 };
 const FAME_MAX = 5;
+// v198: Quick Play (1 Year) mode constants. Fame overflow cap at 7 (so players can
+// store 2 "spending reserve" Fame above the 5-status cap). 4 seasons × 3 turns each.
+// Season order starts in Autumn (planning), moves through Winter, Spring, and ends
+// in Summer (the festival payoff). Mirrors a real festival-planning calendar.
+const FAME_CAP_QUICKYEAR = 7;
+const QUICKYEAR_TOTAL_TURNS = 12;
+const QUICKYEAR_SEASONS = ["autumn", "winter", "spring", "summer"];
+const QUICKYEAR_SEASON_LABELS = { autumn: "Autumn", winter: "Winter", spring: "Spring", summer: "Summer" };
+const QUICKYEAR_SEASON_EMOJI = { autumn: "🍂", winter: "❄️", spring: "🌱", summer: "☀️" };
+// Pool of 13 objectives — draw 8 at game start, pair randomly into the 4 seasons
+// (2 per season), no duplicates, no type-locking. Each objective has a metric key
+// read from `seasonStats[pid][season]` and a short label for the UI.
+const QUICKYEAR_OBJECTIVE_POOL = [
+  { id: "most_campsites",    label: "Most Campsites built this season",       metric: "campsitesBuilt" },
+  { id: "most_portaloos",    label: "Most Portaloos built this season",       metric: "portaloosBuilt" },
+  { id: "most_catering",     label: "Most Catering Vans built this season",   metric: "cateringBuilt" },
+  { id: "most_security",     label: "Most Security built this season",        metric: "securityBuilt" },
+  { id: "most_artists",      label: "Most artists played this season",        metric: "artistsPlayed" },
+  { id: "most_headliners",   label: "Most Fame 4+ artists played this season", metric: "highFameArtists" },
+  { id: "most_single_genre", label: "Most artists of a single genre this season", metric: "maxGenreCount" },
+  { id: "most_genres",       label: "Most unique genres played this season",  metric: "uniqueGenres" },
+  { id: "most_fame_spent",   label: "Most Fame spent this season",            metric: "fameSpent" },
+  { id: "most_tickets",      label: "Most tickets gained this season",        metric: "ticketsGained" },
+  { id: "most_microtrends",  label: "Most microtrends claimed this season",   metric: "microtrendsClaimed" },
+  { id: "most_stages_filled",label: "Most stages filled (3 artists) this season", metric: "stagesFilled" },
+  { id: "most_on_one_stage", label: "Most artists played on a single stage this season", metric: "maxStagePlays" },
+];
 const GENRE_COLORS = { Pop: "#ec4899", Rock: "#ef4444", Electronic: "#94a3b8", "Hip Hop": "#f97316", Indie: "#22c55e", Funk: "#a855f7" };
 const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 
@@ -1869,6 +1896,45 @@ export default function Headliners() {
   const [infraRewardsMode, setInfraRewardsMode] = useState(false);
   const infraRewardsModeRef = useRef(false);
   useEffect(() => { infraRewardsModeRef.current = infraRewardsMode; }, [infraRewardsMode]);
+  // v198: game mode toggle. "classic" = the existing 3-year/18-turn game (default,
+  // unchanged behavior). "quickYear" = the 1-year/12-turn Quick Play mode built on
+  // top of classic. Every mode-divergent code path reads gameModeRef.current and
+  // branches accordingly, so classic games are byte-identical to pre-v198 behavior
+  // when the toggle is off. See README-mode-notes (if we add one) for which systems
+  // branch. Known branches at build time: season tracker, objective framework,
+  // Fame spend menu, Fame overflow cap, infra draw count, game-end effect routing,
+  // stage decay removal, year-end draft skip.
+  const [gameMode, setGameMode] = useState("classic");
+  const gameModeRef = useRef("classic");
+  useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
+  // v198: Quick Play state. All only used when gameMode === "quickYear".
+  // quickYearPublicObjectives: { autumn: [obj,obj], winter: [...], spring: [...], summer: [...] }
+  // Each entry is an objective object cloned from QUICKYEAR_OBJECTIVE_POOL.
+  const [quickYearPublicObjectives, setQuickYearPublicObjectives] = useState(null);
+  // quickYearSeason: current season label ("autumn" | "winter" | "spring" | "summer")
+  const [quickYearSeason, setQuickYearSeason] = useState("autumn");
+  const quickYearSeasonRef = useRef("autumn");
+  useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
+  // quickYearTurnsTaken: total turns taken by all players combined. When it hits
+  // nPlayers * 3, 6, 9 — season boundary. nPlayers * 12 — game end.
+  const [quickYearTurnsTaken, setQuickYearTurnsTaken] = useState(0);
+  // seasonStats[pid][season] = { campsitesBuilt, portaloosBuilt, cateringBuilt,
+  //   securityBuilt, artistsPlayed, highFameArtists, genresPlayed (set), stagesFilled,
+  //   maxStagePlays, fameSpent, ticketsGained, microtrendsClaimed, maxGenreCount }
+  // Derived metrics (maxGenreCount, uniqueGenres) computed from genresPlayed object
+  // at scoring time rather than kept in sync.
+  const [seasonStats, setSeasonStats] = useState({});
+  const seasonStatsRef = useRef({});
+  useEffect(() => { seasonStatsRef.current = seasonStats; }, [seasonStats]);
+  // Secret objectives in each player's hand. { pid: [obj, obj, ...] }
+  const [quickYearSecretObjs, setQuickYearSecretObjs] = useState({});
+  // Per-turn Fame spend lock. Keyed "pid:turnsTaken" — set when a player spends on
+  // their turn. Prevents spending twice in one turn.
+  const fameSpendUsedRef = useRef({});
+  // Season-end scoring modal state. Null when idle; { season, awards: [{pid, objId, place, fame}] } when open.
+  const [seasonEndScoring, setSeasonEndScoring] = useState(null);
+  // Fame spend menu visibility state. Shown when player clicks the "Spend Fame" button.
+  const [fameSpendMenuOpen, setFameSpendMenuOpen] = useState(false);
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
   const [infraRewards, setInfraRewards] = useState(null);
@@ -2014,6 +2080,9 @@ export default function Headliners() {
       ...prev,
       [pid]: [...(prev[pid] || []), { source, amount, year: yearRef.current || year || 1 }]
     }));
+    // v198: track positive ticket gains for Quick Play "Most tickets gained this season".
+    // Negative/zero amounts don't count toward the objective.
+    if (amount > 0) bumpSeasonStat(pid, "ticketsGained", amount);
   };
   // v132: last-action tracking — small "what did player X do last?" strings shown under
   // each player's stat row for spectators. Updated on each of the three main action types
@@ -2072,6 +2141,9 @@ export default function Headliners() {
       ...prev,
       [pid]: [...(prev[pid] || []), { source, amount, year: y }]
     }));
+    // v198: Quick Play — track Fame gained for the "Most Fame gained this season"
+    // metric. Positive amounts only (losses don't count as gains).
+    if (amount > 0) bumpSeasonStat(pid, "fameGained", amount);
     // v197.12/19: "VIP Passes" (cat_3) — the catering leader gets +1 ticket every time
     // they GAIN Fame (positive amounts only, not losses). Bookkeeping-only, no popup
     // because this can fire many times per turn.
@@ -2248,7 +2320,7 @@ export default function Headliners() {
     switch (r.type) {
       case "fame": {
         const amount = (r.perYear && r.perYear[yIdx]) || 1;
-        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(FAME_MAX, (prev[pid]?.baseFame || 0) + amount) } }));
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (prev[pid]?.baseFame || 0) + amount) } }));
         logFameGain(pid, amount, `Contract: ${council.name}`);
         addLog("📜 Contract", `${pName} claimed ${council.name}: +${amount} 🔥 Fame`);
         break;
@@ -2385,7 +2457,7 @@ export default function Headliners() {
       [pid]: [...(prev[pid] || []), { source, amount, year: y, kind: "fame" }],
     }));
     logFameGain(pid, amount, source);
-    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, Math.max(0, (p[pid]?.baseFame || 0) + amount)) } }));
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, Math.max(0, (p[pid]?.baseFame || 0) + amount)) } }));
   };
 
   // v154: fires when an artist is played (any path — hand, pool, contest, tempt) after
@@ -2936,7 +3008,7 @@ export default function Headliners() {
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     if (hasFame) {
       logFameGain(pid, 1, "Backstage Perks (Most Catering)");
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
       addLog("🏗️ Reward", `${pName}: +1 🔥 Fame from Backstage Perks (Fame die in pool)`);
       showFloatingBonus("+1 🔥 Fame (Backstage Perks)", "#fb923c");
     } else {
@@ -3037,9 +3109,188 @@ export default function Headliners() {
   const noTurnsLeft = currentPlayerId !== undefined && (turnsLeft[currentPlayerId] || 0) <= 0;
 
   // ─── Ticket calc ───
-  /** Compute effective fame for a player: base fame from artist effects + tickets-derived fame, capped at 5 */
+  // v198: mode-aware Fame cap. Classic caps at FAME_MAX (5). Quick Play allows up to
+  // FAME_CAP_QUICKYEAR (7) — the extra 2 are "overflow" spending reserve that doesn't
+  // unlock higher-Fame artists (since none exist above Fame 5) but can be spent via
+  // the Fame spend menu (1/turn). Reads gameModeRef so it's safe to call outside render.
+  const getFameCap = () => gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
+
+  // v198: Quick Play — season stat tracking. Each player accumulates per-season metrics
+  // during play. Scoring reads these at season boundaries to determine objective winners.
+  // genresPlayed is a {genre: count} map so we can compute maxGenreCount and uniqueGenres
+  // without duplicating state.
+  function makeEmptySeasonStats() {
+    return {
+      campsitesBuilt: 0, portaloosBuilt: 0, cateringBuilt: 0, securityBuilt: 0,
+      artistsPlayed: 0, highFameArtists: 0, genresPlayed: {}, stagesFilled: 0,
+      stagePlays: [0, 0, 0], fameGained: 0, fameSpent: 0, ticketsGained: 0,
+      microtrendsClaimed: 0,
+    };
+  }
+  // Increment a numeric metric on the current player's current season stats.
+  // No-op outside Quick Play — classic doesn't track seasonStats.
+  const bumpSeasonStat = (pid, metric, amount = 1) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const s = quickYearSeasonRef.current;
+    setSeasonStats(prev => {
+      const pdSeasons = prev[pid] || { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() };
+      const seasonCur = pdSeasons[s] || makeEmptySeasonStats();
+      const next = { ...prev, [pid]: { ...pdSeasons, [s]: { ...seasonCur, [metric]: (seasonCur[metric] || 0) + amount } } };
+      seasonStatsRef.current = next;
+      return next;
+    });
+  };
+  // Add a genre play to the player's current season genre map, and bump artistsPlayed +
+  // highFameArtists + stagePlays[stageIdx] atomically.
+  const bumpSeasonArtist = (pid, artist, stageIdx) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const s = quickYearSeasonRef.current;
+    const genres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
+    setSeasonStats(prev => {
+      const pdSeasons = prev[pid] || { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() };
+      const seasonCur = pdSeasons[s] || makeEmptySeasonStats();
+      const genresPlayed = { ...seasonCur.genresPlayed };
+      genres.forEach(g => { genresPlayed[g] = (genresPlayed[g] || 0) + 1; });
+      const stagePlays = [...(seasonCur.stagePlays || [0, 0, 0])];
+      if (stageIdx != null && stageIdx >= 0 && stageIdx < stagePlays.length) stagePlays[stageIdx] = (stagePlays[stageIdx] || 0) + 1;
+      const updated = {
+        ...seasonCur,
+        artistsPlayed: (seasonCur.artistsPlayed || 0) + 1,
+        highFameArtists: (seasonCur.highFameArtists || 0) + ((artist.fame || 0) >= 4 ? 1 : 0),
+        genresPlayed,
+        stagePlays,
+      };
+      const next = { ...prev, [pid]: { ...pdSeasons, [s]: updated } };
+      seasonStatsRef.current = next;
+      return next;
+    });
+  };
+  // Read a season metric value for scoring. Handles derived metrics (maxGenreCount,
+  // uniqueGenres, maxStagePlays) that aren't stored directly.
+  const readSeasonMetric = (statsForPlayer, season, metric) => {
+    const s = statsForPlayer?.[season] || makeEmptySeasonStats();
+    if (metric === "maxGenreCount") {
+      const vals = Object.values(s.genresPlayed || {});
+      return vals.length === 0 ? 0 : Math.max(...vals);
+    }
+    if (metric === "uniqueGenres") return Object.keys(s.genresPlayed || {}).length;
+    if (metric === "maxStagePlays") {
+      const vals = s.stagePlays || [0, 0, 0];
+      return vals.length === 0 ? 0 : Math.max(...vals);
+    }
+    return s[metric] || 0;
+  };
+  // Check whether a given objective is met for a given player (used by secret objective
+  // reveal). Score threshold: for secrets, we don't require 1st place — just that the
+  // player has done the thing at least once (metric > 0 for count-based, > 1 for max-ish).
+  // For "most X" style objectives, "met" means metric >= 2 — a reasonable threshold.
+  const isSecretObjectiveMet = (pid, objective) => {
+    const s = quickYearSeasonRef.current;
+    const stats = seasonStatsRef.current[pid];
+    if (!stats) return false;
+    const val = readSeasonMetric(stats, s, objective.metric);
+    // Secret objectives are met if the player's metric is >= 2 (meaning they've made
+    // meaningful progress this season). Low bar — the reward is only 3 Fame.
+    return val >= 2;
+  };
+
+  // v198: season-end scoring. For each of the ending season's 2 objectives, rank players
+  // by metric value, award 3 Fame to strict 1st, 2 Fame to strict 2nd. Ties for 1st =
+  // split: everyone tied for 1st gets 3 Fame, no one gets 2nd Fame. Ties for 2nd = all
+  // get 2 Fame. Zero scores don't award (nobody did it, nobody wins).
+  // On game end (summer), also triggers gameOver phase after scoring.
+  const runQuickYearSeasonEnd = (season, isGameEnd, nextPlayerIdx) => {
+    const objs = (quickYearPublicObjectives && quickYearPublicObjectives[season]) || [];
+    const awards = [];
+    objs.forEach(obj => {
+      const scored = players.map(p => ({
+        pid: p.id,
+        name: p.festivalName,
+        isAI: p.isAI,
+        value: readSeasonMetric(seasonStatsRef.current[p.id], season, obj.metric),
+      }));
+      scored.sort((a, b) => b.value - a.value);
+      // Determine 1st and 2nd place groups (tie-aware).
+      const topVal = scored[0]?.value || 0;
+      if (topVal <= 0) {
+        // Nobody scored on this objective — no awards.
+        awards.push({ objective: obj, firstPlace: [], secondPlace: [], noScore: true });
+        return;
+      }
+      const firstPlace = scored.filter(s => s.value === topVal);
+      let secondPlace = [];
+      if (firstPlace.length === 1) {
+        const secondVal = scored[1]?.value || 0;
+        if (secondVal > 0) secondPlace = scored.filter(s => s.value === secondVal);
+      }
+      awards.push({ objective: obj, firstPlace, secondPlace, topVal });
+    });
+
+    // Apply Fame awards + log. Each setPlayerData uses mode-aware cap.
+    awards.forEach(a => {
+      a.firstPlace.forEach(p => {
+        setPlayerData(prev => ({ ...prev, [p.pid]: { ...prev[p.pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (prev[p.pid]?.baseFame || 0) + 3) } }));
+        logFameGain(p.pid, 3, `Season Objective 1st: ${a.objective.label}`);
+        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} 1st`, `${p.name}: +3 🔥 Fame (${a.objective.label}, scored ${a.topVal})`);
+      });
+      a.secondPlace.forEach(p => {
+        setPlayerData(prev => ({ ...prev, [p.pid]: { ...prev[p.pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (prev[p.pid]?.baseFame || 0) + 2) } }));
+        logFameGain(p.pid, 2, `Season Objective 2nd: ${a.objective.label}`);
+        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} 2nd`, `${p.name}: +2 🔥 Fame (${a.objective.label}, scored ${p.value})`);
+      });
+      if (a.noScore) {
+        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} —`, `No one scored on "${a.objective.label}" — no Fame awarded`);
+      }
+    });
+
+    // Open the season-end scoring modal so humans can see what happened. After they
+    // close it, advance to the next season (or trigger game end).
+    setSeasonEndScoring({
+      season,
+      awards,
+      isGameEnd,
+      nextPlayerIdx,
+    });
+  };
+
+  // Called from the season-end modal's close button. Advances to the next season (or
+  // triggers game end), then resumes turn flow by setting currentPlayerIdx to the
+  // player who was next in line when the season ended.
+  const continueFromSeasonEnd = () => {
+    if (!seasonEndScoring) return;
+    const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
+    setSeasonEndScoring(null);
+    if (isGameEnd) {
+      // Fire a final recompute so any Fame-driven downstream numbers refresh, then end.
+      setTimeout(() => { recalcTickets(); setPhase("gameOver"); addLogH("Game Over — Festival Complete!", "round"); }, 100);
+      return;
+    }
+    // Transition to the next season.
+    const nextSeason = season === "autumn" ? "winter" : season === "winter" ? "spring" : season === "spring" ? "summer" : null;
+    if (nextSeason) {
+      setQuickYearSeason(nextSeason);
+      quickYearSeasonRef.current = nextSeason;
+      addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
+      const nextObjs = (quickYearPublicObjectives && quickYearPublicObjectives[nextSeason]) || [];
+      addLog(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]}`, `Objectives this season: ${nextObjs.map(o => o.label).join(" · ")}`);
+    }
+    // Resume turn flow for the next player.
+    if (nextPlayerIdx >= 0 && nextPlayerIdx < turnOrder.length) {
+      setCurrentPlayerIdx(nextPlayerIdx);
+      const np = players.find(p => p.id === turnOrder[nextPlayerIdx]);
+      addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
+      refillPool();
+      // v198: reset pending-effect / selection state so the new player starts clean,
+      // mirroring the state resets at the top of endTurn.
+      setTurnAction(null); setSelectedDie(null); setActionTaken(false);
+      setDice(rollDice());
+      // Give the player a fresh turn-start view.
+      setShowTurnStart(true);
+    }
+  };
+  /** Compute effective fame for a player: base fame from artist effects + tickets-derived fame, capped at 5 (classic) or 7 (Quick Play) */
   const calcFame = useCallback((pd) => {
-    return Math.min(FAME_MAX, pd.baseFame || 0);
+    return Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, pd.baseFame || 0);
   }, []);
 
   // Pure function: compute tickets/fame for a single player data object
@@ -3088,7 +3339,9 @@ export default function Headliners() {
     t += councilTickets;
     let fame = pd.baseFame || 0;
     fame += councilFame;
-    fame = Math.min(FAME_MAX, fame);
+    // v198: mode-aware Fame cap. Quick Play allows up to 7 (status cap still 5 since
+    // all artists top out at Fame 5, but 6-7 serves as spending reserve).
+    fame = Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, fame);
     return { ...pd, fields, amenities: am, tickets: t, rawTickets: t, fame, councilTicketsThisYear: councilTickets, councilFameThisYear: councilFame };
   }
 
@@ -3360,7 +3613,7 @@ export default function Headliners() {
                 stageArtists: [...(cur.stageArtists || []), []],
                 stageNames: [...(cur.stageNames || []), sName],
                 stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageCount % STAGE_COLORS.length]],
-                baseFame: grantOpeningFame ? Math.min(FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
+                baseFame: grantOpeningFame ? Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
               }
             };
           });
@@ -3555,7 +3808,7 @@ export default function Headliners() {
     setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(0, -1) }));
     // No logFameGain here — undoing is a refund, not a celebration.
     // v196: refund 2 Fame (matches new tempt cost of 2).
-    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 2 🔥 Fame refunded`);
     showFloatingBonus(`↩️ ${removed.artistName} withdrawn`, "#94a3b8");
@@ -3723,7 +3976,7 @@ export default function Headliners() {
     logFameGain(pid, 1, "Matching a Microtrend");
     setPlayerData(p => ({ ...p, [pid]: {
       ...p[pid],
-      baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1),
+      baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1),
       microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
     } }));
     addLog("🕵️ Agent", `${pName} placed agent on "${trendLabel}" microtrend → +1 🔥 Fame!`);
@@ -3768,7 +4021,7 @@ export default function Headliners() {
     });
     if (agentFameGain > 0) {
       logFameGain(pid, agentFameGain, `Agent effect: ${artist.name}`);
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + agentFameGain) } }));
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + agentFameGain) } }));
       addLog("🕵️ Agent", `${pName}: +${agentFameGain} 🔥 Fame from successful agent action (Council reward)`);
       showFloatingBonus(`+${agentFameGain} 🔥 Fame!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
@@ -3842,7 +4095,7 @@ export default function Headliners() {
         // Artist no longer in pool — refund the full tempt cost (v196: 2 Fame) and drop.
         setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
         // No logFameGain — refunds shouldn't feel like celebrations.
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
         addLog("💫 Tempt", `${placement.artistName} no longer available — 2 🔥 Fame refunded`);
         return null;
       }
@@ -3960,7 +4213,7 @@ export default function Headliners() {
     if (!temptModeRef.current) return;
     setPlayerData(p => {
       const opd = p[pid] || {};
-      return { ...p, [pid]: { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 2) } };
+      return { ...p, [pid]: { ...opd, baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (opd.baseFame || 0) + 2) } };
     });
     const name = players.find(p => p.id === pid)?.festivalName || "?";
     logFameGain(pid, 2, "Uncontested tempt win");
@@ -4013,7 +4266,7 @@ export default function Headliners() {
         const next = { ...p };
         contestantData.forEach(c => {
           const opd = next[c.pid] || {};
-          next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+          next[c.pid] = { ...opd, baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (opd.baseFame || 0) + 1) };
         });
         return next;
       });
@@ -4771,7 +5024,7 @@ export default function Headliners() {
     if (fameMatch) {
       const amount = parseInt(fameMatch[1]);
       logFameGain(pid, amount, `Genre-match: ${artist.name}`);
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
     }
     // +N ticket sales (plain flat; only match if not "per ..." — those get their own handler)
     const flatTix = gl.match(/\+(\d+)\s*ticket(?:\s*sales?)?(?!\s*\/|\s*per)/);
@@ -5038,7 +5291,7 @@ export default function Headliners() {
       if (fameMatch) {
         const amount = parseInt(fameMatch[1]);
         logFameGain(pid, amount, `Genre-match: ${artist.name}`);
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + amount) } }));
         addLog("🕵️ Agent Effect", `${artist.name}: +${amount} 🔥 Fame (agent booking)`);
         showFloatingBonus(`+${amount} 🔥 Agent!`, "#f97316");
       }
@@ -5408,7 +5661,7 @@ export default function Headliners() {
       // === Fame effects ===
       if (el.includes("+fame") || (el.includes("+1 fame") && !el.includes("fame if"))) {
         logFameGain(pid, 1, "Effect");
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
         addLog("Effect", `${artist.name}: +1 Fame`);
         showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
       }
@@ -5421,7 +5674,7 @@ export default function Headliners() {
           const count = (pd.stageArtists || []).flat().filter(a => getGenres(a.genre).includes(targetGenre)).length;
           if (count >= 2) {
             logFameGain(pid, 1, `${artist.name} effect`);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
             addLog("Effect", `${artist.name}: +1 Fame (2+ ${targetGenre} artists!)`);
             showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
           } else {
@@ -5499,7 +5752,7 @@ export default function Headliners() {
       if (el.includes("roll all amenity dice") && el.includes("gain 1 fame if a fame shows")) {
         triggerDiceRoll(5, pid, artist.name,
           (results) => { const hasFame = results.some(d => d === "fame"); return hasFame ? "🔥 Fame shown! +1 Fame" : "No fame shown"; },
-          (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+          (results) => { if (results.some(d => d === "fame")) { logFameGain(pid, 1, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1) } })); showFloatingBonus("+1 🔥", "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
       // v163: "draw an artist objective" (Missy Elliott) — the objective system was
@@ -5551,7 +5804,7 @@ export default function Headliners() {
           const count = booked.filter(a => getGenres(a.genre).includes(genreMatch[1]) || getGenres(a.genre).includes(genreMatch[2])).length;
           if (count >= 2) {
             logFameGain(pid, 1, `${artist.name} effect`);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 1) } }));
             addLog("Effect", `${artist.name}: +1 Fame (2+ ${genreMatch[1]}/${genreMatch[2]} artists!)`);
             showFloatingBonus("+1 🔥", "#f97316"); sfx.gainFame();
           } else {
@@ -5565,7 +5818,7 @@ export default function Headliners() {
         if (forFameMatch && el.includes("-") && el.includes("vp")) {
           const fameGain = parseInt(forFameMatch[1]);
           logFameGain(pid, 1, "Effect");
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain) } }));
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain) } }));
           addLog("Effect", `${artist.name}: +${fameGain} Fame`);
           showFloatingBonus(`+${fameGain} 🔥`, "#f97316"); sfx.gainFame();
         }
@@ -5573,7 +5826,7 @@ export default function Headliners() {
       // "Roll 1 amenity dice and gain 1 Fame for each Fame shown" (Loyle Carner)
       if (el.includes("roll 1 amenity dice") || el.includes("roll 1 amenity die")) {
         triggerDiceRoll(1, pid, artist.name, "+1 Fame per Fame shown",
-          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logFameGain(pid, fameCount, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
+          (results) => { const fameCount = results.filter(d => d === "fame").length; if (fameCount > 0) { logFameGain(pid, fameCount, `${artist.name} dice roll (Fame)`); setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameCount) } })); showFloatingBonus(`+${fameCount} 🔥`, "#f97316"); } setTimeout(() => recalcTickets(), 50); }
         );
       }
       // === Ticket effects ===
@@ -5748,7 +6001,7 @@ export default function Headliners() {
         if (fm) {
           const amt = parseInt(fm[1]);
           logFameGain(pid, amt, `${artist.name} effect`);
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + amt) } }));
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + amt) } }));
           addLog("Effect", `${artist.name}: +${amt} Fame`);
           showFloatingBonus(`+${amt} 🔥`, "#f97316"); sfx.gainFame();
         }
@@ -6156,6 +6409,10 @@ export default function Headliners() {
     // own "play another" effect sees the correct count and can be gated at 2.
     setPlaysThisTurn(n => n + 1);
     playsThisTurnRef.current = (playsThisTurnRef.current || 0) + 1;
+    // v198: track for Quick Play season objectives — artists played, genres, high-fame plays,
+    // stage distribution, and stages filled (if this book completes a 3-artist stage).
+    bumpSeasonArtist(pid, artist, stageIdx);
+    if (isHeadliner) bumpSeasonStat(pid, "stagesFilled", 1);
 
     // Show the booking popup (headliner popup takes priority if headliner)
     if (isHeadliner) {
@@ -6280,12 +6537,12 @@ export default function Headliners() {
         logFameGain(pid, fameGain, "Matching a Microtrend");
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
-          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+          baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
         addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends");
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
@@ -6328,12 +6585,12 @@ export default function Headliners() {
         logFameGain(pid, fameGain, "Matching a Forecast Microtrend");
         setPlayerData(p => ({ ...p, [pid]: {
           ...p[pid],
-          baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+          baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
           microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
         } }));
         addLog("🎵 Microtrend", `${festival} claimed the forecast "${claimedTrend.genre}" microtrend (anti-lead) → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends");
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
         // v197.12/22: "Word of Mouth" (port_3) also fires on forecast claims.
         // Interactive pool-or-deck picker (see comment at first site).
@@ -6809,15 +7066,31 @@ export default function Headliners() {
     // per amenity type is chosen randomly from that type's 3 options — this determines
     // what benefits are on offer for the rest of the game. Broadcast to log so players
     // know what they're chasing.
+    // v198: in Quick Play mode, draw 3 random rewards from the full 12-reward pool
+    // (not 1 per amenity type). This means some amenity categories may get no reward
+    // at all this game — each game has a different reward mix, more variance.
     if (infraRewardsModeRef.current) {
-      const drawn = {};
-      Object.entries(INFRA_REWARDS_BY_AMENITY).forEach(([amenity, ids]) => {
-        drawn[amenity] = ids[Math.floor(Math.random() * ids.length)];
-      });
+      let drawn;
+      if (gameModeRef.current === "quickYear") {
+        const allRewardIds = Object.keys(INFRA_REWARDS);
+        const shuffled = shuffle([...allRewardIds]).slice(0, 3);
+        drawn = {}; // keyed by amenity type like classic, but only 3 entries populated
+        shuffled.forEach(id => {
+          const amenity = INFRA_REWARDS[id].amenity;
+          // If the same amenity is drawn twice (shouldn't happen often with 12 pool),
+          // the second overwrites — acceptable since we draw once at game start.
+          drawn[amenity] = id;
+        });
+      } else {
+        drawn = {};
+        Object.entries(INFRA_REWARDS_BY_AMENITY).forEach(([amenity, ids]) => {
+          drawn[amenity] = ids[Math.floor(Math.random() * ids.length)];
+        });
+      }
       setInfraRewards(drawn);
       infraRewardsRef.current = drawn;
       infraRewardUsageRef.current = {};
-      addLogH("Infrastructure Rewards — this game's benefits", "round");
+      addLogH(`Infrastructure Rewards — this game's benefits (${Object.keys(drawn).length})`, "round");
       Object.entries(drawn).forEach(([amenity, id]) => {
         const r = INFRA_REWARDS[id];
         addLog("🏗️ Reward", `Most ${AMENITY_LABELS[amenity]}s → ${r.label}: ${r.desc}`);
@@ -6827,9 +7100,49 @@ export default function Headliners() {
       infraRewardsRef.current = null;
     }
 
+    // v198: Quick Play mode setup. Draw 8 unique objectives from the 13-objective pool,
+    // split randomly into 4 season pairs (2 per season). Initialize seasonStats for all
+    // players (per-season metric counters), clear secret-objective hands, reset the
+    // season to Autumn and turn-taken counter to 0.
+    if (gameModeRef.current === "quickYear") {
+      const pool = shuffle([...QUICKYEAR_OBJECTIVE_POOL]);
+      const chosen = pool.slice(0, 8).map(o => ({ ...o }));
+      const seasonsPaired = {
+        autumn: [chosen[0], chosen[1]],
+        winter: [chosen[2], chosen[3]],
+        spring: [chosen[4], chosen[5]],
+        summer: [chosen[6], chosen[7]],
+      };
+      setQuickYearPublicObjectives(seasonsPaired);
+      setQuickYearSeason("autumn");
+      quickYearSeasonRef.current = "autumn";
+      setQuickYearTurnsTaken(0);
+      // Initialize per-player per-season stat trackers to zero. These accrue during
+      // play and are read at season-end scoring. Reset to a fresh empty structure
+      // for the new season after each season boundary (in advanceQuickYearSeason).
+      const freshStats = {};
+      players.forEach(p => { freshStats[p.id] = { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() }; });
+      setSeasonStats(freshStats);
+      seasonStatsRef.current = freshStats;
+      setQuickYearSecretObjs({});
+      fameSpendUsedRef.current = {};
+      addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
+      addLog("🍂 Autumn", `Objectives: ${seasonsPaired.autumn.map(o => o.label).join(" · ")}`);
+      addLog("❄️ Winter", `Objectives: ${seasonsPaired.winter.map(o => o.label).join(" · ")}`);
+      addLog("🌱 Spring", `Objectives: ${seasonsPaired.spring.map(o => o.label).join(" · ")}`);
+      addLog("☀️ Summer", `Objectives: ${seasonsPaired.summer.map(o => o.label).join(" · ")}`);
+      addLog("⚡ Rules", "Fame is status (cap 5) with 2-point overflow to 7. Spend 1 Fame per turn: +1 amenity, refresh pool, or draw a secret objective.");
+    } else {
+      setQuickYearPublicObjectives(null);
+    }
+
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
     const schedule = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR;
-    const tl = {}; order.forEach(id => { tl[id] = schedule[1]; }); setTurnsLeft(tl);
+    // v198: in Quick Play, each player gets QUICKYEAR_TOTAL_TURNS (12) for the single year.
+    // Season transitions happen when all players have finished turns 3/6/9. Game ends
+    // when all players finish turn 12. The year value stays at 1 throughout.
+    const startingTurns = gameModeRef.current === "quickYear" ? QUICKYEAR_TOTAL_TURNS : schedule[1];
+    const tl = {}; order.forEach(id => { tl[id] = startingTurns; }); setTurnsLeft(tl);
     setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     setAgentBookedThisYear({});
     // Reset year-scoped latches
@@ -7038,7 +7351,7 @@ export default function Headliners() {
           if (pe.benefit) {
             if (pe.benefit.type === "fame") {
               logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
-              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
             } else if (pe.benefit.type === "ticket") {
               logTicketGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
               setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + pe.benefit.amount } }));
@@ -7637,7 +7950,7 @@ export default function Headliners() {
             const nd2 = [...cd2]; nd2.splice(pk.idx, 1); setDice(nd2);
             if (pk.type === "fame") {
               logFameGain(currentPlayerId, 1, "Effect");
-              setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
+              setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
             } else {
               const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1);
               setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, pk.type, +1) }));
@@ -7719,7 +8032,7 @@ export default function Headliners() {
         // Fame die
         const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
         logFameGain(currentPlayerId, 1, "Fame die");
-        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
+        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
         addLog("🤖 AI", `Rolled 🔥 Fame!`);
         trackGoalProgress(currentPlayerId, "fameDieRolls");
         setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
@@ -7805,12 +8118,12 @@ export default function Headliners() {
       logFameGain(pid, fameGain, "Matching a Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
-        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+        baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends");
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]}!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -7827,12 +8140,12 @@ export default function Headliners() {
       logFameGain(pid, fameGain, "Matching a Forecast Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
-        baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+        baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
         microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched the forecast "${AMENITY_LABELS[amenityType]}" (anti-lead) → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} forecast Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends");
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
@@ -7847,6 +8160,9 @@ export default function Headliners() {
     setLastActionFor(currentPlayerId, `built ${AMENITY_LABELS[amenityType]} ${AMENITY_ICONS[amenityType] || ""}`);
     checkSecurityVPBonus(currentPlayerId, amenityType);
     claimAmenityMicrotrend(currentPlayerId, amenityType);
+    // v198: track for Quick Play season objectives — "Most campsites/portaloos/catering/security built this season"
+    const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[amenityType];
+    if (metricKey) bumpSeasonStat(currentPlayerId, metricKey, 1);
     // v158: check whether this placement satisfies any shared contract on this field.
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
     setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
@@ -7862,7 +8178,7 @@ export default function Headliners() {
       // Fame die: gain +1 Fame this round, use turn, no placement
       const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
       logFameGain(currentPlayerId, 1, "Fame die");
-      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
       addLog(currentPlayer.festivalName, `rolled 🔥 Fame! +1 Fame this year`);
       trackGoalProgress(currentPlayerId, "fameDieRolls");
       showFloatingBonus("+1 🔥 Fame!", "#f97316");
@@ -8271,6 +8587,27 @@ export default function Headliners() {
       }
     }
 
+    // v198: Quick Play — count the turn just taken toward the global turn counter.
+    // Season transitions fire at turn 3/6/9 (per player); game ends at turn 12.
+    // We check AFTER decrementing turns because fameSpendUsedRef is keyed by old count.
+    let quickYearGameOver = false;
+    let quickYearSeasonJustEnded = null;
+    if (gameModeRef.current === "quickYear") {
+      const newTotal = quickYearTurnsTaken + 1;
+      setQuickYearTurnsTaken(newTotal);
+      const nPlayers = players.length || 1;
+      const roundsCompleted = Math.floor(newTotal / nPlayers);
+      const roundRemainder = newTotal % nPlayers;
+      // Season boundary / game end fires only when we've completed a full round
+      // (all players have taken the same number of turns). Keyed by rounds-completed.
+      if (roundRemainder === 0) {
+        if (roundsCompleted === 3) quickYearSeasonJustEnded = "autumn";
+        else if (roundsCompleted === 6) quickYearSeasonJustEnded = "winter";
+        else if (roundsCompleted === 9) quickYearSeasonJustEnded = "spring";
+        else if (roundsCompleted === 12) { quickYearSeasonJustEnded = "summer"; quickYearGameOver = true; }
+      }
+    }
+
     const findNext = () => {
       const tl = turnsLeftRef.current;
       for (let i = currentPlayerIdx + 1; i < turnOrder.length; i++) if (tl[turnOrder[i]] > 0) return i;
@@ -8278,7 +8615,25 @@ export default function Headliners() {
       return -1;
     };
     const ni = findNext();
-    if (ni < 0) { beginSpecialGuestPhase(); return; }
+
+    // v198: Quick Play season/game-end routing. Trigger season scoring BEFORE advancing
+    // to the next player so the scoring modal blocks turn flow until the user clicks
+    // through. For game end, skip special guest + year end entirely and route to gameOver.
+    if (quickYearSeasonJustEnded) {
+      runQuickYearSeasonEnd(quickYearSeasonJustEnded, quickYearGameOver, ni);
+      return;
+    }
+
+    if (ni < 0) {
+      // v198: in Quick Play this shouldn't fire (game-end check above handles it).
+      // In classic, this is the year-end trigger.
+      if (gameModeRef.current === "quickYear") {
+        // Defensive: if we somehow run out of turns without hitting the game-end round
+        // boundary (e.g. after Fame-spend extra actions change turn counts), end anyway.
+        setPhase("gameOver"); addLogH("Game Over!", "round"); return;
+      }
+      beginSpecialGuestPhase(); return;
+    }
 
     // Safety net: catch any cross-hand duplicates from earlier in the game before
     // the next player picks up their turn. See dedupeAllCards comment for rationale.
@@ -9320,7 +9675,7 @@ export default function Headliners() {
       const rawT = playerTickets[p.id];
       // Fame under v126 = baseFame + councilFame (councilFame is calculated inside
       // computeTicketsForPlayer but stashed on the player as councilFameThisYear).
-      const finalFame = Math.min(FAME_MAX, (pd.baseFame || 0) + (pd.councilFameThisYear || 0));
+      const finalFame = Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (pd.baseFame || 0) + (pd.councilFameThisYear || 0));
       if (!nat[p.id]) nat[p.id] = {};
       // Preserve the shape of the nat entry so other code paths that read raw/fame still work.
       // The rich VP breakdown fields (fameVP, artistVP, ticketVP, effectVP, starDiceVP) are
@@ -9618,7 +9973,7 @@ export default function Headliners() {
       // stage-fame globally).
       const stageFameAllowed = stageOpenFameBonusRef.current && !stagesProvideNoFameRef.current;
       if (stageFameAllowed) {
-        updPd.baseFame = Math.min(FAME_MAX, (updPd.baseFame || 0) + 1);
+        updPd.baseFame = Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (updPd.baseFame || 0) + 1);
       }
       return { ...p, [pid]: updPd };
     });
@@ -10085,7 +10440,17 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${infraRewardsMode ? "#22c55e" : "#4c1d95"}`, background: infraRewardsMode ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{infraRewardsMode ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: infraRewardsMode ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🏗️ Infrastructure Rewards (Most Campsites / Portaloos / Catering / Security)</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{infraRewardsMode ? "On — each amenity type has a game-specific benefit for whoever leads strictly. 4 rewards drawn from a pool of 12 at game start; ties = no benefit." : "Off — amenities don't grant special leader bonuses."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{infraRewardsMode ? `On — each amenity type has a game-specific benefit for whoever leads strictly. ${gameMode === "quickYear" ? "3" : "4"} rewards drawn from a pool of 12 at game start; ties = no benefit.` : "Off — amenities don't grant special leader bonuses."}</div>
+            </div>
+          </label>
+          {/* v198: Quick Play (1 Year) mode toggle. Switches to the 12-turn, 4-season,
+              objective-driven Fame-as-status variant. Rendered last so classic settings
+              stack above it and this reads as the "or try this alternate shape" option. */}
+          <label onClick={() => setGameMode(gameMode === "quickYear" ? "classic" : "quickYear")} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: gameMode === "quickYear" ? "2px solid #f59e0b" : "1px solid #4c1d95", background: gameMode === "quickYear" ? "rgba(245,158,11,0.08)" : "rgba(124,58,237,0.05)" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${gameMode === "quickYear" ? "#f59e0b" : "#4c1d95"}`, background: gameMode === "quickYear" ? "#f59e0b" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{gameMode === "quickYear" ? "✓" : ""}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: gameMode === "quickYear" ? "#fcd34d" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>⚡ Quick Play (1 Year) — 12 turns, 4 seasons</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame is status + spendable (1/turn). 8 public objectives drawn, scored at season end. Overrides year count & disables year-end draft, Fame decay, stage decay." : "Off — standard multi-year game (uses the year count setting above)."}</div>
             </div>
           </label>
         </div>
@@ -10369,6 +10734,143 @@ export default function Headliners() {
           </div>
         </div>;
       })()}
+      {/* v198: Quick Play season-end scoring modal. Shows the ending season's 2 objectives,
+          who won 1st/2nd on each, Fame awarded. Click Continue to transition. */}
+      {seasonEndScoring && (() => {
+        const { season, awards, isGameEnd } = seasonEndScoring;
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%", padding: 24 }}>
+            <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 24, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — Results</h2>
+            <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>{isGameEnd ? "Final season complete — the festival has run its course." : "Season ends. Fame is awarded to the top of each objective."}</p>
+            {awards.map((a, i) => (
+              <div key={i} style={{ padding: 14, borderRadius: 10, background: "rgba(15,14,26,0.6)", border: "1px solid #2a2a4a", marginBottom: 10, textAlign: "left" }}>
+                <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🎯 {a.objective.label}</div>
+                {a.noScore ? (
+                  <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No player scored on this objective — no Fame awarded.</div>
+                ) : (<>
+                  {a.firstPlace.length > 0 && (
+                    <div style={{ marginBottom: 4, fontSize: 12 }}>
+                      <span style={{ color: "#86efac", fontWeight: 700 }}>🥇 1st (+3 🔥):</span>{" "}
+                      <span style={{ color: "#e2e8f0" }}>{a.firstPlace.map(p => `${p.name} (${p.value})`).join(", ")}</span>
+                    </div>
+                  )}
+                  {a.secondPlace.length > 0 && (
+                    <div style={{ fontSize: 12 }}>
+                      <span style={{ color: "#93c5fd", fontWeight: 700 }}>🥈 2nd (+2 🔥):</span>{" "}
+                      <span style={{ color: "#e2e8f0" }}>{a.secondPlace.map(p => `${p.name} (${p.value})`).join(", ")}</span>
+                    </div>
+                  )}
+                  {a.firstPlace.length > 1 && (
+                    <div style={{ color: "#f59e0b", fontSize: 10, marginTop: 4, fontStyle: "italic" }}>Tied for 1st — no 2nd place awarded.</div>
+                  )}
+                </>)}
+              </div>
+            ))}
+            <button onClick={continueFromSeasonEnd} style={{ ...bp, marginTop: 10, padding: "12px 32px", fontSize: 14 }}>
+              {isGameEnd ? "View Final Results →" : `Continue to ${QUICKYEAR_SEASON_LABELS[season === "autumn" ? "winter" : season === "winter" ? "spring" : "summer"]} →`}
+            </button>
+          </div>
+        </div>;
+      })()}
+      {/* v198: Fame spend menu. 3 options, 1 Fame each. Spend lock keyed by
+          "pid:turnsTaken" prevents double-spending in the same turn. */}
+      {fameSpendMenuOpen === true && gameMode === "quickYear" && (() => {
+        const spendKey = `${currentPlayerId}:${quickYearTurnsTaken}`;
+        const alreadySpent = fameSpendUsedRef.current[spendKey];
+        const fame = currentPD.fame || 0;
+        const canAfford = fame >= 1 && !alreadySpent;
+        const commit = (option) => {
+          if (!canAfford) return;
+          fameSpendUsedRef.current[spendKey] = true;
+          setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.max(0, (p[currentPlayerId].baseFame || 0) - 1) } }));
+          logFameGain(currentPlayerId, -1, `Fame spend: ${option}`);
+          bumpSeasonStat(currentPlayerId, "fameSpent", 1);
+          setTimeout(() => recalcTickets(), 50);
+        };
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 965, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
+            <h3 style={{ color: "#fcd34d", marginBottom: 4 }}>✨ Spend 1 🔥 Fame</h3>
+            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 14 }}>One spend per turn. You have {fame} Fame. Spending drops you to {Math.max(0, fame - 1)} — mind your play order (can't play artists above your current Fame).</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button disabled={!canAfford} onClick={() => {
+                commit("+1 Amenity");
+                // Grant a free amenity choice (reuse the placeAmenity pending effect).
+                setPendingEffect({ type: "placeAmenity", artistName: "Fame Spend (+1 Amenity)", placeCount: 1 });
+                setPendingEffectPid(currentPlayerId);
+                addLog(currentPlayer?.festivalName || "?", "Spent 1 🔥 Fame → choose and place 1 amenity");
+                setFameSpendMenuOpen(false);
+              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🏗️ +1 Amenity of your choice</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Pick any amenity type and place it on a field.</div>
+              </button>
+              <button disabled={!canAfford} onClick={() => {
+                commit("Pool refresh");
+                // Replace current pool with 5 fresh artists from the deck.
+                const freshPool = drawFromDeck(5);
+                setDiscardPile(prev => [...prev, ...artistPool]);
+                setArtistPool(freshPool);
+                addLog(currentPlayer?.festivalName || "?", "Spent 1 🔥 Fame → refreshed the artist pool with 5 new artists");
+                setFameSpendMenuOpen(false);
+              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🔄 Refresh the artist pool</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Discard the current 5 artists and draw 5 new ones from the deck.</div>
+              </button>
+              <button disabled={!canAfford} onClick={() => {
+                commit("Draw secret objective");
+                // Draw a random objective from the pool and put in hand.
+                const randomObj = { ...QUICKYEAR_OBJECTIVE_POOL[Math.floor(Math.random() * QUICKYEAR_OBJECTIVE_POOL.length)] };
+                setQuickYearSecretObjs(prev => ({ ...prev, [currentPlayerId]: [...(prev[currentPlayerId] || []), randomObj] }));
+                addLog(currentPlayer?.festivalName || "?", `Spent 1 🔥 Fame → drew a secret objective (hidden to others)`);
+                setFameSpendMenuOpen(false);
+              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🔮 Draw a secret objective</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Draws a secret objective to your hand. Reveal any time this game — +3 Fame if met, discarded if not.</div>
+              </button>
+            </div>
+            <button onClick={() => setFameSpendMenuOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Cancel</button>
+          </div>
+        </div>;
+      })()}
+      {/* v198: Secret objectives panel — reveal from hand as a free action. */}
+      {fameSpendMenuOpen === "secrets" && gameMode === "quickYear" && (() => {
+        const secrets = quickYearSecretObjs[currentPlayerId] || [];
+        const revealOne = (idx) => {
+          const obj = secrets[idx];
+          const met = isSecretObjectiveMet(currentPlayerId, obj);
+          // Remove from hand
+          setQuickYearSecretObjs(prev => ({ ...prev, [currentPlayerId]: (prev[currentPlayerId] || []).filter((_, i) => i !== idx) }));
+          if (met) {
+            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 3) } }));
+            logFameGain(currentPlayerId, 3, `Secret Objective met: ${obj.label}`);
+            addLog("🔮 Secret", `${currentPlayer?.festivalName || "?"}: Revealed "${obj.label}" — MET → +3 🔥 Fame!`);
+            showFloatingBonus("+3 🔥 Secret Objective!", "#a855f7");
+          } else {
+            addLog("🔮 Secret", `${currentPlayer?.festivalName || "?"}: Revealed "${obj.label}" — not met, discarded`);
+          }
+          setTimeout(() => recalcTickets(), 50);
+        };
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 965, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
+            <h3 style={{ color: "#d8b4fe", marginBottom: 4 }}>🔮 Your Secret Objectives</h3>
+            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 14 }}>Reveal any objective at any time. If you've made ≥2 progress on it this season, you gain +3 Fame. Otherwise it's discarded. Free action — doesn't use your turn.</p>
+            {secrets.length === 0 ? <p style={{ color: "#64748b", fontSize: 12, fontStyle: "italic" }}>No secret objectives in hand.</p> : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {secrets.map((o, idx) => {
+                  const met = isSecretObjectiveMet(currentPlayerId, o);
+                  return <button key={idx} onClick={() => revealOne(idx)} style={{ ...bp, padding: 12, textAlign: "left", background: met ? "linear-gradient(135deg, rgba(168,85,247,0.3), rgba(34,197,94,0.2))" : "rgba(168,85,247,0.15)", border: met ? "1px solid #22c55e" : "1px solid #a855f7" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: "#e9d5ff" }}>🎯 {o.label}</div>
+                    <div style={{ fontSize: 10, color: met ? "#86efac" : "#94a3b8", marginTop: 3 }}>
+                      Current progress this season: {readSeasonMetric(seasonStats[currentPlayerId], quickYearSeason, o.metric)}
+                      {met ? " · ✓ Would score +3 Fame if revealed now" : " · Need ≥2 to score"}
+                    </div>
+                  </button>;
+                })}
+              </div>
+            )}
+            <button onClick={() => setFameSpendMenuOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Close</button>
+          </div>
+        </div>;
+      })()}
       {/* v197.13: Scouted Talent (sec_2) — draw 3, keep 1. */}
       {sec2Draw && (() => {
         const picker = players.find(p => p.id === sec2Draw.pid);
@@ -10635,7 +11137,7 @@ export default function Headliners() {
             if (!pe.benefit) return;
             if (pe.benefit.type === "fame") {
               logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
-              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
               addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} Fame`);
               showFloatingBonus(`+${pe.benefit.amount} 🔥`, "#f97316");
               sfx.gainFame();
@@ -10813,7 +11315,7 @@ export default function Headliners() {
             if (pe.benefit) {
               if (pe.benefit.type === "fame") {
                 logFameGain(pid, pe.benefit.amount, `${pe.artistName} effect`);
-                setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
+                setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + pe.benefit.amount) } }));
                 addLog("Effect", `${pe.artistName}: +${pe.benefit.amount} Fame`);
                 showFloatingBonus(`+${pe.benefit.amount} 🔥`, "#f97316"); sfx.gainFame();
               } else if (pe.benefit.type === "ticket") {
@@ -11549,7 +12051,15 @@ export default function Headliners() {
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
           {winCondition && <div style={{ padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(251,191,36,0.14), rgba(124,58,237,0.06))", border: "1px solid rgba(251,191,36,0.4)", marginBottom: 10, fontSize: 10, color: "#fbbf24", textAlign: "center", fontWeight: 700, letterSpacing: 0.5 }} title={winCondition === "consistency" ? "Most years led in tickets wins. Ties → cumulative total." : winCondition === "following" ? "Highest cumulative tickets across all years wins." : "Highest single-year ticket count wins."}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of the Town"}</div>}
-          <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>
+          {gameMode === "quickYear" ? (() => {
+            const nPlayers = players.length || 1;
+            const roundsCompleted = Math.floor(quickYearTurnsTaken / nPlayers);
+            const currentTurn = Math.min(QUICKYEAR_TOTAL_TURNS, roundsCompleted + 1);
+            return <div style={{ marginBottom: 12 }}>
+              <h3 style={{ color: "#fcd34d", fontSize: 14, letterSpacing: 2, textTransform: "uppercase", margin: 0 }}>{QUICKYEAR_SEASON_EMOJI[quickYearSeason]} {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</h3>
+              <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>Turn {currentTurn} / {QUICKYEAR_TOTAL_TURNS}</div>
+            </div>;
+          })() : <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>}
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
@@ -11732,6 +12242,40 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
+            {/* v198: Quick Play objectives panel. Shows all 4 seasons × 2 objectives,
+                with the current season highlighted. Live standings for the current season's
+                objectives let players see where they are vs opponents. */}
+            {gameMode === "quickYear" && quickYearPublicObjectives && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.25)" }}>
+              <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎯 Season Objectives</div>
+              {QUICKYEAR_SEASONS.map(sKey => {
+                const isCurrent = sKey === quickYearSeason;
+                const objs = quickYearPublicObjectives[sKey] || [];
+                return <div key={sKey} style={{
+                  padding: 6, borderRadius: 6, marginBottom: 4,
+                  background: isCurrent ? "rgba(252,211,77,0.1)" : "rgba(30,41,59,0.4)",
+                  border: isCurrent ? "1px solid rgba(252,211,77,0.5)" : "1px solid #334155",
+                }}>
+                  <div style={{ fontSize: 10, color: isCurrent ? "#fcd34d" : "#94a3b8", fontWeight: 700, marginBottom: 3 }}>
+                    {QUICKYEAR_SEASON_EMOJI[sKey]} {QUICKYEAR_SEASON_LABELS[sKey]} {isCurrent && "— current"}
+                  </div>
+                  {objs.map((o, i) => {
+                    // For current season, show live standings
+                    let standingLine = null;
+                    if (isCurrent) {
+                      const standings = players.map(p => ({
+                        name: p.festivalName,
+                        value: readSeasonMetric(seasonStats[p.id], sKey, o.metric),
+                      })).sort((a, b) => b.value - a.value);
+                      standingLine = standings.map(s => `${s.name}:${s.value}`).join(" · ");
+                    }
+                    return <div key={i} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2 }}>
+                      • {o.label}
+                      {standingLine && <div style={{ fontSize: 9, color: "#64748b", marginLeft: 10, marginTop: 1 }}>{standingLine}</div>}
+                    </div>;
+                  })}
+                </div>;
+              })}
+            </div>}
             {/* v197.14: Infrastructure Rewards panel — moved OUT of the microtrends tab so
                 it's always visible during gameplay regardless of which sidebar tab is
                 selected. Shows current reward + leader per amenity. Refreshes live as
@@ -12191,6 +12735,19 @@ export default function Headliners() {
                 <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
                 {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
+                {/* v198: Fame spend button — only visible in Quick Play, when player has
+                    Fame to spend AND hasn't already spent this turn. */}
+                {gameMode === "quickYear" && (currentPD.fame || 0) >= 1 && !fameSpendUsedRef.current[`${currentPlayerId}:${quickYearTurnsTaken}`] && (
+                  <button onClick={() => setFameSpendMenuOpen(true)} style={{ ...bs, background: "linear-gradient(135deg, rgba(249,115,22,0.3), rgba(251,191,36,0.25))", border: "1px solid #f97316", color: "#fcd34d", fontWeight: 700 }}>
+                    ✨ Spend 1 🔥 Fame
+                  </button>
+                )}
+                {/* v198: Reveal secret objective button — only visible if player has secret objectives in hand */}
+                {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
+                  <button onClick={() => setFameSpendMenuOpen("secrets")} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
+                    🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
+                  </button>
+                )}
               </div>
             </div>}
 
