@@ -144,7 +144,6 @@ const QUICKYEAR_OBJECTIVE_POOL = [
   { id: "most_headliners",   label: "Most Fame 4+ artists played this season", metric: "highFameArtists" },
   { id: "most_single_genre", label: "Most artists of a single genre this season", metric: "maxGenreCount" },
   { id: "most_genres",       label: "Most unique genres played this season",  metric: "uniqueGenres" },
-  { id: "most_fame_spent",   label: "Most Fame spent this season",            metric: "fameSpent" },
   { id: "most_tickets",      label: "Most tickets gained this season",        metric: "ticketsGained" },
   { id: "most_microtrends",  label: "Most microtrends claimed this season",   metric: "microtrendsClaimed" },
   { id: "most_stages_filled",label: "Most stages filled (3 artists) this season", metric: "stagesFilled" },
@@ -2197,13 +2196,13 @@ export default function Headliners() {
   useEffect(() => { seasonStatsRef.current = seasonStats; }, [seasonStats]);
   // Secret objectives in each player's hand. { pid: [obj, obj, ...] }
   const [quickYearSecretObjs, setQuickYearSecretObjs] = useState({});
-  // Per-turn Fame spend lock. Keyed "pid:turnsTaken" — set when a player spends on
-  // their turn. Prevents spending twice in one turn.
-  const fameSpendUsedRef = useRef({});
   // Season-end scoring modal state. Null when idle; { season, awards: [{pid, objId, place, fame}] } when open.
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
-  // Fame spend menu visibility state. Shown when player clicks the "Spend Fame" button.
-  const [fameSpendMenuOpen, setFameSpendMenuOpen] = useState(false);
+  // v199.3: Fame spend menu removed (per playtesting — too much per-turn mental load in a 12-turn
+  // game). Secret objectives system kept for now but orphaned (no in-game way to draw new ones).
+  // The reveal panel for existing secrets uses this state. If secrets stay orphaned, this and
+  // the whole secrets subsystem can come out in a follow-up.
+  const [secretObjectivesOpen, setSecretObjectivesOpen] = useState(false);
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -7843,13 +7842,12 @@ export default function Headliners() {
       setSeasonStats(freshStats);
       seasonStatsRef.current = freshStats;
       setQuickYearSecretObjs({});
-      fameSpendUsedRef.current = {};
       addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
       addLog("🍂 Autumn", `Objectives: ${seasonsPaired.autumn.map(o => o.label).join(" · ")}`);
       addLog("❄️ Winter", `Objectives: ${seasonsPaired.winter.map(o => o.label).join(" · ")}`);
       addLog("🌱 Spring", `Objectives: ${seasonsPaired.spring.map(o => o.label).join(" · ")}`);
       addLog("☀️ Summer", `Objectives: ${seasonsPaired.summer.map(o => o.label).join(" · ")}`);
-      addLog("⚡ Rules", "Fame is status (cap 5) with 2-point overflow to 7. Spend 1 Fame per turn: +1 amenity, refresh pool, or draw a secret objective.");
+      addLog("⚡ Rules", "Fame is status (cap 5) with 2-point overflow to 7. Climb the Fame ladder to unlock bigger artists.");
       addLog("📞 Hotline", "Each season starts with a Hotline spin — the agent you land on is your tempt channel for that season. One tempt per agent, no base Fame cost. Re-spin for 1 Fame.");
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
@@ -9314,7 +9312,6 @@ export default function Headliners() {
 
     // v198: Quick Play — count the turn just taken toward the global turn counter.
     // Season transitions fire at turn 3/6/9 (per player); game ends at turn 12.
-    // We check AFTER decrementing turns because fameSpendUsedRef is keyed by old count.
     let quickYearGameOver = false;
     let quickYearSeasonJustEnded = null;
     if (gameModeRef.current === "quickYear") {
@@ -11670,65 +11667,13 @@ export default function Headliners() {
       })()}
       {/* v198: Fame spend menu. 3 options, 1 Fame each. Spend lock keyed by
           "pid:turnsTaken" prevents double-spending in the same turn. */}
-      {fameSpendMenuOpen === true && gameMode === "quickYear" && (() => {
-        const spendKey = `${currentPlayerId}:${quickYearTurnsTaken}`;
-        const alreadySpent = fameSpendUsedRef.current[spendKey];
-        const fame = currentPD.fame || 0;
-        const canAfford = fame >= 1 && !alreadySpent;
-        const commit = (option) => {
-          if (!canAfford) return;
-          fameSpendUsedRef.current[spendKey] = true;
-          setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.max(0, (p[currentPlayerId].baseFame || 0) - 1) } }));
-          logFameGain(currentPlayerId, -1, `Fame spend: ${option}`);
-          bumpSeasonStat(currentPlayerId, "fameSpent", 1);
-          setTimeout(() => recalcTickets(), 50);
-        };
-        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 965, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
-            <h3 style={{ color: "#fcd34d", marginBottom: 4 }}>✨ Spend 1 🔥 Fame</h3>
-            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 14 }}>One spend per turn. You have {fame} Fame. Spending drops you to {Math.max(0, fame - 1)} — mind your play order (can't play artists above your current Fame).</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button disabled={!canAfford} onClick={() => {
-                commit("+1 Amenity");
-                // Grant a free amenity choice (reuse the placeAmenity pending effect).
-                setPendingEffect({ type: "placeAmenity", artistName: "Fame Spend (+1 Amenity)", placeCount: 1 });
-                setPendingEffectPid(currentPlayerId);
-                addLog(currentPlayer?.festivalName || "?", "Spent 1 🔥 Fame → choose and place 1 amenity");
-                setFameSpendMenuOpen(false);
-              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🏗️ +1 Amenity of your choice</div>
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Pick any amenity type and place it on a field.</div>
-              </button>
-              <button disabled={!canAfford} onClick={() => {
-                commit("Pool refresh");
-                // Replace current pool with 5 fresh artists from the deck.
-                const freshPool = drawFromDeck(5);
-                setDiscardPile(prev => [...prev, ...artistPool]);
-                setArtistPool(freshPool);
-                addLog(currentPlayer?.festivalName || "?", "Spent 1 🔥 Fame → refreshed the artist pool with 5 new artists");
-                setFameSpendMenuOpen(false);
-              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🔄 Refresh the artist pool</div>
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Discard the current 5 artists and draw 5 new ones from the deck.</div>
-              </button>
-              <button disabled={!canAfford} onClick={() => {
-                commit("Draw secret objective");
-                // Draw a random objective from the pool and put in hand.
-                const randomObj = { ...QUICKYEAR_OBJECTIVE_POOL[Math.floor(Math.random() * QUICKYEAR_OBJECTIVE_POOL.length)] };
-                setQuickYearSecretObjs(prev => ({ ...prev, [currentPlayerId]: [...(prev[currentPlayerId] || []), randomObj] }));
-                addLog(currentPlayer?.festivalName || "?", `Spent 1 🔥 Fame → drew a secret objective (hidden to others)`);
-                setFameSpendMenuOpen(false);
-              }} style={{ ...bp, opacity: canAfford ? 1 : 0.4, padding: 14, textAlign: "left" }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#fed7aa" }}>🔮 Draw a secret objective</div>
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Draws a secret objective to your hand. Reveal any time this game — +3 Fame if met, discarded if not.</div>
-              </button>
-            </div>
-            <button onClick={() => setFameSpendMenuOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Cancel</button>
-          </div>
-        </div>;
-      })()}
-      {/* v198: Secret objectives panel — reveal from hand as a free action. */}
-      {fameSpendMenuOpen === "secrets" && gameMode === "quickYear" && (() => {
+      {/* v199.3: Fame spend menu removed entirely. Mental-load tradeoff: with Hotline agents
+          already providing a per-season bonus-action beat, the per-turn Fame spend was
+          doubling up conceptually and adding too many decision points to a 12-turn game. */}
+      {/* v198: Secret objectives panel — reveal from hand as a free action. Kept wired in
+          case we introduce another way to draw them (currently orphaned — no draw mechanism
+          after Fame spend removal). */}
+      {secretObjectivesOpen && gameMode === "quickYear" && (() => {
         const secrets = quickYearSecretObjs[currentPlayerId] || [];
         const revealOne = (idx) => {
           const obj = secrets[idx];
@@ -11763,7 +11708,7 @@ export default function Headliners() {
                 })}
               </div>
             )}
-            <button onClick={() => setFameSpendMenuOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Close</button>
+            <button onClick={() => setSecretObjectivesOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Close</button>
           </div>
         </div>;
       })()}
@@ -13659,18 +13604,10 @@ export default function Headliners() {
                     : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
-                {/* v198.1: Fame spend button also available AFTER the main action, so a player
-                    can take an amenity first and THEN spend a Fame to get another amenity (etc.).
-                    Previously only shown in the pre-action row, forcing players to decide BEFORE
-                    knowing what their main die rolls were — clunky. One spend per turn still enforced
-                    by the fameSpendUsedRef lock. */}
-                {gameMode === "quickYear" && (currentPD.fame || 0) >= 1 && !fameSpendUsedRef.current[`${currentPlayerId}:${quickYearTurnsTaken}`] && (
-                  <button onClick={() => setFameSpendMenuOpen(true)} style={{ ...bs, background: "linear-gradient(135deg, rgba(249,115,22,0.3), rgba(251,191,36,0.25))", border: "1px solid #f97316", color: "#fcd34d", fontWeight: 700 }}>
-                    ✨ Spend 1 🔥 Fame
-                  </button>
-                )}
+                {/* v199.3: Fame spend button removed. Secret Objectives button survives for
+                    players who still hold secrets in hand (currently orphaned — no draw path). */}
                 {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
-                  <button onClick={() => setFameSpendMenuOpen("secrets")} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
+                  <button onClick={() => setSecretObjectivesOpen(true)} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
                     🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
                   </button>
                 )}
@@ -13689,16 +13626,10 @@ export default function Headliners() {
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
-                {/* v198: Fame spend button — only visible in Quick Play, when player has
-                    Fame to spend AND hasn't already spent this turn. */}
-                {gameMode === "quickYear" && (currentPD.fame || 0) >= 1 && !fameSpendUsedRef.current[`${currentPlayerId}:${quickYearTurnsTaken}`] && (
-                  <button onClick={() => setFameSpendMenuOpen(true)} style={{ ...bs, background: "linear-gradient(135deg, rgba(249,115,22,0.3), rgba(251,191,36,0.25))", border: "1px solid #f97316", color: "#fcd34d", fontWeight: 700 }}>
-                    ✨ Spend 1 🔥 Fame
-                  </button>
-                )}
-                {/* v198: Reveal secret objective button — only visible if player has secret objectives in hand */}
+                {/* v199.3: Fame spend button removed. Secret Objectives button survives for
+                    players who still hold secrets in hand (currently orphaned — no draw path). */}
                 {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
-                  <button onClick={() => setFameSpendMenuOpen("secrets")} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
+                  <button onClick={() => setSecretObjectivesOpen(true)} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
                     🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
                   </button>
                 )}
