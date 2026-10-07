@@ -135,20 +135,6 @@ const HOTLINE_AGENTS = [
   { id: "mara_meddler",     name: "Mara Meddler",     emoji: "🧨", trigger: "always", effect: "You also tempt the artists to the immediate left and right of the one you targeted." },
   { id: "sammi_stager",     name: "Sammi Stager",     emoji: "🎪", trigger: "win",  effect: "Automatically open a new stage (max 3 stages total)." },
 ];
-const QUICKYEAR_OBJECTIVE_POOL = [
-  { id: "most_campsites",    label: "Most Campsites built this season",       metric: "campsitesBuilt" },
-  { id: "most_portaloos",    label: "Most Portaloos built this season",       metric: "portaloosBuilt" },
-  { id: "most_catering",     label: "Most Catering Vans built this season",   metric: "cateringBuilt" },
-  { id: "most_security",     label: "Most Security built this season",        metric: "securityBuilt" },
-  { id: "most_artists",      label: "Most artists played this season",        metric: "artistsPlayed" },
-  { id: "most_headliners",   label: "Most Fame 4+ artists played this season", metric: "highFameArtists" },
-  { id: "most_single_genre", label: "Most artists of a single genre this season", metric: "maxGenreCount" },
-  { id: "most_genres",       label: "Most unique genres played this season",  metric: "uniqueGenres" },
-  { id: "most_tickets",      label: "Most tickets gained this season",        metric: "ticketsGained" },
-  { id: "most_microtrends",  label: "Most microtrends claimed this season",   metric: "microtrendsClaimed" },
-  { id: "most_stages_filled",label: "Most stages filled (3 artists) this season", metric: "stagesFilled" },
-  { id: "most_on_one_stage", label: "Most artists played on a single stage this season", metric: "maxStagePlays" },
-];
 const GENRE_COLORS = { Pop: "#ec4899", Rock: "#ef4444", Electronic: "#94a3b8", "Hip Hop": "#f97316", Indie: "#22c55e", Funk: "#a855f7" };
 const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 
@@ -2176,9 +2162,6 @@ export default function Headliners() {
   const gameModeRef = useRef("classic");
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   // v198: Quick Play state. All only used when gameMode === "quickYear".
-  // quickYearPublicObjectives: { autumn: [obj,obj], winter: [...], spring: [...], summer: [...] }
-  // Each entry is an objective object cloned from QUICKYEAR_OBJECTIVE_POOL.
-  const [quickYearPublicObjectives, setQuickYearPublicObjectives] = useState(null);
   // quickYearSeason: current season label ("autumn" | "winter" | "spring" | "summer")
   const [quickYearSeason, setQuickYearSeason] = useState("autumn");
   const quickYearSeasonRef = useRef("autumn");
@@ -2186,23 +2169,11 @@ export default function Headliners() {
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
   // nPlayers * 3, 6, 9 — season boundary. nPlayers * 12 — game end.
   const [quickYearTurnsTaken, setQuickYearTurnsTaken] = useState(0);
-  // seasonStats[pid][season] = { campsitesBuilt, portaloosBuilt, cateringBuilt,
-  //   securityBuilt, artistsPlayed, highFameArtists, genresPlayed (set), stagesFilled,
-  //   maxStagePlays, fameSpent, ticketsGained, microtrendsClaimed, maxGenreCount }
-  // Derived metrics (maxGenreCount, uniqueGenres) computed from genresPlayed object
-  // at scoring time rather than kept in sync.
-  const [seasonStats, setSeasonStats] = useState({});
-  const seasonStatsRef = useRef({});
-  useEffect(() => { seasonStatsRef.current = seasonStats; }, [seasonStats]);
-  // Secret objectives in each player's hand. { pid: [obj, obj, ...] }
-  const [quickYearSecretObjs, setQuickYearSecretObjs] = useState({});
-  // Season-end scoring modal state. Null when idle; { season, awards: [{pid, objId, place, fame}] } when open.
+  // Season-end scoring modal state. Null when idle; { season, seasonScores, isGameEnd, nextPlayerIdx } when open.
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
-  // v199.3: Fame spend menu removed (per playtesting — too much per-turn mental load in a 12-turn
-  // game). Secret objectives system kept for now but orphaned (no in-game way to draw new ones).
-  // The reveal panel for existing secrets uses this state. If secrets stay orphaned, this and
-  // the whole secrets subsystem can come out in a follow-up.
-  const [secretObjectivesOpen, setSecretObjectivesOpen] = useState(false);
+  // v199.4: season objectives + secret objectives + per-season metric tracking all removed.
+  // Season scoring is now a flat snapshot (1 ticket per campsite + 1 per artist, calculated
+  // in runQuickYearSeasonEnd). Hotline + microtrends carry the per-season variability.
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -3415,71 +3386,14 @@ export default function Headliners() {
   // the Fame spend menu (1/turn). Reads gameModeRef so it's safe to call outside render.
   const getFameCap = () => gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
 
-  // v198: Quick Play — season stat tracking. Each player accumulates per-season metrics
-  // during play. Scoring reads these at season boundaries to determine objective winners.
-  // genresPlayed is a {genre: count} map so we can compute maxGenreCount and uniqueGenres
-  // without duplicating state.
-  function makeEmptySeasonStats() {
-    return {
-      campsitesBuilt: 0, portaloosBuilt: 0, cateringBuilt: 0, securityBuilt: 0,
-      artistsPlayed: 0, highFameArtists: 0, genresPlayed: {}, stagesFilled: 0,
-      stagePlays: [0, 0, 0], fameGained: 0, fameSpent: 0, ticketsGained: 0,
-      microtrendsClaimed: 0,
-    };
-  }
-  // Increment a numeric metric on the current player's current season stats.
-  // No-op outside Quick Play — classic doesn't track seasonStats.
-  const bumpSeasonStat = (pid, metric, amount = 1) => {
-    if (gameModeRef.current !== "quickYear") return;
-    const s = quickYearSeasonRef.current;
-    setSeasonStats(prev => {
-      const pdSeasons = prev[pid] || { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() };
-      const seasonCur = pdSeasons[s] || makeEmptySeasonStats();
-      const next = { ...prev, [pid]: { ...pdSeasons, [s]: { ...seasonCur, [metric]: (seasonCur[metric] || 0) + amount } } };
-      seasonStatsRef.current = next;
-      return next;
-    });
-  };
-  // Add a genre play to the player's current season genre map, and bump artistsPlayed +
-  // highFameArtists + stagePlays[stageIdx] atomically.
-  const bumpSeasonArtist = (pid, artist, stageIdx) => {
-    if (gameModeRef.current !== "quickYear") return;
-    const s = quickYearSeasonRef.current;
-    const genres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
-    setSeasonStats(prev => {
-      const pdSeasons = prev[pid] || { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() };
-      const seasonCur = pdSeasons[s] || makeEmptySeasonStats();
-      const genresPlayed = { ...seasonCur.genresPlayed };
-      genres.forEach(g => { genresPlayed[g] = (genresPlayed[g] || 0) + 1; });
-      const stagePlays = [...(seasonCur.stagePlays || [0, 0, 0])];
-      if (stageIdx != null && stageIdx >= 0 && stageIdx < stagePlays.length) stagePlays[stageIdx] = (stagePlays[stageIdx] || 0) + 1;
-      const updated = {
-        ...seasonCur,
-        artistsPlayed: (seasonCur.artistsPlayed || 0) + 1,
-        highFameArtists: (seasonCur.highFameArtists || 0) + ((artist.fame || 0) >= 4 ? 1 : 0),
-        genresPlayed,
-        stagePlays,
-      };
-      const next = { ...prev, [pid]: { ...pdSeasons, [s]: updated } };
-      seasonStatsRef.current = next;
-      return next;
-    });
-  };
-  // Read a season metric value for scoring. Handles derived metrics (maxGenreCount,
-  // uniqueGenres, maxStagePlays) that aren't stored directly.
-  const readSeasonMetric = (statsForPlayer, season, metric) => {
-    const s = statsForPlayer?.[season] || makeEmptySeasonStats();
-    if (metric === "maxGenreCount") {
-      const vals = Object.values(s.genresPlayed || {});
-      return vals.length === 0 ? 0 : Math.max(...vals);
-    }
-    if (metric === "uniqueGenres") return Object.keys(s.genresPlayed || {}).length;
-    if (metric === "maxStagePlays") {
-      const vals = s.stagePlays || [0, 0, 0];
-      return vals.length === 0 ? 0 : Math.max(...vals);
-    }
-    return s[metric] || 0;
-  };
+  // v199.4: season-stat tracking removed with the objective pool. These functions used to
+  // accumulate per-season metric counters for drawn objectives; season scoring is now a flat
+  // snapshot in runQuickYearSeasonEnd. The function signatures are kept as no-ops so the
+  // ~14 call sites throughout the file (fame gain, ticket gain, amenity place, artist play,
+  // microtrend claim) don't need to be deleted individually. Safe to clean up in a future
+  // pass with a sed/grep sweep.
+  const bumpSeasonStat = () => {};
+  const bumpSeasonArtist = () => {};
   // v199: Hotline — begin season spins. Called at the start of each season (incl. autumn
   // at game start). Builds the ordered queue of players who need to spin, clears last
   // season's agents and used-flags, and opens the modal for the first player.
@@ -3749,74 +3663,64 @@ export default function Headliners() {
     }
   };
 
-  // Check whether a given objective is met for a given player (used by secret objective
-  // reveal). Score threshold: for secrets, we don't require 1st place — just that the
-  // player has done the thing at least once (metric > 0 for count-based, > 1 for max-ish).
-  // For "most X" style objectives, "met" means metric >= 2 — a reasonable threshold.
-  const isSecretObjectiveMet = (pid, objective) => {
-    const s = quickYearSeasonRef.current;
-    const stats = seasonStatsRef.current[pid];
-    if (!stats) return false;
-    const val = readSeasonMetric(stats, s, objective.metric);
-    // Secret objectives are met if the player's metric is >= 2 (meaning they've made
-    // meaningful progress this season). Low bar — the reward is only 3 Fame.
-    return val >= 2;
-  };
-
-  // v198: season-end scoring. For each of the ending season's 2 objectives, rank players
-  // by metric value, award 3 Fame to strict 1st, 2 Fame to strict 2nd. Ties for 1st =
-  // split: everyone tied for 1st gets 3 Fame, no one gets 2nd Fame. Ties for 2nd = all
-  // get 2 Fame. Zero scores don't award (nobody did it, nobody wins).
-  // On game end (summer), also triggers gameOver phase after scoring.
+  // v199.4: season-end scoring is now a flat per-season ticket snapshot — the drawn-objective
+  // system (with its Fame-reward 1st/2nd place model) is gone. For each player, count
+  // their current campsites across all fields + current artists across all stages, and
+  // add that number to their bonusTickets. Snapshot scoring (option A per design discussion):
+  // a campsite built in Autumn also scores in Winter/Spring/Summer, rewarding early build-up
+  // and compounding infrastructure investment. Fits the "every player scores every season
+  // based on their current festival size" framing.
+  //
+  // Compounding means a 2-campsite + 3-artist Autumn festival earns +5 at Autumn end AND
+  // again at Winter end (if nothing changed), etc. Watch for runaway leaders — if one
+  // player builds much faster, their compounding grows accordingly. Hotline agents (Nancy,
+  // Barry, Wanda, Marla) create catch-up moments; Hotline is now the primary variance lever.
   const runQuickYearSeasonEnd = (season, isGameEnd, nextPlayerIdx) => {
-    const objs = (quickYearPublicObjectives && quickYearPublicObjectives[season]) || [];
-    const awards = [];
-    objs.forEach(obj => {
-      const scored = players.map(p => ({
+    const currentPD = playerDataRef.current || playerData;
+    const seasonScores = players.map(p => {
+      const pd = currentPD[p.id] || {};
+      // Campsites: sum campsite amenity counts across all fields.
+      const fields = pd.fields || [];
+      const campsiteCount = fields.reduce((sum, f) => sum + (f?.amenities?.campsite || 0), 0);
+      // Artists on stages: sum lengths of all stageArtists sub-arrays. Includes headliners,
+      // openers — anything booked to a stage this game that's still there.
+      const stages = pd.stageArtists || [];
+      const artistCount = stages.reduce((sum, s) => sum + (Array.isArray(s) ? s.length : 0), 0);
+      const seasonBonus = campsiteCount + artistCount;
+      return {
         pid: p.id,
         name: p.festivalName,
         isAI: p.isAI,
-        value: readSeasonMetric(seasonStatsRef.current[p.id], season, obj.metric),
-      }));
-      scored.sort((a, b) => b.value - a.value);
-      // Determine 1st and 2nd place groups (tie-aware).
-      const topVal = scored[0]?.value || 0;
-      if (topVal <= 0) {
-        // Nobody scored on this objective — no awards.
-        awards.push({ objective: obj, firstPlace: [], secondPlace: [], noScore: true });
-        return;
-      }
-      const firstPlace = scored.filter(s => s.value === topVal);
-      let secondPlace = [];
-      if (firstPlace.length === 1) {
-        const secondVal = scored[1]?.value || 0;
-        if (secondVal > 0) secondPlace = scored.filter(s => s.value === secondVal);
-      }
-      awards.push({ objective: obj, firstPlace, secondPlace, topVal });
+        campsites: campsiteCount,
+        artists: artistCount,
+        bonus: seasonBonus,
+      };
     });
 
-    // Apply Fame awards + log. Each setPlayerData uses mode-aware cap.
-    awards.forEach(a => {
-      a.firstPlace.forEach(p => {
-        setPlayerData(prev => ({ ...prev, [p.pid]: { ...prev[p.pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (prev[p.pid]?.baseFame || 0) + 3) } }));
-        logFameGain(p.pid, 3, `Season Objective 1st: ${a.objective.label}`);
-        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} 1st`, `${p.name}: +3 🔥 Fame (${a.objective.label}, scored ${a.topVal})`);
+    // Apply the ticket bonus by adding to each player's bonusTickets (feeds into
+    // computeTicketsForPlayer → pd.tickets → the final leaderboard total).
+    setPlayerData(prev => {
+      const next = { ...prev };
+      seasonScores.forEach(s => {
+        if (!next[s.pid]) return;
+        next[s.pid] = { ...next[s.pid], bonusTickets: (next[s.pid].bonusTickets || 0) + s.bonus };
       });
-      a.secondPlace.forEach(p => {
-        setPlayerData(prev => ({ ...prev, [p.pid]: { ...prev[p.pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (prev[p.pid]?.baseFame || 0) + 2) } }));
-        logFameGain(p.pid, 2, `Season Objective 2nd: ${a.objective.label}`);
-        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} 2nd`, `${p.name}: +2 🔥 Fame (${a.objective.label}, scored ${p.value})`);
-      });
-      if (a.noScore) {
-        addLog(`${QUICKYEAR_SEASON_EMOJI[season]} —`, `No one scored on "${a.objective.label}" — no Fame awarded`);
+      return next;
+    });
+    seasonScores.forEach(s => {
+      if (s.bonus > 0) {
+        logTicketGain(s.pid, s.bonus, `${QUICKYEAR_SEASON_LABELS[season]} end: ${s.campsites} campsite${s.campsites === 1 ? "" : "s"} + ${s.artists} artist${s.artists === 1 ? "" : "s"}`);
       }
+      addLog(`${QUICKYEAR_SEASON_EMOJI[season]} ${s.name}`, `+${s.bonus} 🎟️ tickets (${s.campsites} campsite${s.campsites === 1 ? "" : "s"} + ${s.artists} artist${s.artists === 1 ? "" : "s"})`);
     });
 
-    // Open the season-end scoring modal so humans can see what happened. After they
-    // close it, advance to the next season (or trigger game end).
+    setTimeout(() => recalcTickets(), 50);
+
+    // Open the season-end modal so players can see the breakdown. After they close it,
+    // advance to the next season (or trigger game end).
     setSeasonEndScoring({
       season,
-      awards,
+      seasonScores,
       isGameEnd,
       nextPlayerIdx,
     });
@@ -3868,8 +3772,6 @@ export default function Headliners() {
       setQuickYearSeason(nextSeason);
       quickYearSeasonRef.current = nextSeason;
       addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
-      const nextObjs = (quickYearPublicObjectives && quickYearPublicObjectives[nextSeason]) || [];
-      addLog(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]}`, `Objectives this season: ${nextObjs.map(o => o.label).join(" · ")}`);
       // v199: fire new Hotline spins at season boundary. Previous season's agents expire.
       // Deferred by 400ms so the season-end modal is fully closed and the "Season Begins"
       // header is in the log before the spin UI opens.
@@ -7817,43 +7719,20 @@ export default function Headliners() {
       infraRewardsRef.current = null;
     }
 
-    // v198: Quick Play mode setup. Draw 8 unique objectives from the 13-objective pool,
-    // split randomly into 4 season pairs (2 per season). Initialize seasonStats for all
-    // players (per-season metric counters), clear secret-objective hands, reset the
-    // season to Autumn and turn-taken counter to 0.
+    // v199.4: Quick Play mode setup. Reset season state. Objective pool is gone —
+    // season-end now does a flat ticket snapshot (campsites + artists). No seasonStats
+    // trackers, no secret-objective hands, no objective draw.
     if (gameModeRef.current === "quickYear") {
-      const pool = shuffle([...QUICKYEAR_OBJECTIVE_POOL]);
-      const chosen = pool.slice(0, 8).map(o => ({ ...o }));
-      const seasonsPaired = {
-        autumn: [chosen[0], chosen[1]],
-        winter: [chosen[2], chosen[3]],
-        spring: [chosen[4], chosen[5]],
-        summer: [chosen[6], chosen[7]],
-      };
-      setQuickYearPublicObjectives(seasonsPaired);
       setQuickYearSeason("autumn");
       quickYearSeasonRef.current = "autumn";
       setQuickYearTurnsTaken(0);
-      // Initialize per-player per-season stat trackers to zero. These accrue during
-      // play and are read at season-end scoring. Reset to a fresh empty structure
-      // for the new season after each season boundary (in advanceQuickYearSeason).
-      const freshStats = {};
-      players.forEach(p => { freshStats[p.id] = { autumn: makeEmptySeasonStats(), winter: makeEmptySeasonStats(), spring: makeEmptySeasonStats(), summer: makeEmptySeasonStats() }; });
-      setSeasonStats(freshStats);
-      seasonStatsRef.current = freshStats;
-      setQuickYearSecretObjs({});
       addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
-      addLog("🍂 Autumn", `Objectives: ${seasonsPaired.autumn.map(o => o.label).join(" · ")}`);
-      addLog("❄️ Winter", `Objectives: ${seasonsPaired.winter.map(o => o.label).join(" · ")}`);
-      addLog("🌱 Spring", `Objectives: ${seasonsPaired.spring.map(o => o.label).join(" · ")}`);
-      addLog("☀️ Summer", `Objectives: ${seasonsPaired.summer.map(o => o.label).join(" · ")}`);
-      addLog("⚡ Rules", "Fame is status (cap 5) with 2-point overflow to 7. Climb the Fame ladder to unlock bigger artists.");
+      addLog("⚡ Scoring", "At each season close, every player scores 1 🎟️ per campsite + 1 🎟️ per artist on their stages. Highest tickets at Summer close wins.");
+      addLog("⚡ Fame", "Fame is status (cap 5, 2-point overflow to 7). Climb the Fame ladder to unlock bigger artists.");
       addLog("📞 Hotline", "Each season starts with a Hotline spin — the agent you land on is your tempt channel for that season. One tempt per agent, no base Fame cost. Re-spin for 1 Fame.");
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
       setTimeout(() => beginHotlineSpinsForSeason(), 300);
-    } else {
-      setQuickYearPublicObjectives(null);
     }
 
     const order = players.map(p => p.id); setTurnOrder(order); setCurrentPlayerIdx(0);
@@ -11172,7 +11051,7 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${gameMode === "quickYear" ? "#f59e0b" : "#4c1d95"}`, background: gameMode === "quickYear" ? "#f59e0b" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{gameMode === "quickYear" ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: gameMode === "quickYear" ? "#fcd34d" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>⚡ Quick Play (1 Year) — 12 turns, 4 seasons</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame is status + spendable (1/turn). 8 public objectives drawn, scored at season end. Overrides year count & disables year-end draft, Fame decay, stage decay." : "Off — standard multi-year game (uses the year count setting above)."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame is status (cap 5, overflow 7). Each season start: Hotline spin assigns your tempt agent. Each season close: +1 🎟️ per campsite + 1 🎟️ per artist on stages. Highest tickets at Summer close wins." : "Off — standard multi-year game (uses the year count setting above)."}</div>
             </div>
           </label>
         </div>
@@ -11627,40 +11506,47 @@ export default function Headliners() {
           </div>
         );
       })()}
-      {/* v198: Quick Play season-end scoring modal. Shows the ending season's 2 objectives,
-          who won 1st/2nd on each, Fame awarded. Click Continue to transition. */}
+      {/* v199.4: Quick Play season-end scoring modal — flat ticket snapshot per player.
+          Shows each player's season bonus (campsites + artists) and their running total,
+          sorted by current ticket count. Replaces the drawn-objective 1st/2nd Fame reward
+          system that previously lived here. */}
       {seasonEndScoring && (() => {
-        const { season, awards, isGameEnd } = seasonEndScoring;
+        const { season, seasonScores, isGameEnd } = seasonEndScoring;
+        // Read live ticket totals from playerDataRef so the "Running total" column reflects
+        // this season's bonus already applied (we called setPlayerData + recalcTickets in
+        // runQuickYearSeasonEnd). Sort descending by total.
+        const livePD = playerDataRef.current || playerData;
+        const rows = [...seasonScores].map(s => ({
+          ...s,
+          total: livePD[s.pid]?.tickets || 0,
+        })).sort((a, b) => b.total - a.total);
+        const nextSeasonLabel = season === "autumn" ? "Winter" : season === "winter" ? "Spring" : season === "spring" ? "Summer" : null;
         return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%", padding: 24 }}>
-            <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 24, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — Results</h2>
-            <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>{isGameEnd ? "Final season complete — the festival has run its course." : "Season ends. Fame is awarded to the top of each objective."}</p>
-            {awards.map((a, i) => (
-              <div key={i} style={{ padding: 14, borderRadius: 10, background: "rgba(15,14,26,0.6)", border: "1px solid #2a2a4a", marginBottom: 10, textAlign: "left" }}>
-                <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🎯 {a.objective.label}</div>
-                {a.noScore ? (
-                  <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No player scored on this objective — no Fame awarded.</div>
-                ) : (<>
-                  {a.firstPlace.length > 0 && (
-                    <div style={{ marginBottom: 4, fontSize: 12 }}>
-                      <span style={{ color: "#86efac", fontWeight: 700 }}>🥇 1st (+3 🔥):</span>{" "}
-                      <span style={{ color: "#e2e8f0" }}>{a.firstPlace.map(p => `${p.name} (${p.value})`).join(", ")}</span>
+            <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 24, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — Season Close</h2>
+            <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>
+              {isGameEnd
+                ? "Final season complete — the festival has run its course."
+                : "Season ends. Every player scores 1 🎟️ per campsite + 1 🎟️ per artist on stages."}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+              {rows.map((r, idx) => (
+                <div key={r.pid} style={{ padding: 12, borderRadius: 10, background: idx === 0 ? "linear-gradient(135deg, rgba(252,211,77,0.1), rgba(251,146,60,0.05))" : "rgba(15,14,26,0.6)", border: idx === 0 ? "1px solid rgba(252,211,77,0.4)" : "1px solid #2a2a4a", textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16, color: idx === 0 ? "#fcd34d" : "#c4b5fd", fontWeight: 800 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
+                      <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14 }}>{r.name}{r.isAI ? " 🤖" : ""}</span>
                     </div>
-                  )}
-                  {a.secondPlace.length > 0 && (
-                    <div style={{ fontSize: 12 }}>
-                      <span style={{ color: "#93c5fd", fontWeight: 700 }}>🥈 2nd (+2 🔥):</span>{" "}
-                      <span style={{ color: "#e2e8f0" }}>{a.secondPlace.map(p => `${p.name} (${p.value})`).join(", ")}</span>
-                    </div>
-                  )}
-                  {a.firstPlace.length > 1 && (
-                    <div style={{ color: "#f59e0b", fontSize: 10, marginTop: 4, fontStyle: "italic" }}>Tied for 1st — no 2nd place awarded.</div>
-                  )}
-                </>)}
-              </div>
-            ))}
-            <button onClick={continueFromSeasonEnd} style={{ ...bp, marginTop: 10, padding: "12px 32px", fontSize: 14 }}>
-              {isGameEnd ? "View Final Results →" : `Continue to ${QUICKYEAR_SEASON_LABELS[season === "autumn" ? "winter" : season === "winter" ? "spring" : "summer"]} →`}
+                    <div style={{ color: idx === 0 ? "#fcd34d" : "#60a5fa", fontWeight: 800, fontSize: 18 }}>🎟️ {r.total.toLocaleString()}</div>
+                  </div>
+                  <div style={{ color: "#94a3b8", fontSize: 11, marginLeft: 24 }}>
+                    This season: <strong style={{ color: "#86efac" }}>+{r.bonus}</strong> ({r.campsites} 🏕️ campsite{r.campsites === 1 ? "" : "s"} + {r.artists} 🎤 artist{r.artists === 1 ? "" : "s"})
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={continueFromSeasonEnd} style={{ ...bp, marginTop: 4, padding: "12px 32px", fontSize: 14 }}>
+              {isGameEnd ? "View Final Results →" : `Continue to ${nextSeasonLabel} →`}
             </button>
           </div>
         </div>;
@@ -11670,48 +11556,9 @@ export default function Headliners() {
       {/* v199.3: Fame spend menu removed entirely. Mental-load tradeoff: with Hotline agents
           already providing a per-season bonus-action beat, the per-turn Fame spend was
           doubling up conceptually and adding too many decision points to a 12-turn game. */}
-      {/* v198: Secret objectives panel — reveal from hand as a free action. Kept wired in
-          case we introduce another way to draw them (currently orphaned — no draw mechanism
-          after Fame spend removal). */}
-      {secretObjectivesOpen && gameMode === "quickYear" && (() => {
-        const secrets = quickYearSecretObjs[currentPlayerId] || [];
-        const revealOne = (idx) => {
-          const obj = secrets[idx];
-          const met = isSecretObjectiveMet(currentPlayerId, obj);
-          // Remove from hand
-          setQuickYearSecretObjs(prev => ({ ...prev, [currentPlayerId]: (prev[currentPlayerId] || []).filter((_, i) => i !== idx) }));
-          if (met) {
-            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 3) } }));
-            logFameGain(currentPlayerId, 3, `Secret Objective met: ${obj.label}`);
-            addLog("🔮 Secret", `${currentPlayer?.festivalName || "?"}: Revealed "${obj.label}" — MET → +3 🔥 Fame!`);
-            showFloatingBonus("+3 🔥 Secret Objective!", "#a855f7");
-          } else {
-            addLog("🔮 Secret", `${currentPlayer?.festivalName || "?"}: Revealed "${obj.label}" — not met, discarded`);
-          }
-          setTimeout(() => recalcTickets(), 50);
-        };
-        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 965, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ ...card, textAlign: "center", maxWidth: 520, width: "100%" }}>
-            <h3 style={{ color: "#d8b4fe", marginBottom: 4 }}>🔮 Your Secret Objectives</h3>
-            <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 14 }}>Reveal any objective at any time. If you've made ≥2 progress on it this season, you gain +3 Fame. Otherwise it's discarded. Free action — doesn't use your turn.</p>
-            {secrets.length === 0 ? <p style={{ color: "#64748b", fontSize: 12, fontStyle: "italic" }}>No secret objectives in hand.</p> : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {secrets.map((o, idx) => {
-                  const met = isSecretObjectiveMet(currentPlayerId, o);
-                  return <button key={idx} onClick={() => revealOne(idx)} style={{ ...bp, padding: 12, textAlign: "left", background: met ? "linear-gradient(135deg, rgba(168,85,247,0.3), rgba(34,197,94,0.2))" : "rgba(168,85,247,0.15)", border: met ? "1px solid #22c55e" : "1px solid #a855f7" }}>
-                    <div style={{ fontWeight: 700, fontSize: 12, color: "#e9d5ff" }}>🎯 {o.label}</div>
-                    <div style={{ fontSize: 10, color: met ? "#86efac" : "#94a3b8", marginTop: 3 }}>
-                      Current progress this season: {readSeasonMetric(seasonStats[currentPlayerId], quickYearSeason, o.metric)}
-                      {met ? " · ✓ Would score +3 Fame if revealed now" : " · Need ≥2 to score"}
-                    </div>
-                  </button>;
-                })}
-              </div>
-            )}
-            <button onClick={() => setSecretObjectivesOpen(false)} style={{ ...bs, marginTop: 12, fontSize: 11 }}>Close</button>
-          </div>
-        </div>;
-      })()}
+      {/* v199.4: Secret Objectives system removed entirely. No draw path remaining and the
+          per-season metric tracking it depended on is gone. If we want secrets back as a
+          Hotline-agent reward, we can rebuild them with simpler trigger logic. */}
       {/* v197.13: Scouted Talent (sec_2) — draw 3, keep 1. */}
       {sec2Draw && (() => {
         const picker = players.find(p => p.id === sec2Draw.pid);
@@ -13090,37 +12937,21 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
-            {/* v198: Quick Play objectives panel. Shows all 4 seasons × 2 objectives,
-                with the current season highlighted. Live standings for the current season's
-                objectives let players see where they are vs opponents. */}
-            {gameMode === "quickYear" && quickYearPublicObjectives && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.25)" }}>
-              <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎯 Season Objectives</div>
-              {QUICKYEAR_SEASONS.map(sKey => {
-                const isCurrent = sKey === quickYearSeason;
-                const objs = quickYearPublicObjectives[sKey] || [];
-                return <div key={sKey} style={{
-                  padding: 6, borderRadius: 6, marginBottom: 4,
-                  background: isCurrent ? "rgba(252,211,77,0.1)" : "rgba(30,41,59,0.4)",
-                  border: isCurrent ? "1px solid rgba(252,211,77,0.5)" : "1px solid #334155",
-                }}>
-                  <div style={{ fontSize: 10, color: isCurrent ? "#fcd34d" : "#94a3b8", fontWeight: 700, marginBottom: 3 }}>
-                    {QUICKYEAR_SEASON_EMOJI[sKey]} {QUICKYEAR_SEASON_LABELS[sKey]} {isCurrent && "— current"}
-                  </div>
-                  {objs.map((o, i) => {
-                    // For current season, show live standings
-                    let standingLine = null;
-                    if (isCurrent) {
-                      const standings = players.map(p => ({
-                        name: p.festivalName,
-                        value: readSeasonMetric(seasonStats[p.id], sKey, o.metric),
-                      })).sort((a, b) => b.value - a.value);
-                      standingLine = standings.map(s => `${s.name}:${s.value}`).join(" · ");
-                    }
-                    return <div key={i} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2 }}>
-                      • {o.label}
-                      {standingLine && <div style={{ fontSize: 9, color: "#64748b", marginLeft: 10, marginTop: 1 }}>{standingLine}</div>}
-                    </div>;
-                  })}
+            {/* v199.4: Quick Play season-scoring hint. Replaces the old season-objectives panel
+                — all players score the same way, every season, so the panel is a tiny
+                reminder of the formula + current running ticket totals. */}
+            {gameMode === "quickYear" && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.25)" }}>
+              <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎟️ Season Scoring</div>
+              <div style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 6 }}>
+                At each season close: <strong style={{ color: "#86efac" }}>1 🎟️ per campsite + 1 🎟️ per artist</strong> on your stages.
+              </div>
+              <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, fontStyle: "italic" }}>Running tickets (incl. this season's bonus):</div>
+              {players.map(p => {
+                const pd = playerData[p.id];
+                const total = pd?.tickets || 0;
+                return <div key={p.id} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                  <span>{p.festivalName}{p.isAI ? " 🤖" : ""}</span>
+                  <span style={{ color: "#fcd34d", fontWeight: 700 }}>🎟️ {total}</span>
                 </div>;
               })}
             </div>}
@@ -13604,13 +13435,6 @@ export default function Headliners() {
                     : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
-                {/* v199.3: Fame spend button removed. Secret Objectives button survives for
-                    players who still hold secrets in hand (currently orphaned — no draw path). */}
-                {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
-                  <button onClick={() => setSecretObjectivesOpen(true)} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
-                    🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
-                  </button>
-                )}
                 <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={bd}>End Turn →</button>
               </div>
             </div>}
@@ -13626,13 +13450,7 @@ export default function Headliners() {
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
-                {/* v199.3: Fame spend button removed. Secret Objectives button survives for
-                    players who still hold secrets in hand (currently orphaned — no draw path). */}
-                {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
-                  <button onClick={() => setSecretObjectivesOpen(true)} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
-                    🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
-                  </button>
-                )}
+
               </div>
             </div>}
 
