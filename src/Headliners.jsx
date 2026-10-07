@@ -657,7 +657,17 @@ function genreGradient(genre) {
 function canAffordArtist(artist, pd, fameReduction = 0) {
   if (pd.fame < Math.max(0, artist.fame - fameReduction)) return false;
   const a = pd.amenities || {};
-  return (a.campsite||0) >= artist.campCost && (a.security||0) >= artist.securityCost && (a.catering||0) >= artist.cateringCost && (a.portaloo||0) >= artist.portalooCost;
+  // v199.1: Hattie Haggler flag — artist can be played with up to _hattieDiscount
+  // fewer total amenity units across all four types. e.g. a flagged artist needing
+  // 1 campsite + 1 security + 1 catering (3 total) can be played with only 1 of those
+  // if the discount is 2. For un-flagged artists (discount = 0), this collapses to the
+  // original strict per-type check (total shortfall must be 0).
+  const discount = artist._hattieDiscount || 0;
+  const shortfall = Math.max(0, (artist.campCost || 0) - (a.campsite || 0)) +
+                    Math.max(0, (artist.securityCost || 0) - (a.security || 0)) +
+                    Math.max(0, (artist.cateringCost || 0) - (a.catering || 0)) +
+                    Math.max(0, (artist.portalooCost || 0) - (a.portaloo || 0));
+  return shortfall <= discount;
 }
 
 // Genre-match headliner rule (v124): an artist can be booked into slot 3 (the headliner
@@ -2031,15 +2041,18 @@ function RotaryDial({ agents, resultIndex, onComplete, playerName }) {
       </defs>
       {/* Phone body — background disc */}
       <circle cx={CENTER} cy={CENTER} r={DIAL_R + 20} fill="url(#dialBg)" stroke="#4a3e5a" strokeWidth={2} />
-      {/* Fixed hole markers (hidden behind the rotating dial, visible through its holes) */}
+      {/* Fixed letter labels (shown through the finger-hole punctures on the dial face).
+          Each agent's first letter — like the number plate on a real rotary phone,
+          but with character shorthand instead of digits. Order matches HOTLINE_AGENTS. */}
       {agents.map((agent, i) => {
         const angle = -90 + i * 36;
         const rad = angle * Math.PI / 180;
         const hx = CENTER + Math.cos(rad) * HOLE_ORBIT;
         const hy = CENTER + Math.sin(rad) * HOLE_ORBIT;
+        const letter = (agent.name || "?").charAt(0).toUpperCase();
         return (
           <g key={`label-${i}`} transform={`translate(${hx} ${hy})`}>
-            <text textAnchor="middle" dominantBaseline="central" fontSize="18" fill="#fcd34d" style={{ pointerEvents: "none" }}>{agent.emoji}</text>
+            <text textAnchor="middle" dominantBaseline="central" fontSize="22" fontWeight="800" fontFamily="Georgia, serif" fill="#fcd34d" style={{ pointerEvents: "none" }}>{letter}</text>
           </g>
         );
       })}
@@ -2211,6 +2224,12 @@ export default function Headliners() {
   // Pending tempt flags added by agent effects — read at tempt resolution.
   // { pid: { freeFame?: true, amenityDiscount?: 2, multiTempt?: true } }
   const hotlineTemptFlagsRef = useRef({});
+  // v199.1: Dave Dealmaker picker state — { pid, artists: [5 drawn], selected: Set<idx> }
+  // Shown when Dave wins a tempt: player picks 2 of 5 drawn artists to keep.
+  const [davePicker, setDavePicker] = useState(null);
+  // v199.1: Nancy Negotiator picker state — { pid, temptedArtist }
+  // Shown when Nancy LOSES a tempt: player picks a hand card to swap for the tempted artist.
+  const [nancyPicker, setNancyPicker] = useState(null);
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
   const [infraRewards, setInfraRewards] = useState(null);
@@ -3465,6 +3484,9 @@ export default function Headliners() {
   // v199: Hotline — begin season spins. Called at the start of each season (incl. autumn
   // at game start). Builds the ordered queue of players who need to spin, clears last
   // season's agents and used-flags, and opens the modal for the first player.
+  // v199.1: processes the queue inline — AI players auto-pick + advance; the modal only
+  // opens for human players. Previously this relied on a useEffect that didn't fire
+  // reliably when the queue head was an AI.
   const beginHotlineSpinsForSeason = () => {
     if (gameModeRef.current !== "quickYear") return;
     const queue = players.map(p => p.id); // all players spin, in turn order
@@ -3473,9 +3495,35 @@ export default function Headliners() {
     setHotlineUsed({});
     hotlineUsedRef.current = {};
     hotlineTemptFlagsRef.current = {};
-    setHotlineSpinQueue(queue);
     setHotlineLandedAgent(null);
+    processHotlineQueue(queue);
+  };
+  // Advance the hotline queue — if the head is an AI, auto-pick after a short delay then
+  // recurse. If the head is a human, open the modal. If empty, close.
+  const processHotlineQueue = (queue) => {
+    if (queue.length === 0) {
+      setHotlineSpinPhase("idle");
+      setHotlineSpinQueue([]);
+      return;
+    }
+    const headPid = queue[0];
+    const headPlayer = players.find(p => p.id === headPid);
+    setHotlineSpinQueue(queue);
     setHotlineSpinPhase("spinning");
+    if (headPlayer?.isAI) {
+      // AI auto-pick after an 800ms "ring" delay so the sequence feels paced.
+      setTimeout(() => {
+        const picked = HOTLINE_AGENTS[Math.floor(Math.random() * HOTLINE_AGENTS.length)];
+        const nextAgents = { ...hotlineAgentsRef.current, [headPid]: picked };
+        setHotlineAgents(nextAgents);
+        hotlineAgentsRef.current = nextAgents;
+        addLog("📞 Hotline", `${headPlayer.festivalName} 🤖 spun ${picked.emoji} ${picked.name}`);
+        processHotlineQueue(queue.slice(1));
+      }, 900);
+    }
+    // For humans: the modal renders based on hotlineSpinPhase === "spinning", so nothing
+    // further to do here — confirmHotlineAgent will call processHotlineQueue after the
+    // player confirms.
   };
   // Called when the dial finishes animating — assigns the landed agent to the currently
   // spinning player (first in queue) but holds it in landedAgent for confirm/re-spin.
@@ -3493,16 +3541,9 @@ export default function Headliners() {
     hotlineAgentsRef.current = nextAgents;
     const name = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("📞 Hotline", `${name} spun ${agent.emoji} ${agent.name} for the season`);
-    const rest = hotlineSpinQueue.slice(1);
-    setHotlineSpinQueue(rest);
     setHotlineLandedAgent(null);
-    if (rest.length === 0) {
-      // All players done — close the modal, resume turn flow.
-      setHotlineSpinPhase("idle");
-    } else {
-      // Next player spins.
-      setHotlineSpinPhase("spinning");
-    }
+    // v199.1: let processHotlineQueue handle the next player (auto-picks for AI).
+    processHotlineQueue(hotlineSpinQueue.slice(1));
   };
   // Re-spin for 1 Fame. Deducts Fame, re-rolls a new agent, animates again.
   const respinHotlineForFame = () => {
@@ -3517,31 +3558,6 @@ export default function Headliners() {
     setHotlineLandedAgent(null);
     setHotlineSpinPhase("spinning");
   };
-  // v199: when the Hotline queue head is an AI player, auto-pick a random agent and
-  // advance after a short delay. Watches queue + phase; fires once per AI player.
-  useEffect(() => {
-    if (gameModeRef.current !== "quickYear") return;
-    if (hotlineSpinPhase !== "spinning") return;
-    if (hotlineSpinQueue.length === 0) return;
-    const headPid = hotlineSpinQueue[0];
-    const headPlayer = players.find(p => p.id === headPid);
-    if (!headPlayer?.isAI) return;
-    const t = setTimeout(() => {
-      // Pick a random agent and go straight to confirm (AI never re-spins).
-      const pickedIdx = Math.floor(Math.random() * HOTLINE_AGENTS.length);
-      const picked = HOTLINE_AGENTS[pickedIdx];
-      const nextAgents = { ...hotlineAgentsRef.current, [headPid]: picked };
-      setHotlineAgents(nextAgents);
-      hotlineAgentsRef.current = nextAgents;
-      addLog("📞 Hotline", `${headPlayer.festivalName} 🤖 spun ${picked.emoji} ${picked.name}`);
-      const rest = hotlineSpinQueue.slice(1);
-      setHotlineSpinQueue(rest);
-      setHotlineLandedAgent(null);
-      setHotlineSpinPhase(rest.length === 0 ? "idle" : "spinning");
-    }, 800);
-    return () => clearTimeout(t);
-  }, [hotlineSpinPhase, hotlineSpinQueue, players]);
-
   // Does this player have an unused agent this season?
   const hasActiveAgent = (pid) => !!hotlineAgentsRef.current[pid] && !hotlineUsedRef.current[pid];
   // Mark the player's agent as used (consumed by tempting).
@@ -3598,19 +3614,28 @@ export default function Headliners() {
         break;
       }
       case "dave_dealmaker": {
-        // Keep the tempted artist (default) AND draw 5 artists, keep 2. Reuses the pending-
-        // effect drawFromPool-style flow — simplest MVP: just draw 5 and auto-stuff into
-        // hand (keep all 5). Future: proper "pick 2 of 5" picker modal.
+        // v199.1: Dave draws 5 artists from the deck; the player picks 2 to keep. The
+        // tempted artist is already in their hand (via the normal tempt resolution). For
+        // AI, just keep the top 2.
         if (outcome === "win") {
           const drawn = drawFromDeck(5);
-          if (drawn.length > 0) {
-            // Keep all 5 in hand for MVP (upgrade later to a picker). Prevents the "lost
-            // the draw" variance — Dave reliably stuffs your hand.
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
-            addLog("🤝 Dave Dealmaker", `${pName}: drew ${drawn.length} artists and kept all of them (MVP — proper pick-2-of-5 picker TBD)`);
-            showFloatingBonus(`🤝 +${drawn.length} artists!`, "#fcd34d");
-          } else {
+          if (drawn.length === 0) {
             addLog("🤝 Dave Dealmaker", `${pName}: no artists left in the deck`);
+            break;
+          }
+          const isAI = players.find(p => p.id === pid)?.isAI;
+          if (isAI) {
+            // AI keeps the first 2, discards the rest. No picker.
+            const kept = drawn.slice(0, 2);
+            const discarded = drawn.slice(2);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...kept] } }));
+            if (discarded.length > 0) setDiscardPile(prev => [...prev, ...discarded]);
+            addLog("🤝 Dave Dealmaker", `${pName} 🤖: drew 5, kept 2 (${kept.map(a => a.name).join(", ")}), discarded ${discarded.length}`);
+            showFloatingBonus(`🤝 +2 artists!`, "#fcd34d");
+          } else {
+            // Human: open the picker modal.
+            setDavePicker({ pid, artists: drawn, selected: [] });
+            addLog("🤝 Dave Dealmaker", `${pName}: drew 5 artists — pick 2 to keep`);
           }
         }
         break;
@@ -3639,27 +3664,46 @@ export default function Headliners() {
         break;
       }
       case "barry_belligerent": {
-        // On loss: nobody wins, all contestants draw 1 from deck. The "nobody wins" part
-        // is tricky to retrofit into the existing contest flow — for MVP, Barry just gets
-        // the consolation draw (same as Wanda). Full "cancel the tempt + all tempters draw"
-        // is TBD.
-        if (outcome === "loss") {
-          const drawn = drawFromDeck(1);
-          if (drawn.length > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
-            addLog("🥊 Barry Belligerent", `${pName}: drew 1 artist (MVP — full "cancel tempt" effect TBD)`);
-            showFloatingBonus("🥊 +1 draw", "#fcd34d");
-          }
-        }
+        // v199.1: Barry's loss effect ("nobody wins, all tempters draw") is handled directly
+        // in commitAgentContest, which short-circuits the normal win-processing when Barry
+        // is among the losers. By the time the dispatcher runs, the contest has either been
+        // cancelled already (so the dispatcher doesn't fire at all) OR Barry won (and his
+        // win trigger is... nothing — Barry is loss-only). So this is a no-op.
         break;
       }
       case "nancy_negotiator": {
-        // Swap hand artist for tempted artist, you win. Needs picker UI for the swap target.
-        // MVP: skip the swap, just give the tempted artist. Deck draw as consolation if no hand.
+        // v199.1: Nancy swaps a hand card for the tempted artist on loss. If the player
+        // has no hand, Nancy's effect is wasted — the tempted artist is gone. For AI,
+        // swap the lowest-fame hand card.
         if (outcome === "loss" && artist) {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), artist] } }));
-          addLog("📞 Nancy Negotiator", `${pName}: salvaged ${artist.name} to hand (MVP — full "swap for hand card" effect TBD)`);
-          showFloatingBonus("📞 Nancy save!", "#fcd34d");
+          const pd = (playerDataRef.current || playerData)[pid];
+          const hand = pd?.hand || [];
+          if (hand.length === 0) {
+            // No hand card to swap — Nancy just adds the artist to hand (consolation).
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [artist] } }));
+            addLog("📞 Nancy Negotiator", `${pName}: no hand card to swap — ${artist.name} added to hand instead`);
+            showFloatingBonus("📞 Nancy save!", "#fcd34d");
+            break;
+          }
+          const isAI = players.find(p => p.id === pid)?.isAI;
+          if (isAI) {
+            // AI swaps the lowest-fame hand card (least valuable).
+            let worstIdx = 0;
+            for (let i = 1; i < hand.length; i++) {
+              if ((hand[i].fame || 0) < (hand[worstIdx].fame || 0)) worstIdx = i;
+            }
+            const swapped = hand[worstIdx];
+            const newHand = hand.slice();
+            newHand[worstIdx] = artist;
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: newHand } }));
+            setDiscardPile(prev => [...prev, swapped]);
+            addLog("📞 Nancy Negotiator", `${pName} 🤖: swapped ${swapped.name} out of hand for ${artist.name}`);
+            showFloatingBonus("📞 Nancy swap!", "#fcd34d");
+          } else {
+            // Human: open the picker modal.
+            setNancyPicker({ pid, temptedArtist: artist });
+            addLog("📞 Nancy Negotiator", `${pName}: pick a hand card to swap for ${artist.name}`);
+          }
         }
         break;
       }
@@ -4278,8 +4322,13 @@ export default function Headliners() {
   // the artist on the next turn (unplayable tempts land in hand instead).
   const hasAgent = (pid) => {
     if (temptModeRef.current) {
-      const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
+      // v199.1: in Quick Play, tempt is gated by the Hotline agent (no Fame cost),
+      // one tempt per season per agent. Classic keeps the 2-Fame / 2-per-turn rule.
+      if (gameModeRef.current === "quickYear") {
+        return hasActiveAgent(pid) && tempts.length < 1;
+      }
+      const pd = playerData[pid] || {};
       // v196: tempt cost raised to 2 Fame (was 1). Uncontested still refunds +2 Fame (net 0),
       // contested still refunds 1 Fame (net -1). Discourages reflexive tempting every turn.
       return (pd.fame || 0) >= 2 && tempts.length < 2;
@@ -4293,8 +4342,13 @@ export default function Headliners() {
   // both the 2-per-turn cap and their current fame. Displayed in stat rows as the "🕵️ N" counter.
   const getAgentActionsLeft = (pid) => {
     if (temptModeRef.current) {
-      const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
+      // v199.1: in Quick Play, tempts are gated by Hotline agent (not Fame). Returns 1 if
+      // the player has an unused agent this season, 0 otherwise.
+      if (gameModeRef.current === "quickYear") {
+        return hasActiveAgent(pid) ? Math.max(0, 1 - tempts.length) : 0;
+      }
+      const pd = playerData[pid] || {};
       // v188: tempt cap reduced from 2/turn to 1/turn.
       // v196: tempt cost raised to 2 Fame (was 1). Uncontested still refunds +2 Fame
       // (net 0), contested refunds 1 Fame (net -1). Discourages reflexive tempting.
@@ -4430,11 +4484,24 @@ export default function Headliners() {
         // Fires here (at resolution) so it applies regardless of what the winner does
         // next (book directly, book via modal, send to hand).
         grantUncontestedTemptBonus(resolution.pid);
-        // v199: fire Hotline agent effect for the uncontested winner. agentId is attached
-        // to the placement when it was created in placeAgentOnArtist.
-        const placement = (temptPlacementsRef.current[resolution.pid] || []).find(p => p.type === "pool" && p.artistName === resolution.artist.name);
-        if (placement?.agentId) {
-          applyHotlineAgentEffect(resolution.pid, "win", { artist: resolution.artist, agentId: placement.agentId });
+        // v199.1: Hattie Haggler — flag the artist with a 2-unit amenity discount BEFORE
+        // the book/hand decision runs. canAffordArtist reads _hattieDiscount so the artist
+        // can land on a stage even when the player is short on amenities.
+        if (gameModeRef.current === "quickYear") {
+          const agent = hotlineAgentsRef.current[resolution.pid];
+          if (agent?.id === "hattie_haggler") {
+            resolution.artist = { ...resolution.artist, _hattieDiscount: 2 };
+          }
+        }
+        // v199.1: fire Hotline agent effect for uncontested winner. Direct lookup from
+        // hotlineAgentsRef (one agent per season per player, so no ambiguity). Previous
+        // version read placement.agentId which could be absent if the placement had been
+        // popped by this point in the resolution chain — that was why Hamish wasn't firing.
+        if (gameModeRef.current === "quickYear") {
+          const agent = hotlineAgentsRef.current[resolution.pid];
+          if (agent) {
+            applyHotlineAgentEffect(resolution.pid, "win", { artist: resolution.artist, agentId: agent.id });
+          }
         }
         // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
         // modal renders during the AI's turn and the human user ends up picking a stage
@@ -4830,12 +4897,49 @@ export default function Headliners() {
   };
 
   const commitAgentContest = (contest) => {
-    const { artist, contestantData, winnerId } = contest;
+    let { artist, contestantData, winnerId } = contest;
     const isTempt = temptModeRef.current;
     const newPool = [...artistPool];
     const idx = newPool.findIndex(a => a.name === artist.name);
     if (idx >= 0) newPool.splice(idx, 1);
     setArtistPool(newPool);
+    // v199.1: Hattie Haggler — if the contest winner's agent is Hattie, flag the artist
+    // with a 2-unit amenity discount before book/hand decision.
+    // v199.1: Barry Belligerent — if ANY contestant has Barry and lost, cancel the win
+    // entirely: artist goes to discard, no winner, all contestants draw 1 from deck.
+    if (gameModeRef.current === "quickYear") {
+      const winnerAgent = hotlineAgentsRef.current[winnerId];
+      if (winnerAgent?.id === "hattie_haggler") {
+        artist = { ...artist, _hattieDiscount: 2 };
+        contest = { ...contest, artist };
+      }
+      // Barry check: any loser whose agent is Barry triggers the "nobody wins" clause.
+      const barryLoser = contestantData.find(c => c.pid !== winnerId && hotlineAgentsRef.current[c.pid]?.id === "barry_belligerent");
+      if (barryLoser) {
+        // Cancel the win. Discard the artist, pop everyone's tempt placement for it, and
+        // give every contestant a draw from the deck (Barry's chaos tax).
+        setDiscardPile(prev => [...prev, artist]);
+        setTemptPlacements(prev => {
+          const next = { ...prev };
+          contestantData.forEach(c => {
+            next[c.pid] = (next[c.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name));
+          });
+          return next;
+        });
+        const drawn = drawFromDeck(contestantData.length);
+        setPlayerData(p => {
+          const nextPd = { ...p };
+          contestantData.forEach((c, i) => {
+            if (drawn[i]) nextPd[c.pid] = { ...nextPd[c.pid], hand: [...(nextPd[c.pid]?.hand || []), drawn[i]] };
+          });
+          return nextPd;
+        });
+        addLog("🥊 Barry Belligerent", `${players.find(p => p.id === barryLoser.pid)?.festivalName}'s Barry Belligerent cancels the contest for ${artist.name}! Nobody wins. All ${contestantData.length} tempters draw a card.`);
+        showFloatingBonus("🥊 Chaos tempt!", "#ef4444");
+        setTimeout(() => recalcTickets(), 50);
+        return; // Short-circuit — don't do the normal win processing.
+      }
+    }
     const winPd = playerDataRef.current?.[winnerId] || playerData[winnerId] || {};
     const openStages = (winPd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
     // v177: fame-refund timing bug fix. Under tempt mode, every contestant paid 1 Fame
@@ -11431,6 +11535,101 @@ export default function Headliners() {
           </div>
         );
       })()}
+      {/* v199.1: Dave Dealmaker picker — human picks 2 of 5 drawn artists. */}
+      {davePicker && (() => {
+        const { pid, artists, selected } = davePicker;
+        const selectedIdxs = selected;
+        const confirm = () => {
+          const kept = selectedIdxs.map(i => artists[i]);
+          const discarded = artists.filter((_, i) => !selectedIdxs.includes(i));
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...kept] } }));
+          if (discarded.length > 0) setDiscardPile(prev => [...prev, ...discarded]);
+          const pName = players.find(p => p.id === pid)?.festivalName || "?";
+          addLog("🤝 Dave Dealmaker", `${pName}: kept ${kept.map(a => a.name).join(", ")} — discarded ${discarded.map(a => a.name).join(", ")}`);
+          showFloatingBonus("🤝 +2 artists!", "#fcd34d");
+          setDavePicker(null);
+          setTimeout(() => recalcTickets(), 50);
+        };
+        const toggleIdx = (i) => {
+          if (selectedIdxs.includes(i)) {
+            setDavePicker({ ...davePicker, selected: selectedIdxs.filter(x => x !== i) });
+          } else if (selectedIdxs.length < 2) {
+            setDavePicker({ ...davePicker, selected: [...selectedIdxs, i] });
+          }
+        };
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%" }}>
+              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🤝 Dave Dealmaker</h3>
+              <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>Pick <strong>2</strong> artists to keep. The rest go to the discard pile. ({selectedIdxs.length}/2 selected)</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
+                {artists.map((a, i) => {
+                  const isSel = selectedIdxs.includes(i);
+                  return (
+                    <button key={i} onClick={() => toggleIdx(i)} style={{
+                      padding: 10, borderRadius: 10, cursor: "pointer", textAlign: "left",
+                      background: isSel ? "linear-gradient(135deg, rgba(252,211,77,0.25), rgba(249,115,22,0.2))" : "rgba(30,41,59,0.6)",
+                      border: isSel ? "2px solid #fcd34d" : "1px solid #334155",
+                      color: "#e2e8f0",
+                    }}>
+                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>{a.name}</div>
+                      <div style={{ fontSize: 10, color: "#94a3b8" }}>🔥 {a.fame} · 🎟️ {a.tickets}{a.vp ? ` + ${a.vp} VP` : ""}</div>
+                      <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>{a.genre}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <button onClick={confirm} disabled={selectedIdxs.length !== 2} style={{ ...bp, padding: "10px 24px", fontSize: 13, opacity: selectedIdxs.length === 2 ? 1 : 0.4 }}>
+                Keep {selectedIdxs.length} / 2 →
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+      {/* v199.1: Nancy Negotiator picker — human picks 1 hand card to swap for tempted artist. */}
+      {nancyPicker && (() => {
+        const { pid, temptedArtist } = nancyPicker;
+        const pd = (playerDataRef.current || playerData)[pid];
+        const hand = pd?.hand || [];
+        const swap = (handIdx) => {
+          const swapped = hand[handIdx];
+          const newHand = hand.slice();
+          newHand[handIdx] = temptedArtist;
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: newHand } }));
+          setDiscardPile(prev => [...prev, swapped]);
+          const pName = players.find(p => p.id === pid)?.festivalName || "?";
+          addLog("📞 Nancy Negotiator", `${pName}: swapped ${swapped.name} out for ${temptedArtist.name}`);
+          showFloatingBonus("📞 Nancy swap!", "#fcd34d");
+          setNancyPicker(null);
+          setTimeout(() => recalcTickets(), 50);
+        };
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%" }}>
+              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>📞 Nancy Negotiator</h3>
+              <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 12 }}>You failed the tempt — but Nancy's got a deal. Pick a hand card to swap OUT for <strong style={{ color: "#fcd34d" }}>{temptedArtist.name}</strong>.</p>
+              <div style={{ padding: 10, borderRadius: 10, background: "rgba(252,211,77,0.08)", border: "1px solid #fcd34d", marginBottom: 12 }}>
+                <div style={{ color: "#fcd34d", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Coming IN</div>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{temptedArtist.name}</div>
+                <div style={{ fontSize: 10, color: "#94a3b8" }}>🔥 {temptedArtist.fame} · 🎟️ {temptedArtist.tickets}{temptedArtist.vp ? ` + ${temptedArtist.vp} VP` : ""} · {temptedArtist.genre}</div>
+              </div>
+              <div style={{ color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Pick one to swap OUT ↓</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+                {hand.map((a, i) => (
+                  <button key={i} onClick={() => swap(i)} style={{
+                    padding: 10, borderRadius: 8, cursor: "pointer", textAlign: "left",
+                    background: "rgba(30,41,59,0.6)", border: "1px solid #334155", color: "#e2e8f0",
+                  }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 3 }}>{a.name}</div>
+                    <div style={{ fontSize: 10, color: "#94a3b8" }}>🔥 {a.fame} · 🎟️ {a.tickets}{a.vp ? ` + ${a.vp} VP` : ""}</div>
+                    <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>{a.genre}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {/* v198: Quick Play season-end scoring modal. Shows the ending season's 2 objectives,
           who won 1st/2nd on each, Fame awarded. Click Continue to transition. */}
       {seasonEndScoring && (() => {
@@ -13450,7 +13649,16 @@ export default function Headliners() {
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
                 {undoSnapshot && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
-                {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
+                {hasAgent(currentPlayerId) && !turnAction && (() => {
+                  // v199.1: in Quick Play, tempt is agent-powered — show the agent's name
+                  // on the button so the player sees who they're calling. Classic retains
+                  // the "1 🔥" Fame-cost label.
+                  const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
+                  const label = gameMode === "quickYear" && temptMode
+                    ? (qyAgent ? `📞 Tempt via ${qyAgent.name.split(" ")[0]} (free)` : `📞 No agent`)
+                    : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
+                  return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
+                })()}
                 {/* v198.1: Fame spend button also available AFTER the main action, so a player
                     can take an amenity first and THEN spend a Fame to get another amenity (etc.).
                     Previously only shown in the pre-action row, forcing players to decide BEFORE
@@ -13473,7 +13681,13 @@ export default function Headliners() {
             {!actionTaken && !turnAction && !noTurnsLeft && <div>
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                 <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
-                {hasAgent(currentPlayerId) && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
+                {hasAgent(currentPlayerId) && (() => {
+                  const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
+                  const label = gameMode === "quickYear" && temptMode
+                    ? (qyAgent ? `📞 Tempt via ${qyAgent.name.split(" ")[0]} (free)` : `📞 No agent`)
+                    : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
+                  return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
+                })()}
                 <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
                 {/* v198: Fame spend button — only visible in Quick Play, when player has
                     Fame to spend AND hasn't already spent this turn. */}
