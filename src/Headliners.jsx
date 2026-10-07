@@ -3261,8 +3261,38 @@ export default function Headliners() {
     const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
     setSeasonEndScoring(null);
     if (isGameEnd) {
-      // Fire a final recompute so any Fame-driven downstream numbers refresh, then end.
-      setTimeout(() => { recalcTickets(); setPhase("gameOver"); addLogH("Game Over — Festival Complete!", "round"); }, 100);
+      // v198.1: populate allTickets for the game-over leaderboard. Classic mode fills
+      // this via beginRoundEnd for each year, but Quick Play skips that whole flow.
+      // Without this, the leaderboard reads 0 tickets for everyone and the "winner"
+      // is just the first player in the list. Compute final tickets inline (same formula
+      // as beginRoundEnd's PASS 1) and store under year 1 — the only year Quick Play has.
+      setPlayerData(prev => {
+        const fresh = {};
+        for (const pid of Object.keys(prev)) {
+          fresh[pid] = computeTicketsForPlayer(prev[pid], undefined, pid);
+        }
+        playerDataRef.current = fresh;
+        // Build the allTickets entries from the fresh computed values. nat[pid][1]
+        // mirrors the classic format { raw, fame, fameVP, ticketVP, ... } so the
+        // leaderboard's downstream reads just work.
+        setAllTickets(prevAT => {
+          const nat = { ...prevAT };
+          for (const p of players) {
+            const pd = fresh[p.id];
+            if (!pd) continue;
+            if (!nat[p.id]) nat[p.id] = {};
+            nat[p.id][1] = {
+              raw: pd.tickets || 0,
+              fame: pd.fame || 0,
+              fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0,
+              starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0,
+            };
+          }
+          return nat;
+        });
+        return fresh;
+      });
+      setTimeout(() => { setPhase("gameOver"); addLogH("Game Over — Festival Complete!", "round"); }, 150);
       return;
     }
     // Transition to the next season.
@@ -12726,6 +12756,21 @@ export default function Headliners() {
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
                 {undoSnapshot && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
                 {hasAgent(currentPlayerId) && !turnAction && <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`}</button>}
+                {/* v198.1: Fame spend button also available AFTER the main action, so a player
+                    can take an amenity first and THEN spend a Fame to get another amenity (etc.).
+                    Previously only shown in the pre-action row, forcing players to decide BEFORE
+                    knowing what their main die rolls were — clunky. One spend per turn still enforced
+                    by the fameSpendUsedRef lock. */}
+                {gameMode === "quickYear" && (currentPD.fame || 0) >= 1 && !fameSpendUsedRef.current[`${currentPlayerId}:${quickYearTurnsTaken}`] && (
+                  <button onClick={() => setFameSpendMenuOpen(true)} style={{ ...bs, background: "linear-gradient(135deg, rgba(249,115,22,0.3), rgba(251,191,36,0.25))", border: "1px solid #f97316", color: "#fcd34d", fontWeight: 700 }}>
+                    ✨ Spend 1 🔥 Fame
+                  </button>
+                )}
+                {gameMode === "quickYear" && (quickYearSecretObjs[currentPlayerId] || []).length > 0 && (
+                  <button onClick={() => setFameSpendMenuOpen("secrets")} style={{ ...bs, background: "rgba(168,85,247,0.2)", border: "1px solid #a855f7", color: "#d8b4fe", fontWeight: 700 }}>
+                    🔮 Secret Objectives ({(quickYearSecretObjs[currentPlayerId] || []).length})
+                  </button>
+                )}
                 <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={bd}>End Turn →</button>
               </div>
             </div>}
@@ -14012,35 +14057,59 @@ export default function Headliners() {
           {winnerRow && <div style={{ marginBottom: 20 }}>
             <p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700, margin: "8px 0 4px" }}>{winnerRow.player.festivalName} Wins!</p>
             <p style={{ color: "#60a5fa", fontSize: 13, margin: 0 }}>
-              {cond === "consistency" && `Led in tickets across ${yearsLed[winnerRow.player.id]} year${yearsLed[winnerRow.player.id] === 1 ? "" : "s"}`}
-              {cond === "talkOfTheTown" && `Peak year: ${(winnerRow.peak * 100).toLocaleString()} tickets sold`}
-              {cond === "following" && `${(winnerRow.total * 100).toLocaleString()} tickets sold across the run`}
+              {gameMode === "quickYear" ? `${winnerRow.total.toLocaleString()} tickets sold at the festival` : (<>
+                {cond === "consistency" && `Led in tickets across ${yearsLed[winnerRow.player.id]} year${yearsLed[winnerRow.player.id] === 1 ? "" : "s"}`}
+                {cond === "talkOfTheTown" && `Peak year: ${(winnerRow.peak * 100).toLocaleString()} tickets sold`}
+                {cond === "following" && `${(winnerRow.total * 100).toLocaleString()} tickets sold across the run`}
+              </>)}
             </p>
           </div>}
-          {/* Full leaderboard — always shows per-year, total, peak, years led so players
-              can see how they'd have placed under each rule. */}
-          <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr repeat(4, minmax(48px, 1fr)) minmax(60px, auto) minmax(50px, auto) minmax(70px, auto)", gap: 6, alignItems: "center", fontSize: 12 }}>
-              <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
-              <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>Festival</div>
-              {[1,2,3,4].map(y => <div key={y} style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Y{y}</div>)}
-              <div style={{ color: cond === "following" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Total</div>
-              <div style={{ color: cond === "talkOfTheTown" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Peak</div>
-              <div style={{ color: cond === "consistency" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Years Led</div>
-              {ranked.map((row, idx) => <React.Fragment key={row.player.id}>
-                <div style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 14 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</div>
-                <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 12 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</div>
-                {[1,2,3,4].map(y => {
-                  const t = row.byYear[y]?.raw;
-                  return <div key={y} style={{ color: t != null ? "#e2e8f0" : "#475569", textAlign: "right", fontSize: 11 }}>{t != null ? t.toLocaleString() : "—"}</div>;
+          {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
+              per-year columns (there's only one year). Classic keeps the full per-year grid. */}
+          {gameMode === "quickYear" ? (
+            <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(252,211,77,0.35)", padding: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr minmax(80px, auto) minmax(70px, auto)", gap: 10, alignItems: "center", fontSize: 12 }}>
+                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
+                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>Festival</div>
+                <div style={{ color: "#fbbf24", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>🎟️ Tickets</div>
+                <div style={{ color: "#f97316", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>🔥 Fame</div>
+                {ranked.map((row, idx) => {
+                  const finalFame = row.byYear[1]?.fame || 0;
+                  const finalTickets = row.byYear[1]?.raw || 0;
+                  return <React.Fragment key={row.player.id}>
+                    <div style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 16 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</div>
+                    <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</div>
+                    <div style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: idx === 0 ? 800 : 600, textAlign: "right", fontSize: 14 }}>{finalTickets.toLocaleString()}</div>
+                    <div style={{ color: "#fed7aa", textAlign: "right", fontSize: 13 }}>{finalFame}</div>
+                  </React.Fragment>;
                 })}
-                <div style={{ color: cond === "following" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "following" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.total.toLocaleString()}</div>
-                <div style={{ color: cond === "talkOfTheTown" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "talkOfTheTown" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.peak.toLocaleString()}</div>
-                <div style={{ color: cond === "consistency" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "consistency" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{yearsLed[row.player.id]}</div>
-              </React.Fragment>)}
+              </div>
+              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Winner = highest ticket count at festival close. Fame shown for reference.</p>
             </div>
-            <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Highlighted column decides the winner under the active condition. Other columns show how you would have ranked under the alternatives.</p>
-          </div>
+          ) : (
+            <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr repeat(4, minmax(48px, 1fr)) minmax(60px, auto) minmax(50px, auto) minmax(70px, auto)", gap: 6, alignItems: "center", fontSize: 12 }}>
+                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
+                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>Festival</div>
+                {[1,2,3,4].map(y => <div key={y} style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Y{y}</div>)}
+                <div style={{ color: cond === "following" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Total</div>
+                <div style={{ color: cond === "talkOfTheTown" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Peak</div>
+                <div style={{ color: cond === "consistency" ? "#fbbf24" : "#94a3b8", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>Years Led</div>
+                {ranked.map((row, idx) => <React.Fragment key={row.player.id}>
+                  <div style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 14 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</div>
+                  <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 12 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</div>
+                  {[1,2,3,4].map(y => {
+                    const t = row.byYear[y]?.raw;
+                    return <div key={y} style={{ color: t != null ? "#e2e8f0" : "#475569", textAlign: "right", fontSize: 11 }}>{t != null ? t.toLocaleString() : "—"}</div>;
+                  })}
+                  <div style={{ color: cond === "following" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "following" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.total.toLocaleString()}</div>
+                  <div style={{ color: cond === "talkOfTheTown" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "talkOfTheTown" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{row.peak.toLocaleString()}</div>
+                  <div style={{ color: cond === "consistency" && idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: cond === "consistency" ? 800 : 600, textAlign: "right", fontSize: 12 }}>{yearsLed[row.player.id]}</div>
+                </React.Fragment>)}
+              </div>
+              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Highlighted column decides the winner under the active condition. Other columns show how you would have ranked under the alternatives.</p>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={exportGameData} style={{ ...bs, padding: "12px 20px", fontSize: 14 }}>📊 Download Game Data</button>
             <button onClick={() => {
