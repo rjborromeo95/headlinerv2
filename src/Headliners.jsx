@@ -695,22 +695,34 @@ function canAffordArtist(artist, pd, fameReduction = 0) {
 // applies. This creates a second booking economy alongside amenities: build infrastructure
 // OR curate a coherent lineup. Multi-genre artists (Coldplay = Pop/Rock, The Cure = Indie/Rock,
 // etc.) get a natural boost since they qualify multiple ways.
+// v199.14: unified genre-match rule.
+// ANY artist (any Fame level) can be placed directly onto a stage without paying the
+// amenity costs IF:
+//   (a) the stage already has EXACTLY 2 artists (we're placing the 3rd/headliner slot),
+//   (b) every existing artist on that stage shares at least one genre with the incoming artist, and
+//   (c) the player's Fame is >= the artist's Fame requirement (standard gating).
+// Applies to BOTH direct-from-tempt placements AND hand plays. Function name is kept
+// (`canBookHeadlinerViaGenre`) for backward compatibility with its many call sites,
+// but it works for any artist — "headliner" refers to the slot being filled, not the
+// artist's Fame rank.
 function canBookHeadlinerViaGenre(artist, pd, stageIdx) {
   if (!artist || !pd) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const sa = (pd.stageArtists || [])[stageIdx];
   if (!sa || sa.length !== 2) return false;
-  const headlinerGenres = new Set(getGenres(artist.genre));
-  return sa.every(a => getGenres(a.genre).some(g => headlinerGenres.has(g)));
+  const incomingGenres = new Set(getGenres(artist.genre));
+  return sa.every(a => getGenres(a.genre).some(g => incomingGenres.has(g)));
 }
 
-// v126+: is this artist eligible for the genre-match headliner BONUS effect on any stage?
-// Returns true if (a) the artist has a non-empty genreMatchEffect defined AND (b) at least
-// one stage would allow the genre-match booking path. Used to glow the card in the UI so
-// players can spot the bonus opportunity at a glance.
+// v199.15: broadened — this now returns true for ANY artist that could be placed on a
+// stage via the genre-match rule (previously required a non-empty genreMatchEffect, which
+// was mostly empty in the dataset so the glow almost never fired). Used by the UI glow
+// to signal "this artist can skip amenity costs by heading into the 3rd slot of a stage
+// where everyone shares a genre with it." The special-effect description text in the
+// ArtistCard is still gated on genreMatchEffect being populated — so a glow without
+// bonus text just means "placeable", a glow WITH bonus text means "placeable + bonus."
 function hasGenreMatchBonusAvailable(artist, pd) {
   if (!artist || !pd) return false;
-  if (!artist.genreMatchEffect || !artist.genreMatchEffect.trim()) return false;
   const stages = pd.stageArtists || [];
   return stages.some((_, i) => canBookHeadlinerViaGenre(artist, pd, i));
 }
@@ -737,34 +749,18 @@ function canBookArtistAnywhere(artist, pd) {
   return openStages.some(si => canBookHeadlinerViaGenre(artist, pd, si));
 }
 
-// v194: tempt-to-stage rule. A tempted artist can only land DIRECTLY on a stage if the
-// stage already contains at least 1 artist AND every existing artist's genre set is a
-// subset of the incoming artist's genres. Empty stages don't qualify. Amenity costs are
-// ignored on this path — tempt-to-stage is now a pure genre-match mechanic, distinct
-// from the amenity-driven hand-play path.
-//
-// Rule check: for each existing artist on the stage, ALL of that artist's genres must
-// appear in the incoming artist's genres. Equivalently: the union of existing genres
-// must be a subset of the incoming artist's genres. Fame gating still applies.
-//
-// Example — tempting Lady Gaga (Pop, Electronic):
-//   Stage: CRUEL MISTRESS (Electronic) + Sadchild (Pop) → allowed
-//   Stage: Rock-Pop artist + Electronic-Indie artist → blocked (Rock and Indie not in Gaga's set)
-//   Stage: empty → blocked
-//   Stage: full (3 artists) → blocked
+// v199.14: tempt-to-stage rule now unified with the hand-play genre-match rule.
+// A tempted artist lands directly on a stage if canBookHeadlinerViaGenre is true, i.e.:
+//   - the stage has exactly 2 artists (incoming goes into the headliner slot),
+//   - every existing artist on that stage shares at least one genre with the incoming,
+//   - the player meets the Fame requirement.
+// Previous v194 strict-subset rule (which allowed 1-artist stages but required full
+// subset coverage) is removed as part of the "any artist can be genre-matched" simplification.
+// Empty, 1-artist, and 3-artist stages all return false — the artist either waits in
+// hand or (for empty/1-artist stages where the player can afford it via amenities)
+// uses the standard book path, which bypasses this helper.
 function canTemptDirectToStage(artist, pd, stageIdx) {
-  if (!artist || !pd) return false;
-  if ((pd.fame || 0) < (artist.fame || 0)) return false;
-  const sa = (pd.stageArtists || [])[stageIdx];
-  if (!sa || sa.length === 0 || sa.length >= 3) return false;
-  const incomingGenres = new Set(getGenres(artist.genre));
-  for (const existing of sa) {
-    const existingGenres = getGenres(existing.genre);
-    // Every existing genre must be in the incoming set. If ANY existing genre falls
-    // outside the incoming artist's genres, this stage is not a valid tempt target.
-    if (!existingGenres.every(g => incomingGenres.has(g))) return false;
-  }
-  return true;
+  return canBookHeadlinerViaGenre(artist, pd, stageIdx);
 }
 
 function canTemptToAnyStage(artist, pd) {
@@ -14170,7 +14166,7 @@ export default function Headliners() {
                     : null;
                   const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                   return <div key={i} style={{ position: "relative" }}>
-                    <ArtistCard artist={a} showCost small onClick={() => {
+                    <ArtistCard artist={a} showCost small genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)} onClick={() => {
                       if (!clickable) return;
                       placeAgentOnArtist(currentPlayerId, i);
                       setTurnAction(null);
@@ -14522,7 +14518,7 @@ export default function Headliners() {
                     const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                     return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
-                      <ArtistCard artist={a} showCost small onClick={() => { if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i); }} />
+                      <ArtistCard artist={a} showCost small genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)} onClick={() => { if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i); }} />
                       {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                         {agentsOnIt.map(([pid], ai) => {
                           const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
