@@ -129,24 +129,23 @@ const QUICKYEAR_SEASON_EMOJI = { autumn: "🍂", winter: "❄️", spring: "🌱
 // others fire on tempt win, loss, or either outcome.
 // letter: shown on the dial (several agents share first-letter initials in the new
 // pool, so we specify explicitly rather than deriving from name).
+// v199.28: contest-focused agent pool. Hotline is now oriented around contests — most
+// effects fire on contested LOSS (consolation prizes) or on contest entry (modifiers).
+// This replaces the previous "win more" pool that had 6 near-identical genre auto-win
+// agents. All effects: loss consolation, contest modifiers, or denial plays.
 const HOTLINE_AGENT_POOL = [
-  { id: "tony_tactic",         name: "Tony Tactic",         letter: "T", emoji: "🎯", trigger: "always",         effect: "When resolving an artist attempt, you may instead choose to gain the artist to the left or the right of your target, whether you win or lose." },
-  { id: "leanne_legacy",       name: "Leanne Legacy",       letter: "L", emoji: "💎", trigger: "always",         effect: "You may tempt an artist from the discard pile instead of the pool." },
-  { id: "fiona_fighter",       name: "Fiona Fighter",       letter: "F", emoji: "🥊", trigger: "loss",           effect: "If you lose a contest to another player, draw 3 artists from the deck." },
-  { id: "ricky_rapper",        name: "Ricky Rapper",        letter: "R", emoji: "🎤", trigger: "genre_win", genre: "Hip Hop",    effect: "If you are tempting a Hip Hop artist, you automatically win the contest." },
-  { id: "sarah_star",          name: "Sarah Star",          letter: "S", emoji: "⭐", trigger: "genre_win", genre: "Pop",        effect: "If you are tempting a Pop artist, you automatically win the contest." },
-  { id: "vinny_vinyl",         name: "Vinny Vinyl",         letter: "V", emoji: "💿", trigger: "genre_win", genre: "Electronic", effect: "If you are tempting an Electronic artist, you automatically win the contest." },
-  { id: "rocky_rocker",        name: "Rocky Rocker",        letter: "K", emoji: "🤘", trigger: "genre_win", genre: "Rock",       effect: "If you are tempting a Rock artist, you automatically win the contest." },
-  { id: "hannah_hipster",      name: "Hannah Hipster",      letter: "H", emoji: "🧢", trigger: "genre_win", genre: "Indie",      effect: "If you are tempting an Indie artist, you automatically win the contest." },
-  { id: "franny_funktown",     name: "Franny Funktown",     letter: "N", emoji: "🕺", trigger: "genre_win", genre: "Funk",       effect: "If you are tempting a Funk artist, you automatically win the contest." },
-  { id: "preeti_picky",        name: "Preeti Picky",        letter: "P", emoji: "💅", trigger: "win",            effect: "When you successfully tempt an artist, draw 4 artists from the deck. Keep 1 of those 5 (including the tempted artist). You may play them immediately if you can." },
-  { id: "charlie_compensation",name: "Charlie Compensation",letter: "C", emoji: "⚖️", trigger: "loss",           effect: "If you lose a contest to another player, take a random artist from their hand." },
-  { id: "hamish_hammer",       name: "Hamish the Hammer",   letter: "M", emoji: "🔨", trigger: "win",            effect: "When you successfully tempt an artist, discard them and gain an amenity of your choice." },
-  { id: "sunshine_susie",      name: "Sunshine Susie",      letter: "U", emoji: "☀️", trigger: "uncontested_win",effect: "When you successfully tempt an artist without being contested, gain 1 Fame." },
-  { id: "patty_promises",      name: "Patty Promises",      letter: "Y", emoji: "📜", trigger: "win",            effect: "When you successfully tempt an artist and genre-match them to a stage, sell an additional 4 tickets." },
-  { id: "frankie_phoenix",     name: "Frankie Phoenix",     letter: "X", emoji: "🔥", trigger: "loss",           effect: "When you lose a contest to another player, play the top artist from the deck on any of your stages (ignore Fame and amenity requirements)." },
+  { id: "dodgy_dave",          name: "Dodgy Dave",          letter: "D", emoji: "🕶️", trigger: "loss",           effect: "If you lose a contest, the winner gives you 2 random artists from their hand." },
+  { id: "nepo_baby_nolan",     name: "Nepo Baby Nolan",     letter: "N", emoji: "👔", trigger: "contest_mod_self", mod: +2, effect: "If you enter a contest, count +2 to your total." },
+  { id: "stallin_sandra",      name: "Stallin' Sandra",     letter: "S", emoji: "⏳", trigger: "loss_reroll",    effect: "If you would lose a contest, re-roll the contest die once. The new roll stands." },
+  { id: "mickey_manpower",     name: "Mickey Manpower",     letter: "M", emoji: "💪", trigger: "loss",           effect: "If you lose a contest, you may pick 2 artists from the winner's hand to take." },
+  { id: "ellie_extortion",     name: "Ellie Extortion",     letter: "E", emoji: "💰", trigger: "loss",           effect: "If you lose a contest, take all other unapproached artists in the pool matching the lost artist's genre." },
+  { id: "bridge_burning_billy",name: "Bridge-Burning Billy",letter: "B", emoji: "🔥", trigger: "loss",           effect: "If you lose a contest, the artist is discarded — nobody gets them." },
+  { id: "badmouthing_barry",   name: "Badmouthing Barry",   letter: "Y", emoji: "🗣️", trigger: "contest_mod_opp", mod: -1, effect: "If you enter a contest, all other contestants count -1." },
+  { id: "charlie_compromise",  name: "Charlie the Compromise",letter:"C",emoji: "🤝", trigger: "loss",           effect: "If you lose a contest, you may win the artist to the left or right of the tempted artist instead." },
+  { id: "problem_solver_parv", name: "Problem-Solver Parv", letter: "P", emoji: "🧩", trigger: "loss",           effect: "If you lose a contest, you may play an artist from your hand (must be able to afford them)." },
+  { id: "bibi_the_bodge",      name: "Bibi the Bodge",      letter: "I", emoji: "🧰", trigger: "loss",           effect: "If you lose a contest, you may build one amenity of your choice for free." },
 ];
-const HOTLINE_AGENTS_PER_GAME = 9; // each player's private dial has 9 agents drawn from the pool
+const HOTLINE_AGENTS_PER_GAME = 9; // each player's private dial has 9 agents drawn from the pool of 10
 
 // v199.21: Legendary Artists / Festival Contracts system.
 // At game start, 3 legendary artists are drawn and displayed publicly. Each has 3 seasonal
@@ -2390,6 +2389,8 @@ export default function Headliners() {
   const [tonyPicker, setTonyPicker] = useState(null);
   const [preetiPicker, setPreetiPicker] = useState(null);
   const [frankiePicker, setFrankiePicker] = useState(null);
+  // v199.28: Problem-Solver Parv's "play from hand on loss" picker.
+  const [parvPicker, setParvPicker] = useState(null);
   const [leannePending, setLeannePending] = useState(null);
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
@@ -3769,205 +3770,144 @@ export default function Headliners() {
     const isAI = players.find(p => p.id === pid)?.isAI;
     const artist = context?.artist;
     switch (agent.id) {
-      case "tony_tactic": {
-        // Pick between the tempted artist (if won) and left/right pool neighbors.
-        // Fires on both outcomes. Neighbors are snapshotted at placement time.
-        const left = context?.neighborLeft;
-        const right = context?.neighborRight;
-        if (!left && !right && outcome === "loss") {
-          // No neighbors available and lost — nothing to do.
-          addLog("🎯 Tony Tactic", `${pName}: no neighboring artists to swap for — effect wasted`);
-          break;
-        }
-        if (isAI) {
-          // v199.9: AI picks the highest-tickets option (keep original vs. left vs. right).
-          // On loss, original isn't an option. The actual swap mechanics (removing original
-          // if a neighbor is chosen, removing neighbor from pool) are deferred to the Tony
-          // picker's take() function; we simulate that here for AI by setting tonyPicker
-          // and auto-triggering take() asynchronously.
-          const candidates = [];
-          if (outcome === "win" && artist) candidates.push({ kind: "original", a: artist });
-          if (left) candidates.push({ kind: "left", a: left });
-          if (right) candidates.push({ kind: "right", a: right });
-          if (candidates.length === 0) break;
-          candidates.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0));
-          const pick = candidates[0];
-          setTonyPicker({ pid, outcome, artist, leftArtist: left, rightArtist: right, _aiAutoPick: pick.kind });
-        } else {
-          setTonyPicker({ pid, outcome, artist, leftArtist: left, rightArtist: right });
-          addLog("🎯 Tony Tactic", `${pName}: pick which artist to take — original or neighbor`);
-        }
-        break;
-      }
-      case "leanne_legacy": {
-        // Handled at tempt-placement time (the tempt UI switches to the discard pile when
-        // leannePending is set). No resolution-time effect.
-        break;
-      }
-      case "fiona_fighter": {
-        // On loss (contested only): draw 3 artists from the deck.
-        if (outcome === "loss") {
-          const drawn = drawFromDeck(3);
-          if (drawn.length > 0) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
-            addLog("🥊 Fiona Fighter", `${pName}: drew ${drawn.length} consolation artist(s) after losing the contest`);
-            showFloatingBonus(`🥊 +${drawn.length} draws`, "#fcd34d");
-          }
-        }
-        break;
-      }
-      case "ricky_rapper":
-      case "sarah_star":
-      case "vinny_vinyl":
-      case "rocky_rocker":
-      case "hannah_hipster":
-      case "franny_funktown": {
-        // Genre auto-win agents: the actual auto-win logic lives in commitAgentContest.
-        // By the time we're here, the win has already been forced (if the artist matched
-        // the genre). We just log the "powered by X" credit.
-        if (outcome === "win" && artist?.genre?.toLowerCase().includes(agent.genre.toLowerCase())) {
-          addLog(`${agent.emoji} ${agent.name}`, `${pName}: auto-won the ${agent.genre} tempt`);
-          showFloatingBonus(`${agent.emoji} Auto-win!`, "#fcd34d");
-        } else if (outcome === "win") {
-          // Won normally (uncontested or dice-win) despite not matching Ricky's/etc. genre.
-          addLog(`${agent.emoji} ${agent.name}`, `${pName}: tempt won (${artist?.genre || "?"} doesn't match ${agent.genre} — no auto-win bonus)`);
-        }
-        break;
-      }
-      case "preeti_picky": {
-        // On win: draw 4 artists. Keep 1 of the 5 (incl. the tempted artist). Allowed to
-        // play immediately if the player has the resources.
-        if (outcome === "win") {
-          const drawn = drawFromDeck(4);
-          if (drawn.length === 0 && !artist) {
-            addLog("💅 Preeti Picky", `${pName}: no artists available`);
-            break;
-          }
-          const choices = artist ? [artist, ...drawn] : drawn;
-          if (isAI) {
-            // AI picks the artist with highest tickets.
-            const pick = choices.reduce((best, c) => ((c.tickets || 0) > (best?.tickets || 0) ? c : best), choices[0]);
-            const discarded = choices.filter(c => c !== pick);
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), pick] } }));
-            if (discarded.length > 0) setDiscardPile(prev => [...prev, ...discarded]);
-            addLog("💅 Preeti Picky", `${pName} 🤖: picked ${pick.name} from 5 options`);
-            showFloatingBonus(`💅 ${pick.name}!`, "#fcd34d");
-          } else {
-            setPreetiPicker({ pid, artists: choices });
-            addLog("💅 Preeti Picky", `${pName}: pick 1 of 5 artists (incl. your tempt)`);
-          }
-        }
-        break;
-      }
-      case "charlie_compensation": {
-        // On loss: take a random artist from the contest winner's hand.
+      // v199.28: new contest-focused pool. Modifiers (Nolan, Barry) and Sandra re-roll are
+      // handled in resolveAgentContestRoll. Billy's "discard the artist" effect is handled
+      // in commitAgentContest (intercepts the winner-gets-artist step). The dispatcher
+      // handles all loss consolation plays + logs Billy for the losing Billy-player.
+      case "dodgy_dave": {
+        // On loss: take 2 random artists from the contest winner's hand.
         if (outcome === "loss" && context?.contestOpponent != null) {
           const opp = context.contestOpponent;
-          const oppPd = (playerDataRef.current || playerData)[opp];
-          const oppHand = oppPd?.hand || [];
-          if (oppHand.length === 0) {
-            addLog("⚖️ Charlie Compensation", `${pName}: ${players.find(p => p.id === opp)?.festivalName}'s hand is empty — nothing to take`);
-            break;
-          }
-          const stolenIdx = Math.floor(Math.random() * oppHand.length);
-          const stolen = oppHand[stolenIdx];
+          const oppName = players.find(p => p.id === opp)?.festivalName || "?";
+          const oppHand = (playerDataRef.current || playerData)[opp]?.hand || [];
+          if (oppHand.length === 0) { addLog("🕶️ Dodgy Dave", `${pName}: ${oppName}'s hand is empty — nothing to take`); break; }
+          const shuffled = shuffle([...oppHand]);
+          const take = shuffled.slice(0, Math.min(2, shuffled.length));
           setPlayerData(p => {
             const next = { ...p };
-            next[opp] = { ...next[opp], hand: (next[opp].hand || []).filter((_, i) => i !== stolenIdx) };
-            next[pid] = { ...next[pid], hand: [...(next[pid]?.hand || []), stolen] };
+            const winnerHand = next[opp]?.hand || [];
+            const takeNames = new Set(take.map(a => a.name));
+            next[opp] = { ...next[opp], hand: winnerHand.filter(a => !takeNames.has(a.name)) };
+            next[pid] = { ...next[pid], hand: [...(next[pid]?.hand || []), ...take] };
             return next;
           });
-          addLog("⚖️ Charlie Compensation", `${pName}: took ${stolen.name} randomly from ${players.find(p => p.id === opp)?.festivalName}'s hand`);
-          showFloatingBonus(`⚖️ Stole ${stolen.name}!`, "#fcd34d");
+          addLog("🕶️ Dodgy Dave", `${pName}: took ${take.length} artist${take.length === 1 ? "" : "s"} (${take.map(a => a.name).join(", ")}) from ${oppName}'s hand`);
+          showFloatingBonus(`🕶️ Took ${take.length} artist${take.length === 1 ? "" : "s"}!`, "#fcd34d");
         }
         break;
       }
-      case "hamish_hammer": {
-        // On win: discard the tempted artist, gain amenity picker.
-        if (outcome === "win") {
-          if (artist) {
-            setDiscardPile(prev => [...prev, artist]);
-            // Also remove the artist from the player's hand if the normal tempt resolution
-            // already placed it there (defensive — avoids double counting).
-            setPlayerData(p => {
-              const cur = p[pid];
-              if (!cur) return p;
-              const newHand = (cur.hand || []).filter(a => a.name !== artist.name);
-              return { ...p, [pid]: { ...cur, hand: newHand } };
-            });
-            // v199.11 bugfix: mark the artist as consumed-by-agent. The uncontested + contested
-            // win paths check this flag after dispatcher returns and skip the normal
-            // play-or-hand book decision modal. Without this, the player saw the book
-            // decision on top of (or instead of) Hamish's amenity picker, and could end
-            // up with the artist on a stage AND in the discard pile at once.
-            artist._consumedByAgent = "hamish_hammer";
-          }
-          setPendingEffect({ type: "placeAmenity", artistName: `Hamish the Hammer (${pName})`, placeCount: 1 });
-          setPendingEffectPid(pid);
-          addLog("🔨 Hamish the Hammer", `${pName}: discarded ${artist?.name || "artist"}, pick 1 amenity`);
-          showFloatingBonus("🔨 +1 Amenity!", "#fcd34d");
+      case "mickey_manpower": {
+        // On loss: take up to 2 artists from winner's hand. v1: same random take as Dave.
+        // TODO (future): add a picker so the loser chooses which 2 artists.
+        if (outcome === "loss" && context?.contestOpponent != null) {
+          const opp = context.contestOpponent;
+          const oppName = players.find(p => p.id === opp)?.festivalName || "?";
+          const oppHand = (playerDataRef.current || playerData)[opp]?.hand || [];
+          if (oppHand.length === 0) { addLog("💪 Mickey Manpower", `${pName}: ${oppName}'s hand is empty — nothing to take`); break; }
+          const shuffled = shuffle([...oppHand]);
+          const take = shuffled.slice(0, Math.min(2, shuffled.length));
+          setPlayerData(p => {
+            const next = { ...p };
+            const takeNames = new Set(take.map(a => a.name));
+            next[opp] = { ...next[opp], hand: (next[opp]?.hand || []).filter(a => !takeNames.has(a.name)) };
+            next[pid] = { ...next[pid], hand: [...(next[pid]?.hand || []), ...take] };
+            return next;
+          });
+          addLog("💪 Mickey Manpower", `${pName}: strong-armed ${take.length} artist${take.length === 1 ? "" : "s"} (${take.map(a => a.name).join(", ")}) from ${oppName}'s hand`);
+          showFloatingBonus(`💪 Took ${take.length} artist${take.length === 1 ? "" : "s"}!`, "#fcd34d");
         }
         break;
       }
-      case "sunshine_susie": {
-        // On uncontested win: +1 Fame.
-        if (outcome === "win" && context?.wasUncontested) {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid]?.baseFame || 0) + 1) } }));
-          logFameGain(pid, 1, `Sunshine Susie — uncontested tempt win`);
-          addLog("☀️ Sunshine Susie", `${pName}: +1 🔥 Fame (uncontested tempt)`);
-          showFloatingBonus("☀️ +1 🔥", "#fcd34d");
-          setTimeout(() => recalcTickets(), 50);
+      case "ellie_extortion": {
+        // On loss: take ALL unapproached pool artists matching the lost artist's genre.
+        if (outcome === "loss" && artist) {
+          const targetGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
+          const curPool = artistPool || [];
+          const matching = curPool.filter(a => {
+            if (a.name === artist.name) return false;
+            if (getPlacementsOnArtist(a.name).length > 0) return false; // approached
+            const genres = (a.genre || "").split(",").map(g => g.trim());
+            return genres.some(g => targetGenres.includes(g));
+          });
+          if (matching.length === 0) { addLog("💰 Ellie Extortion", `${pName}: no unapproached ${targetGenres.join("/")} artists in the pool`); break; }
+          const names = new Set(matching.map(a => a.name));
+          setArtistPool(prev => prev.filter(a => !names.has(a.name)));
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...matching] } }));
+          addLog("💰 Ellie Extortion", `${pName}: extorted ${matching.length} ${targetGenres.join("/")} artist${matching.length === 1 ? "" : "s"} from the pool (${matching.map(a => a.name).join(", ")})`);
+          showFloatingBonus(`💰 Took ${matching.length}!`, "#fcd34d");
         }
         break;
       }
-      case "patty_promises": {
-        // On win AND when played: +4 bonus tickets if genre-matched to the stage.
-        // Flag the artist so when it's booked, the booking code awards +4 tickets if
-        // the stage shares a genre. Flag is read in bookArtistToStage.
-        if (outcome === "win" && artist) {
-          artist._pattyPromises = true;
-          addLog("📜 Patty Promises", `${pName}: ${artist.name} marked for +4 🎟️ bonus if genre-matched to its stage`);
-          showFloatingBonus("📜 +4 🎟️ pending!", "#fcd34d");
-        }
-        break;
-      }
-      case "frankie_phoenix": {
-        // On loss: draw top of deck, play on any open stage ignoring requirements.
+      case "bridge_burning_billy": {
+        // On loss: artist is already discarded (handled in commitAgentContest when it
+        // detects any loser has Billy). Just log the credit here.
         if (outcome === "loss") {
-          const drawn = drawFromDeck(1);
-          if (drawn.length === 0) {
-            addLog("🔥 Frankie Phoenix", `${pName}: no artists left in the deck`);
-            break;
-          }
-          const freeArtist = drawn[0];
-          const pd = (playerDataRef.current || playerData)[pid];
-          const stages = pd?.stageArtists || [];
-          const openStageIdxs = stages.map((s, i) => (Array.isArray(s) && s.length < 3) ? i : -1).filter(i => i >= 0);
-          if (openStageIdxs.length === 0) {
-            // No open stages — the artist goes to hand instead.
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), freeArtist] } }));
-            addLog("🔥 Frankie Phoenix", `${pName}: no open stages — ${freeArtist.name} added to hand instead`);
-            break;
-          }
-          if (isAI) {
-            // AI plays on the first open stage.
-            const stageIdx = openStageIdxs[0];
-            setPlayerData(p => {
-              const cur = p[pid];
-              const sa = (cur?.stageArtists || []).map(s => Array.isArray(s) ? [...s] : s);
-              sa[stageIdx] = [...(sa[stageIdx] || []), freeArtist];
-              return { ...p, [pid]: { ...cur, stageArtists: sa } };
-            });
-            addLog("🔥 Frankie Phoenix", `${pName} 🤖: played ${freeArtist.name} free on Stage ${stageIdx + 1}`);
-            setTimeout(() => recalcTickets(), 50);
-          } else {
-            setFrankiePicker({ pid, artist: freeArtist, availableStages: openStageIdxs });
-            addLog("🔥 Frankie Phoenix", `${pName}: pick a stage for ${freeArtist.name} (free play)`);
-          }
-          showFloatingBonus("🔥 Free play!", "#fcd34d");
+          addLog("🔥 Bridge-Burning Billy", `${pName}: scorched the deal — ${artist?.name || "artist"} discarded, nobody wins`);
+          showFloatingBonus(`🔥 Scorched!`, "#f87171");
         }
         break;
       }
+      case "charlie_compromise": {
+        // On loss: take left or right pool neighbor as consolation. Reuse tonyPicker UI
+        // (it already handles left/right choice on loss outcome).
+        if (outcome === "loss") {
+          const left = context?.neighborLeft;
+          const right = context?.neighborRight;
+          if (!left && !right) { addLog("🤝 Charlie the Compromise", `${pName}: no neighboring artists to take as consolation`); break; }
+          if (isAI) {
+            const candidates = [];
+            if (left) candidates.push({ kind: "left", a: left });
+            if (right) candidates.push({ kind: "right", a: right });
+            candidates.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0));
+            const pick = candidates[0];
+            setTonyPicker({ pid, outcome: "loss", artist, leftArtist: left, rightArtist: right, _aiAutoPick: pick.kind, _agentLabel: "🤝 Charlie the Compromise" });
+          } else {
+            setTonyPicker({ pid, outcome: "loss", artist, leftArtist: left, rightArtist: right, _agentLabel: "🤝 Charlie the Compromise" });
+            addLog("🤝 Charlie the Compromise", `${pName}: take the artist to the left or right as consolation`);
+          }
+        }
+        break;
+      }
+      case "problem_solver_parv": {
+        // On loss: play an artist from your hand (must afford). AI auto-plays highest-value
+        // affordable; human gets a picker modal.
+        if (outcome === "loss") {
+          const pd = (playerDataRef.current || playerData)[pid] || {};
+          const hand = pd.hand || [];
+          if (hand.length === 0) { addLog("🧩 Problem-Solver Parv", `${pName}: hand is empty — effect wasted`); break; }
+          const affordable = hand.filter(a => canBookArtistAnywhere(a, pd));
+          if (affordable.length === 0) { addLog("🧩 Problem-Solver Parv", `${pName}: no affordable artists in hand — effect wasted`); break; }
+          if (isAI) {
+            const pick = [...affordable].sort((a, b) => (b.tickets || 0) - (a.tickets || 0))[0];
+            const openStages = (pd.stageArtists || []).map((s, i) => (Array.isArray(s) && s.length < 3) ? i : -1).filter(i => i >= 0);
+            const stageIdx = openStages.find(i => canBookArtistOnStage(pick, pd, i));
+            if (stageIdx != null) {
+              bookArtistToStage(pid, pick, stageIdx);
+              addLog("🧩 Problem-Solver Parv", `${pName} 🤖: played ${pick.name} free from hand`);
+              showFloatingBonus(`🧩 ${pick.name}!`, "#fcd34d");
+            } else {
+              addLog("🧩 Problem-Solver Parv", `${pName} 🤖: no valid stage for any hand artist — effect wasted`);
+            }
+          } else {
+            setParvPicker({ pid, hand: affordable });
+            addLog("🧩 Problem-Solver Parv", `${pName}: pick an artist from your hand to play free`);
+          }
+        }
+        break;
+      }
+      case "bibi_the_bodge": {
+        // On loss: build any amenity of your choice for free. Reuse the pendingEffect
+        // placeAmenity flow (same mechanism as Hamish's amenity reward).
+        if (outcome === "loss") {
+          setPendingEffect({ type: "placeAmenity", artistName: `Bibi the Bodge (${pName})`, placeCount: 1 });
+          setPendingEffectPid(pid);
+          addLog("🧰 Bibi the Bodge", `${pName}: pick 1 free amenity as consolation`);
+          showFloatingBonus(`🧰 +1 Amenity!`, "#fcd34d");
+        }
+        break;
+      }
+      // Note: nepo_baby_nolan (contest_mod_self), badmouthing_barry (contest_mod_opp),
+      // and stallin_sandra (loss_reroll) are handled in resolveAgentContestRoll, not here.
       default: break;
     }
   };
@@ -5514,27 +5454,72 @@ export default function Headliners() {
     }
   };
   const resolveAgentContestRoll = (contestants, artist, poolIdx) => {
-    // Roll uniformly from the same 7-face dice pool the game uses everywhere else
-    const rolledFace = DICE_OPTIONS[Math.floor(Math.random() * DICE_OPTIONS.length)];
     const pd = playerDataRef.current || playerData;
-    const contestantData = contestants.map(c => {
-      const opd = pd[c.pid] || {};
-      const value = getContestValue(opd, rolledFace);
-      const tickets = opd.tickets || 0;
-      const festivalName = players.find(p => p.id === c.pid)?.festivalName || `Player ${c.pid}`;
-      // v199.9: carry placement-time agentId + neighbors through to commit so Tony
-      // Tactic's picker has reliable options even if pool state has mutated since.
-      return { pid: c.pid, festivalName, value, tickets, placedTurn: c.placedTurn, isWinner: false, agentId: c.agentId, leftNeighbor: c.leftNeighbor, rightNeighbor: c.rightNeighbor };
-    });
-    // Sort: value desc, then tickets desc, then placedTurn asc
-    const sorted = [...contestantData].sort((a, b) => {
+    // v199.28: contest modifiers from new agent pool.
+    //   nepo_baby_nolan  → self gets +2 (contest_mod_self)
+    //   badmouthing_barry → all other contestants get -1 (contest_mod_opp)
+    // Modifiers stack if multiple agents fire. Reads placement-time agentId.
+    const getContestantAgent = (c) => {
+      const id = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+      return id ? HOTLINE_AGENT_POOL.find(a => a.id === id) : null;
+    };
+    const buildContestantData = (dieFace) => {
+      const data = contestants.map(c => {
+        const opd = pd[c.pid] || {};
+        const baseValue = getContestValue(opd, dieFace);
+        const tickets = opd.tickets || 0;
+        const festivalName = players.find(p => p.id === c.pid)?.festivalName || `Player ${c.pid}`;
+        return { pid: c.pid, festivalName, value: baseValue, baseValue, tickets, placedTurn: c.placedTurn, isWinner: false, agentId: c.agentId, leftNeighbor: c.leftNeighbor, rightNeighbor: c.rightNeighbor, modifiers: [] };
+      });
+      // Apply contest modifiers from agents.
+      if (gameModeRef.current === "quickYear") {
+        data.forEach(c => {
+          const agent = getContestantAgent(c);
+          if (!agent) return;
+          if (agent.trigger === "contest_mod_self") {
+            c.value += agent.mod || 0;
+            c.modifiers.push(`${agent.emoji} ${agent.mod > 0 ? "+" : ""}${agent.mod} (${agent.name})`);
+          } else if (agent.trigger === "contest_mod_opp") {
+            data.forEach(other => {
+              if (other.pid !== c.pid) {
+                other.value += agent.mod || 0;
+                other.modifiers.push(`${agent.emoji} ${agent.mod > 0 ? "+" : ""}${agent.mod} (${agent.name} on ${c.festivalName})`);
+              }
+            });
+          }
+        });
+      }
+      return data;
+    };
+    let rolledFace = DICE_OPTIONS[Math.floor(Math.random() * DICE_OPTIONS.length)];
+    let contestantData = buildContestantData(rolledFace);
+    const sortData = (data) => [...data].sort((a, b) => {
       if (b.value !== a.value) return b.value - a.value;
       if (b.tickets !== a.tickets) return b.tickets - a.tickets;
       return a.placedTurn - b.placedTurn;
     });
-    const winnerId = sorted[0].pid;
+    let sorted = sortData(contestantData);
+    let winnerId = sorted[0].pid;
+    // v199.28: Stallin' Sandra re-roll. If any Sandra-holding contestant would lose, re-roll
+    // the contest die ONCE. New roll stands, regardless of outcome. First Sandra to be a
+    // loser triggers the re-roll (only one re-roll per contest).
+    let sandraFired = false;
+    const sandraLoser = contestantData.find(c => {
+      const ag = getContestantAgent(c);
+      return ag?.trigger === "loss_reroll" && c.pid !== winnerId;
+    });
+    if (sandraLoser) {
+      const originalFace = rolledFace;
+      rolledFace = DICE_OPTIONS[Math.floor(Math.random() * DICE_OPTIONS.length)];
+      contestantData = buildContestantData(rolledFace);
+      sorted = sortData(contestantData);
+      winnerId = sorted[0].pid;
+      sandraFired = true;
+      const sName = players.find(p => p.id === sandraLoser.pid)?.festivalName || "?";
+      addLog("⏳ Stallin' Sandra", `${sName}: forced a contest-die re-roll (${originalFace} → ${rolledFace})`);
+    }
     contestantData.forEach(c => { c.isWinner = c.pid === winnerId; });
-    return { artist, poolIdx, contestants, rolledFace, contestantData, winnerId };
+    return { artist, poolIdx, contestants, rolledFace, contestantData, winnerId, sandraFired };
   };
 
   // Commit the contest outcome: book/hand the artist to the winner, exhaust winner's agent,
@@ -5671,9 +5656,9 @@ export default function Headliners() {
     if (gameModeRef.current === "quickYear") {
       const winnerContestant = contestantData.find(c => c.pid === winnerId);
       const winnerAgentId = winnerContestant?.agentId || hotlineAgentsRef.current[winnerId]?.id;
-      // Agents that fully consume the artist on win (currently only Hamish — future-proofed
-      // via a lookup table so new consuming agents just need to be listed here).
-      const consumingAgents = new Set(["hamish_hammer"]);
+      // v199.28: no agents in the new pool consume the winner's artist (Hamish removed).
+      // Keeping the lookup shim in case future consuming agents are added.
+      const consumingAgents = new Set();
       if (winnerAgentId && consumingAgents.has(winnerAgentId)) {
         applyHotlineAgentEffect(winnerId, "win", {
           artist,
@@ -5705,6 +5690,40 @@ export default function Headliners() {
         bumpYearlyStat(winnerId, "temptsWon");
         bumpYearEvent(winnerId, "contestWinsThisYear");
         setTimeout(() => recalcTickets(), 50);
+        return;
+      }
+    }
+    // v199.28: Bridge-Burning Billy intercept. If any LOSER has Billy, the artist is
+    // discarded instead of going to the winner — "if you lose, nobody gets them."
+    // Still fires loss dispatcher for all losers (for their consolation effects, including
+    // Billy's own log). Returns early after discard, skipping book/hand logic.
+    if (gameModeRef.current === "quickYear") {
+      const billyLoser = contestantData.find(c => {
+        if (c.pid === winnerId) return false;
+        const id = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+        return id === "bridge_burning_billy";
+      });
+      if (billyLoser) {
+        setDiscardPile(prev => [...prev, artist]);
+        const wName = players.find(p => p.id === winnerId)?.festivalName || "?";
+        const bName = players.find(p => p.id === billyLoser.pid)?.festivalName || "?";
+        addLog("🔥 Bridge-Burning Billy", `${bName} scorched the deal — ${artist.name} is discarded, ${wName} wins nothing`);
+        // Fire all contestants' dispatchers (winner gets outcome "win" with no artist, losers "loss").
+        contestantData.forEach(c => {
+          const outcome = c.pid === winnerId ? "win" : "loss";
+          const agId = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+          if (!agId) return;
+          applyHotlineAgentEffect(c.pid, outcome, {
+            artist,
+            agentId: agId,
+            contestOpponent: outcome === "loss" ? winnerId : null,
+            wasUncontested: false,
+            neighborLeft: c.leftNeighbor || null,
+            neighborRight: c.rightNeighbor || null,
+          });
+        });
+        checkSeasonObjective("tempt_success", winnerId);
+        bumpGenreTemptAndCheckLegendary(winnerId, artist);
         return;
       }
     }
@@ -6048,7 +6067,12 @@ export default function Headliners() {
           // v196.2: tightened spare-fame scaling because tempt cost is now 2 Fame (v196).
           // Was 1.0/0.6/0.2 — dropped to 1.0/0.4/0.1 so Fame-tight AIs are less likely
           // to burn 2 Fame on speculative contests.
-          const spareScale = spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.4 : 0.1;
+          // v199.28: in Quick Play, tempts are Hotline-gated (free Fame-wise) AND the new
+          // agent pool is entirely contest-oriented (loss consolations + contest modifiers).
+          // Boost spareScale to 1.0 across the board — Fame isn't the gate anymore.
+          const spareScale = gameModeRef.current === "quickYear"
+            ? 1.0
+            : (spareFame >= 2 ? 1.0 : spareFame === 1 ? 0.4 : 0.1);
           // v195: raw-value contest bonus — proportional to what we're denying
           const rawValueContest = ((a.fame || 0) * 2 + (a.tickets || 0)) * 0.5;
           // v196.2: leader-aware contest — if the artist is currently tempted by the
@@ -6060,7 +6084,18 @@ export default function Headliners() {
           const opponentPlacers = placements.filter(pl => pl.pid !== pid);
           const leaderIsTempting = currentLeader != null && opponentPlacers.some(pl => pl.pid === currentLeader);
           const leaderBonus = leaderIsTempting ? 4 : 0;
-          contestScore = disruption * spareScale + rawValueContest * spareScale + leaderBonus * spareScale - 1;
+          // v199.28: additional agent-based contest bias. Every new Quick Play agent
+          // benefits from contests (either via modifier buff/debuff on contest totals, or
+          // via loss-consolation effects). Give a +5 flat bonus to the AI's contest score
+          // if they hold a contest-oriented agent (effectively: in Quick Play, always).
+          let agentContestBonus = 0;
+          if (gameModeRef.current === "quickYear") {
+            const aiAgent = hotlineAgentsRef.current[pid];
+            if (aiAgent && (aiAgent.trigger === "loss" || aiAgent.trigger === "contest_mod_self" || aiAgent.trigger === "contest_mod_opp" || aiAgent.trigger === "loss_reroll")) {
+              agentContestBonus = 5;
+            }
+          }
+          contestScore = disruption * spareScale + rawValueContest * spareScale + leaderBonus * spareScale + agentContestBonus - 1;
         }
         // v179/v196: uncontested tempts yield +2 Fame refund. Under v196 (tempt cost 2)
         // that's net 0 Fame (was net +1 under v179 with cost 1). Small preference for
@@ -6073,10 +6108,10 @@ export default function Headliners() {
       // v195: post-scoring override. If the top pick is a CONTEST (an artist already
       // tempted by an opponent) AND there's a genre-match alternative for the AI's own
       // board whose ticket value is no more than 1 lower, prefer the genre-match play.
-      // Rationale: contesting is a denial win; genre-match tempt is a direct-play win.
-      // When the values are comparable, the direct play is worth more (guaranteed stage
-      // placement + no die roll risk + no opponent Fame refund).
-      if (best && getPlacementsOnArtist(best.a.name).some(pl => pl.pid !== pid)) {
+      // v199.28: SKIP this override in Quick Play. The new agent pool rewards contesting
+      // (loss consolations + contest modifiers), so AI should stay committed to its
+      // contest pick instead of swerving to the genre-match alternative.
+      if (gameModeRef.current !== "quickYear" && best && getPlacementsOnArtist(best.a.name).some(pl => pl.pid !== pid)) {
         const bestTickets = best.a.tickets || 0;
         const genreMatchAlt = scored.find(s =>
           s.a !== best.a
@@ -12691,10 +12726,11 @@ export default function Headliners() {
           removal is a no-op — the player still gets the neighbor artist in their hand
           as if Tony reserved it in advance. */}
       {tonyPicker && (() => {
-        const { pid, outcome, artist, leftArtist, rightArtist, _aiAutoPick } = tonyPicker;
+        const { pid, outcome, artist, leftArtist, rightArtist, _aiAutoPick, _agentLabel } = tonyPicker;
         const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        const label = _agentLabel || "🎯 Tony Tactic";
         const takeOriginal = () => {
-          addLog("🎯 Tony Tactic", `${pName}: kept original (${artist?.name})`);
+          addLog(label, `${pName}: kept original (${artist?.name})`);
           setTonyPicker(null);
         };
         const takeNeighbor = (neighbor, sideLabel) => {
@@ -12719,10 +12755,10 @@ export default function Headliners() {
           }
           // Remove the neighbor from the artist pool if it's still there.
           setArtistPool(prev => prev.filter(a => a.name !== neighbor.name));
-          addLog("🎯 Tony Tactic", outcome === "win"
+          addLog(label, outcome === "win"
             ? `${pName}: swapped ${artist?.name} for ${sideLabel} (${neighbor.name})`
             : `${pName}: took ${sideLabel} (${neighbor.name}) as consolation`);
-          showFloatingBonus(`🎯 ${neighbor.name}!`, "#fcd34d");
+          showFloatingBonus(`${label.split(" ")[0]} ${neighbor.name}!`, "#fcd34d");
           setTonyPicker(null);
           setTimeout(() => recalcTickets(), 50);
         };
@@ -12737,7 +12773,7 @@ export default function Headliners() {
           return (
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
               <div style={{ ...card, textAlign: "center", maxWidth: 420, width: "100%" }}>
-                <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 18 }}>🎯 Tony Tactic</h3>
+                <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 18 }}>{label}</h3>
                 <p style={{ color: "#94a3b8", fontSize: 11, marginTop: 6 }}>{pName} 🤖 is making a call…</p>
               </div>
             </div>
@@ -12750,7 +12786,7 @@ export default function Headliners() {
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 620, width: "100%" }}>
-              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🎯 Tony Tactic</h3>
+              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>{label}</h3>
               <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>
                 {outcome === "win"
                   ? `You tempted ${artist?.name} and won. Keep them, OR swap them out for a pool neighbor instead (${artist?.name} would be discarded).`
@@ -12769,6 +12805,46 @@ export default function Headliners() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+        );
+      })()}
+      {/* v199.28: Problem-Solver Parv picker — pick an affordable artist from your hand
+          to play free as consolation after a contest loss. */}
+      {parvPicker && (() => {
+        const { pid, hand } = parvPicker;
+        const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        const play = (artist) => {
+          const pd = (playerDataRef.current || playerData)[pid] || {};
+          const openStages = (pd.stageArtists || []).map((s, i) => (Array.isArray(s) && s.length < 3) ? i : -1).filter(i => i >= 0);
+          const stageIdx = openStages.find(i => canBookArtistOnStage(artist, pd, i));
+          if (stageIdx == null) {
+            addLog("🧩 Problem-Solver Parv", `${pName}: couldn't place ${artist.name} on any stage`);
+            setParvPicker(null);
+            return;
+          }
+          bookArtistToStage(pid, artist, stageIdx);
+          addLog("🧩 Problem-Solver Parv", `${pName}: played ${artist.name} free from hand (consolation)`);
+          showFloatingBonus(`🧩 ${artist.name}!`, "#fcd34d");
+          setParvPicker(null);
+        };
+        const skip = () => { addLog("🧩 Problem-Solver Parv", `${pName}: declined to play`); setParvPicker(null); };
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 620, width: "100%" }}>
+              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🧩 Problem-Solver Parv</h3>
+              <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>
+                You lost the contest. Parv found a workaround — pick an artist from your hand to play free.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(3, hand.length)}, 1fr)`, gap: 10 }}>
+                {hand.map((a, i) => (
+                  <button key={i} onClick={() => play(a)} style={{ ...bs, padding: 10, textAlign: "center", background: "rgba(252,211,77,0.1)", border: "1px solid rgba(252,211,77,0.5)" }}>
+                    <div style={{ color: "#fcd34d", fontWeight: 800, fontSize: 13, marginBottom: 2 }}>{a.name}</div>
+                    <div style={{ color: "#94a3b8", fontSize: 10 }}>{a.genre} · Fame {a.fame || 0} · {a.tickets || 0} 🎟️</div>
+                  </button>
+                ))}
+              </div>
+              <button onClick={skip} style={{ ...bs, marginTop: 12, fontSize: 11, color: "#94a3b8" }}>Skip</button>
             </div>
           </div>
         );
