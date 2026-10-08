@@ -216,6 +216,28 @@ const LEGENDARY_ARTIST_POOL = [
 ];
 const LEGENDARY_ARTISTS_PER_GAME = 3;
 
+// v199.25: Festival Principles — replaces microtrend/stage-die as the path to opening stages.
+// Each player draws 3 principles at game start (hidden). When a principle's amenity
+// requirements are met (checked against the player's CURRENT amenity totals across all
+// fields), the player can CHOOSE to spend it to open a new stage, at any time during
+// their turn, as long as they're under the max-stages cap. Unused completed principles
+// are worth +3 tickets each at game end. Principles are hidden from opponents until used.
+const FESTIVAL_PRINCIPLES = [
+  { id: "health_safety",   name: "Health and Safety", emoji: "🚨", reqs: { portaloo: 1, security: 2 }, desc: "1 portaloo + 2 security" },
+  { id: "well_staffed",    name: "Well-staffed",      emoji: "👮", reqs: { security: 3 },              desc: "3 security" },
+  { id: "glamping",        name: "Glamping",          emoji: "⛺", reqs: { portaloo: 2, campsite: 1 }, desc: "2 portaloos + 1 campsite" },
+  { id: "sanitary",        name: "Sanitary",          emoji: "🧼", reqs: { portaloo: 3 },              desc: "3 portaloos" },
+  { id: "bustling",        name: "Bustling",          emoji: "🔥", reqs: { campsite: 3 },              desc: "3 campsites" },
+  { id: "food_courts",     name: "Food Courts",       emoji: "🍔", reqs: { catering: 3 },              desc: "3 catering vans" },
+  { id: "hygienic",        name: "Hygienic",          emoji: "✨", reqs: { portaloo: 2, catering: 1 }, desc: "2 portaloos + 1 catering van" },
+  { id: "orderly",         name: "Orderly",           emoji: "📋", reqs: { security: 1, catering: 2 }, desc: "1 security + 2 catering vans" },
+  { id: "posh_toilets",    name: "Posh Toilets",      emoji: "🚽", reqs: { portaloo: 2, security: 1 }, desc: "2 portaloos + 1 security" },
+  { id: "breakfast_vans",  name: "Breakfast Vans",    emoji: "🥞", reqs: { catering: 2, campsite: 1 }, desc: "2 catering vans + 1 campsite" },
+];
+const PRINCIPLES_PER_PLAYER = 3;
+const UNUSED_PRINCIPLE_BONUS = 3; // tickets per unused completed principle at game end
+const QUICKYEAR_MAX_STAGES = 3;   // cap on stages in Quick Play (matches classic)
+
 // v199.9: season objectives. 8 to choose from; 1 unique objective drawn per season
 // (4 drawn at game start, one per Autumn/Winter/Spring/Summer, no repeats).
 // First player to complete it this season gets +4 🎟️; second gets +3 🎟️. After both
@@ -2307,10 +2329,25 @@ export default function Headliners() {
   const legendaryTokensRef = useRef({});
   useEffect(() => { legendaryTokensRef.current = legendaryTokens; }, [legendaryTokens]);
   const [legendaryResolution, setLegendaryResolution] = useState(null);
+  // v199.25: Festival Principles state.
+  // playerPrinciples: { pid: [{id, name, emoji, reqs, desc, used}] } — hidden hand per player.
+  // "used" flag persists forever once set (principle spent to open a stage). "Complete" is
+  // derived dynamically by checking current amenity counts against reqs — if used is false
+  // AND reqs are met, the principle is actionable (can be spent to open a stage).
+  const [playerPrinciples, setPlayerPrinciples] = useState({});
+  const playerPrinciplesRef = useRef({});
+  useEffect(() => { playerPrinciplesRef.current = playerPrinciples; }, [playerPrinciples]);
   // v199.23: snapshot of fame per player at the start of the current season. Used by the
   // season-end modal to compute Fame delta ("how fame changed this season"). Updated at
   // game start (all 0 per Quick Play) and at each season transition in continueFromSeasonEnd.
   const seasonStartSnapshotRef = useRef({});
+  // v199.24: per-season history for the game-over leaderboard. Shape:
+  // { pid: { autumn: { fame, fameDelta, ticketsThisSeason, artistsThisSeason, totalTickets, totalArtists }, ... } }
+  // Populated at each runQuickYearSeasonEnd call. Game-over uses this to show per-season
+  // breakdown columns alongside the game totals.
+  const [quickYearHistory, setQuickYearHistory] = useState({});
+  const quickYearHistoryRef = useRef({});
+  useEffect(() => { quickYearHistoryRef.current = quickYearHistory; }, [quickYearHistory]);
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -2438,6 +2475,11 @@ export default function Headliners() {
   const [qyPicksLeft, setQyPicksLeft] = useState(0);
   const qyPicksLeftRef = useRef(0);
   useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
+  // v199.24: tracks whether Fame 4+ players have used their once-per-action pool refresh.
+  // Reset at the start of each artist action.
+  const [qyPoolRefreshUsed, setQyPoolRefreshUsed] = useState(false);
+  const qyPoolRefreshUsedRef = useRef(false);
+  useEffect(() => { qyPoolRefreshUsedRef.current = qyPoolRefreshUsed; }, [qyPoolRefreshUsed]);
   const [actionTaken, setActionTaken] = useState(false);
   const [undoSnapshot, setUndoSnapshot] = useState(null);
 
@@ -2635,6 +2677,9 @@ export default function Headliners() {
   // gets a credit at their next-to-last progress and lands back at 1).
   const grantStageProgress = (pid, reason) => {
     if (stageOpenModeRef.current !== "trends") return;
+    // v199.25: Quick Play opens stages via Festival Principles only. Microtrend claims and
+    // stage-die picks no longer grant progress toward a new stage. Classic unchanged.
+    if (gameModeRef.current === "quickYear") return;
     setPlayerData(prev => {
       const cur = prev[pid] || {};
       const newProgress = (cur.stageProgress || 0) + 1;
@@ -3556,10 +3601,15 @@ export default function Headliners() {
   };
   const getFameArtistMax = (pd) => {
     const fame = pd?.fame || 0;
-    if (fame >= 4) return 3;
+    // v199.24: Fame 4+ no longer gets 3 picks — the extra pick is replaced by the pool-refresh
+    // ability (see qyPoolRefreshAvailable). Fame 2+ still gets 2 picks.
     if (fame >= 2) return 2;
     return 1;
   };
+  // v199.24: Fame 4+ unlocks a "refresh the artist pool" action during artist picks.
+  // Refresh keeps artists that have been "approached" (an agent placed on them via tempt);
+  // all other pool artists are swapped for fresh deck draws. Usable once per artist action.
+  const canUsePoolRefresh = (pd) => (pd?.fame || 0) >= 4;
 
   // v199.4: season-stat tracking removed with the objective pool. These functions used to
   // accumulate per-season metric counters for drawn objectives; season scoring is now a flat
@@ -4060,6 +4110,64 @@ export default function Headliners() {
     });
   };
 
+  // v199.25: Festival Principle helpers.
+  // isPrincipleComplete — pure check: does the player's CURRENT amenity count meet the
+  // principle's reqs? Reads amenities snapshot from the player's current fields totals.
+  const isPrincipleComplete = (principle, pd) => {
+    if (!principle || !pd) return false;
+    const am = pd.amenities || {};
+    for (const [type, needed] of Object.entries(principle.reqs || {})) {
+      if ((am[type] || 0) < needed) return false;
+    }
+    return true;
+  };
+  // Count unused-completed principles for a player (for +3 ticket game-end bonus display).
+  const countUnusedCompletedPrinciples = (pid) => {
+    const principles = playerPrinciplesRef.current[pid] || [];
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    return principles.filter(pr => !pr.used && isPrincipleComplete(pr, pd)).length;
+  };
+  // Spend a principle to open a new stage. Marks the principle used and appends a new stage.
+  // Guarded against max-stage overflow.
+  const openStageViaPrinciple = (pid, principleId) => {
+    const principles = playerPrinciplesRef.current[pid] || [];
+    const principle = principles.find(pr => pr.id === principleId);
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    if (!principle || principle.used) return false;
+    if (!isPrincipleComplete(principle, pd)) return false;
+    const currentStages = (pd.stages || []).length;
+    if (currentStages >= QUICKYEAR_MAX_STAGES) return false;
+    // Mark principle used.
+    const next = { ...(playerPrinciplesRef.current || {}) };
+    next[pid] = (next[pid] || []).map(pr => pr.id === principleId ? { ...pr, used: true } : pr);
+    setPlayerPrinciples(next);
+    playerPrinciplesRef.current = next;
+    // Append the new stage.
+    const stageIdx = currentStages;
+    const usedNames = pd.stageNames || [];
+    const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+    const newName = availNames[Math.floor(Math.random() * (availNames.length || 1))] || `${principle.name} Stage`;
+    setPlayerData(prev => {
+      const cur = prev[pid] || {};
+      const result = {
+        ...prev,
+        [pid]: {
+          ...cur,
+          stages: [...(cur.stages || []), { fameRequired: 0 }],
+          stageArtists: [...(cur.stageArtists || []), []],
+          stageNames: [...(cur.stageNames || []), newName],
+          stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageIdx % STAGE_COLORS.length]],
+        },
+      };
+      playerDataRef.current = result;
+      return result;
+    });
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog(`📜 ${principle.emoji} ${principle.name}`, `${pName}: spent principle → opened "${newName}" (Stage ${stageIdx + 1})`);
+    showFloatingBonus(`📜 Opened "${newName}"!`, "#86efac");
+    return true;
+  };
+
   // v199.21: tempt-win helper — bumps per-genre tempt counter and checks legendaries.
   // Called at every tempt-success site (uncontested + contested, human + AI). Multi-genre
   // artists bump every one of their genres (so tempting a Pop/Electronic artist counts
@@ -4130,6 +4238,32 @@ export default function Headliners() {
 
     setTimeout(() => recalcTickets(), 50);
 
+    // v199.24: capture per-season snapshot for the game-over leaderboard. Each season gets
+    // its own entry with fame (current), fameDelta (change this season), tickets scored
+    // this season, artists played this season, and cumulative totals.
+    const histUpdate = { ...(quickYearHistoryRef.current || {}) };
+    seasonScores.forEach(s => {
+      const pd = (playerDataRef.current || playerData)[s.pid] || {};
+      const fame = pd.fame != null ? pd.fame : (pd.baseFame || 0);
+      const snapFame = (seasonStartSnapshotRef.current[s.pid]?.fame) ?? 0;
+      const stages = pd.stageArtists || [];
+      const totalArtists = stages.reduce((sum, st) => sum + (Array.isArray(st) ? st.length : 0), 0);
+      const totalTickets = (pd.tickets || 0);
+      const artistsThisSeason = (seasonCountersRef.current[s.pid]?.plays) || 0;
+      histUpdate[s.pid] = { ...(histUpdate[s.pid] || {}) };
+      histUpdate[s.pid][season] = {
+        fame, fameDelta: fame - snapFame,
+        ticketsThisSeason: s.bonus || 0,
+        artistsThisSeason,
+        totalFame: fame,
+        totalTickets,
+        totalArtists,
+        campsites: s.campsites || 0,
+      };
+    });
+    setQuickYearHistory(histUpdate);
+    quickYearHistoryRef.current = histUpdate;
+
     // v199.21: at Summer close, resolve all Legendary Artist contracts BEFORE opening
     // the season-end modal. Each legendary tallies tokens across the 3 qualifying seasons,
     // ties are broken with a contest die + current ticket modifier, winners get the artist
@@ -4189,25 +4323,37 @@ export default function Headliners() {
           const stages = [...(cur.stages || [])];
           const stageNames = [...(cur.stageNames || [])];
           const stageColors = [...(cur.stageColors || [])];
+          // v199.26: respect QUICKYEAR_MAX_STAGES cap. Open a new stage ONLY if we're under
+          // the cap. If every existing stage is full AND we're at the cap, the Legendary
+          // artist doesn't physically play — the ticket payout is still awarded, based on
+          // the player's existing genre count (no Legendary-adds-to-itself bonus).
+          const atStageCap = (cur.stages || []).length >= QUICKYEAR_MAX_STAGES;
+          let legendaryLanded = true;
           if (targetStage < 0) {
-            sa.push([]);
-            stages.push({ fameRequired: 0 });
-            stageNames.push(`${r.artist.name} Stage`);
-            stageColors.push("#fcd34d");
-            targetStage = sa.length - 1;
-            openedNewStage = true;
+            if (!atStageCap) {
+              sa.push([]);
+              stages.push({ fameRequired: 0 });
+              stageNames.push(`${r.artist.name} Stage`);
+              stageColors.push("#fcd34d");
+              targetStage = sa.length - 1;
+              openedNewStage = true;
+            } else {
+              legendaryLanded = false;
+            }
           }
-          const legendaryArtist = {
-            name: r.artist.name,
-            genre: r.artist.genre,
-            fame: 5,
-            tickets: 0, // v199.23: no base ticket value — scoring is the per-genre bonus
-            effect: `LEGENDARY — played free via Legendary Contract. Scores +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} per ${r.artist.genre} artist in festival.`,
-            isLegendary: true,
-            legendaryEmoji: r.artist.emoji,
-          };
-          sa[targetStage] = [...sa[targetStage], legendaryArtist];
-          // Count ALL artists of this genre currently in the festival (post-add).
+          if (legendaryLanded) {
+            const legendaryArtist = {
+              name: r.artist.name,
+              genre: r.artist.genre,
+              fame: 5,
+              tickets: 0, // v199.23: no base ticket value — scoring is the per-genre bonus
+              effect: `LEGENDARY — played free via Legendary Contract. Scores +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} per ${r.artist.genre} artist in festival.`,
+              isLegendary: true,
+              legendaryEmoji: r.artist.emoji,
+            };
+            sa[targetStage] = [...sa[targetStage], legendaryArtist];
+          }
+          // Count ALL artists of this genre currently in the festival (post-add if landed).
           let genreCount = 0;
           sa.forEach(stage => (stage || []).forEach(a => {
             const genres = (a.genre || "").split(",").map(g => g.trim());
@@ -4221,9 +4367,10 @@ export default function Headliners() {
             bonusTickets: (cur.bonusTickets || 0) + payout,
           };
           r.openedNewStage = openedNewStage;
-          r.playedOnStage = targetStage;
-          r.payout = payout; // for display + logs
+          r.playedOnStage = legendaryLanded ? targetStage : -1;
+          r.payout = payout;
           r.genreCount = genreCount;
+          r.legendaryLanded = legendaryLanded;
         });
         return next;
       });
@@ -4244,6 +4391,33 @@ export default function Headliners() {
       });
 
       setLegendaryResolution({ results: legendaryResults });
+
+      // v199.25: Festival Principle game-end bonus — +3 🎟️ per unused completed principle.
+      const principleBonuses = {};
+      players.forEach(p => {
+        const principles = playerPrinciplesRef.current[p.id] || [];
+        const pd = playerDataRef.current?.[p.id] || playerData[p.id] || {};
+        const unused = principles.filter(pr => !pr.used && isPrincipleComplete(pr, pd));
+        const bonus = unused.length * UNUSED_PRINCIPLE_BONUS;
+        principleBonuses[p.id] = { count: unused.length, bonus, principles: unused };
+      });
+      if (Object.values(principleBonuses).some(b => b.bonus > 0)) {
+        setPlayerData(prev => {
+          const next = { ...prev };
+          Object.entries(principleBonuses).forEach(([pid, b]) => {
+            if (!next[pid] || b.bonus === 0) return;
+            next[pid] = { ...next[pid], bonusTickets: (next[pid].bonusTickets || 0) + b.bonus };
+          });
+          playerDataRef.current = next;
+          return next;
+        });
+        Object.entries(principleBonuses).forEach(([pid, b]) => {
+          if (b.bonus === 0) return;
+          const pName = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
+          const prList = b.principles.map(pr => `${pr.emoji} ${pr.name}`).join(", ");
+          addLog(`📜 ${pName}`, `${b.count} unused completed principle${b.count === 1 ? "" : "s"} (${prList}) → +${b.bonus} 🎟️`);
+        });
+      }
       setTimeout(() => recalcTickets(), 80);
     }
 
@@ -8508,6 +8682,27 @@ export default function Headliners() {
       const initialSnapshot = {};
       players.forEach(p => { initialSnapshot[p.id] = { fame: 0 }; });
       seasonStartSnapshotRef.current = initialSnapshot;
+      // v199.24: reset per-season history for the game-over leaderboard.
+      const initialHistory = {};
+      players.forEach(p => { initialHistory[p.id] = { autumn: null, winter: null, spring: null, summer: null }; });
+      setQuickYearHistory(initialHistory);
+      quickYearHistoryRef.current = initialHistory;
+      // v199.25: deal Festival Principles — each player gets PRINCIPLES_PER_PLAYER random
+      // ones from the pool. Shuffled independently per player so hand composition varies.
+      const initialPrinciples = {};
+      players.forEach(p => {
+        const shuffled = shuffle([...FESTIVAL_PRINCIPLES]);
+        initialPrinciples[p.id] = shuffled.slice(0, PRINCIPLES_PER_PLAYER).map(pr => ({ ...pr, used: false }));
+      });
+      setPlayerPrinciples(initialPrinciples);
+      playerPrinciplesRef.current = initialPrinciples;
+      addLog("📜 Festival Principles", `Each player holds ${PRINCIPLES_PER_PLAYER} principles. Complete one → open a new stage (max ${QUICKYEAR_MAX_STAGES}). Unused completed principles = +${UNUSED_PRINCIPLE_BONUS} 🎟️ each at game end.`);
+      players.forEach(p => {
+        if (!p.isAI) {
+          const list = initialPrinciples[p.id].map(pr => `${pr.emoji} ${pr.name} (${pr.desc})`).join(" · ");
+          addLog(`📜 ${p.festivalName}`, `Starting principles: ${list}`);
+        }
+      });
       addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
       addLog("⚡ Scoring", "At each season close, every player scores 1 🎟️ per campsite + 1 🎟️ per artist on their stages. Highest tickets at Summer close wins.");
       addLog("⚡ Fame", "Fame is status (hard cap 5). Climb the Fame ladder to unlock bigger artists and scale your actions.");
@@ -8539,21 +8734,36 @@ export default function Headliners() {
     setNegStarFacesAvoidedThisYear({});
     // v189: two microtrend tracks — one amenity trend (Council Incentives) and one genre
     // trend (Trending Genres). Each has its own active + upcoming (forecast).
+    // v199.24: Quick Play now uses a SINGLE microtrend track per game (either amenity or
+    // genre, chosen 50/50 at setup). This makes Fame scarcer and simplifies the sidebar.
+    // Classic multi-year retains the dual-track system for backwards compatibility.
     amenityBagRef.current = buildAmenityBag();
     genreBagRef.current = buildGenreBag();
     microtrendBagRef.current = []; // legacy unused
-    const activeAmenity = popAmenityFromBag();
-    const forecastAmenity = popAmenityFromBag(activeAmenity);
-    const activeGenre = popGenreFromBag();
-    const forecastGenre = popGenreFromBag(activeGenre);
-    const mt = [activeAmenity, activeGenre];
-    setMicrotrends(mt);
-    setNextAmenityMicrotrend(forecastAmenity);
-    setNextGenreMicrotrend(forecastGenre);
+    const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
+    let mt;
+    if (gameModeRef.current === "quickYear") {
+      const useAmenity = Math.random() < 0.5;
+      const active = useAmenity ? popAmenityFromBag() : popGenreFromBag();
+      const forecast = useAmenity ? popAmenityFromBag(active) : popGenreFromBag(active);
+      mt = [active];
+      setMicrotrends(mt);
+      if (useAmenity) { setNextAmenityMicrotrend(forecast); setNextGenreMicrotrend(null); }
+      else            { setNextGenreMicrotrend(forecast);   setNextAmenityMicrotrend(null); }
+      addLog("🎵 Microtrend", `${useAmenity ? "Council Incentive" : "Trending Genre"}: ${describeMt(active)} (next: ${describeMt(forecast)})`);
+    } else {
+      const activeAmenity = popAmenityFromBag();
+      const forecastAmenity = popAmenityFromBag(activeAmenity);
+      const activeGenre = popGenreFromBag();
+      const forecastGenre = popGenreFromBag(activeGenre);
+      mt = [activeAmenity, activeGenre];
+      setMicrotrends(mt);
+      setNextAmenityMicrotrend(forecastAmenity);
+      setNextGenreMicrotrend(forecastGenre);
+      addLog("🎵 Microtrend", `Council Incentives: ${describeMt(activeAmenity)} (next: ${describeMt(forecastAmenity)}) • Trending Genres: ${describeMt(activeGenre)} (next: ${describeMt(forecastGenre)})`);
+    }
     setMicrotrendHistory([]);
     microtrendHistoryRef.current = [];
-    const describeMt = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
-    addLog("🎵 Microtrend", `Council Incentives: ${describeMt(activeAmenity)} (next: ${describeMt(forecastAmenity)}) • Trending Genres: ${describeMt(activeGenre)} (next: ${describeMt(forecastGenre)})`);
     // v135: When Alternative Artist Objectives is on, the old +3-tickets objectives are
     // replaced entirely — skip the old picker flow and only hand out alt-objective starters.
     if (altObjectivesModeRef.current) {
@@ -9622,6 +9832,21 @@ export default function Headliners() {
       seasonCountersRef.current = next;
       checkSeasonObjective("amenity_count", currentPlayerId);
       checkLegendaryContracts(currentPlayerId);
+      // v199.25: check Festival Principles for newly completable ones. We check AFTER the
+      // amenity has landed (recalcAfterUpdate ran at the top). Fire a floating notification
+      // for any principle that just crossed into "complete" territory. The playerDataRef
+      // may not have flushed yet, so give it a tick.
+      setTimeout(() => {
+        const pd = playerDataRef.current?.[currentPlayerId] || {};
+        const principles = playerPrinciplesRef.current[currentPlayerId] || [];
+        principles.forEach(pr => {
+          if (!pr.used && !pr._notifiedComplete && isPrincipleComplete(pr, pd)) {
+            pr._notifiedComplete = true;
+            showFloatingBonus(`📜 ${pr.emoji} ${pr.name} ready!`, "#86efac");
+            addLog(`📜 ${currentPlayer.festivalName}`, `Principle completable: ${pr.emoji} ${pr.name} — spend any turn to open a new stage`);
+          }
+        });
+      }, 80);
     }
     // v158: check whether this placement satisfies any shared contract on this field.
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
@@ -9652,18 +9877,46 @@ export default function Headliners() {
       trackGoalProgress(currentPlayerId, "fameDieRolls");
       showFloatingBonus("+1 🔥 Fame!", "#f97316");
       sfx.gainFame();
+      // v199.24 bugfix: in Quick Play, picking a Fame die should NOT end the turn when the
+      // player still has amenity picks remaining (Fame-tier scaling gives 2+ picks per
+      // action). Previously this always decremented turnsLeft and set actionTaken, so
+      // picking Fame first killed the rest of the action. Pick order now doesn't matter.
+      if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
+        const left = Math.max(0, qyPicksLeftRef.current - 1);
+        setQyPicksLeft(left);
+        qyPicksLeftRef.current = left;
+        setTurnAction(null);
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       return;
     }
     if (dv === "stage") {
       // v166: stage die: grant +1 stage progress. 2 progress = 1 stage-open credit.
-      // Picking one uses a turn (same as picking any other die face). Even at max
-      // stages (3), the pick still consumes the die from the shared pool (blocking
-      // effect). Credits banked past max stages are dead weight — that's fine.
+      // v199.25: in Quick Play, stages open via Festival Principles only — the stage die
+      // is repurposed as a bonus Fame grant so the pick stays useful.
       const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
-      grantStageProgress(currentPlayerId, "Stage die");
-      addLog(currentPlayer.festivalName, `picked the 🎪 Stage die`);
-      showFloatingBonus("+1 🎪 Stage Progress!", "#4ade80");
+      if (gameModeRef.current === "quickYear") {
+        logFameGain(currentPlayerId, 1, "Stage die (repurposed)");
+        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
+        addLog(currentPlayer.festivalName, `picked the 🎪 Stage die → +1 🔥 Fame (Quick Play)`);
+        showFloatingBonus("+1 🔥 Fame!", "#f97316");
+        sfx.gainFame();
+      } else {
+        grantStageProgress(currentPlayerId, "Stage die");
+        addLog(currentPlayer.festivalName, `picked the 🎪 Stage die`);
+        showFloatingBonus("+1 🎪 Stage Progress!", "#4ade80");
+      }
+      // v199.24: same picks-remaining respect for stage dice (parity with Fame fix above).
+      if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
+        const left = Math.max(0, qyPicksLeftRef.current - 1);
+        setQyPicksLeft(left);
+        qyPicksLeftRef.current = left;
+        setTurnAction(null);
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
       setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
       return;
     }
@@ -9765,12 +10018,15 @@ export default function Headliners() {
     setSelectedArtist(null);
     setSelectedStageIdx(null);
     // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
-    // Fame 0-1 → 1 draw; Fame 2-3 → 2 draws; Fame 4-5 → 3 draws (each from pool OR deck).
+    // v199.24: Fame 0-1 → 1 draw; Fame 2+ → 2 draws. Fame 4+ also gets a once-per-action
+    // pool refresh (reset here).
     if (gameModeRef.current === "quickYear") {
       const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(pd);
       setQyPicksLeft(maxPicks);
       qyPicksLeftRef.current = maxPicks;
+      setQyPoolRefreshUsed(false);
+      qyPoolRefreshUsedRef.current = false;
     }
   };
 
@@ -10192,12 +10448,15 @@ export default function Headliners() {
     }
 
     if (ni < 0) {
-      // v198: in Quick Play this shouldn't fire (game-end check above handles it).
-      // In classic, this is the year-end trigger.
+      // v199.24 bugfix: in Quick Play, going straight to gameOver here skipped the Summer
+      // season-end modal AND the Legendary resolution. Players reported "turn 12 → game over
+      // with no legendary verdict." The clean game-end detection above (roundsCompleted === 12
+      // + remainder === 0) can miss when a player takes an extra action via Fame-spend or
+      // when turn counts get offset by any mechanic. Route through runQuickYearSeasonEnd
+      // instead so the full Summer flow fires regardless.
       if (gameModeRef.current === "quickYear") {
-        // Defensive: if we somehow run out of turns without hitting the game-end round
-        // boundary (e.g. after Fame-spend extra actions change turn counts), end anyway.
-        setPhase("gameOver"); addLogH("Game Over!", "round"); return;
+        runQuickYearSeasonEnd("summer", true, -1);
+        return;
       }
       beginSpecialGuestPhase(); return;
     }
@@ -11563,6 +11822,43 @@ export default function Headliners() {
   };
   const confirmPreRoundStage = () => { startPreRoundDraws(); };
   const confirmPreRound = () => nextPreRound();
+  // v199.24: Fame 4+ pool refresh. Replace unclaimed pool artists (no agent on them)
+  // with fresh deck draws. Artists that have been "approached" (any agent via tempt
+  // placement) stay in the pool. Usable once per artist action.
+  const refreshArtistPool = () => {
+    if (qyPoolRefreshUsedRef.current) return;
+    const pool = [...(artistPool || [])];
+    const toKeep = [];
+    const toReplace = [];
+    pool.forEach(a => {
+      const hasAgent = getPlacementsOnArtist(a.name).length > 0;
+      if (hasAgent) toKeep.push(a);
+      else toReplace.push(a);
+    });
+    const needed = toReplace.length;
+    if (needed === 0) {
+      addLog(currentPlayer.festivalName, "🔁 Pool refresh — nothing to refresh (all artists have agents)");
+      return;
+    }
+    setArtistDeck(prevDeck => {
+      const inUse = new Set([...toKeep.map(a => a.name), ...toReplace.map(a => a.name)]);
+      const fresh = [];
+      const remaining = [];
+      for (const a of prevDeck) {
+        if (fresh.length < needed && !inUse.has(a.name)) fresh.push(a);
+        else remaining.push(a);
+      }
+      // Replaced artists go to the discard, fresh ones fill the gaps.
+      setDiscardPile(prev => [...prev, ...toReplace]);
+      setArtistPool([...toKeep, ...fresh]);
+      return remaining;
+    });
+    setQyPoolRefreshUsed(true);
+    qyPoolRefreshUsedRef.current = true;
+    showFloatingBonus("🔁 Pool refreshed!", "#c4b5fd");
+    addLog(currentPlayer.festivalName, `🔁 Refreshed ${needed} pool artist${needed === 1 ? "" : "s"} (Fame 4+ perk)`);
+  };
+
   const refillPoolTo5 = () => {
     setArtistDeck(prevDeck => {
       const needed = 5 - artistPool.length;
@@ -12617,7 +12913,7 @@ export default function Headliners() {
                           <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No one claimed any tokens — {r.artist.name} walks away.</div>
                         )}
                         {r.outcome === "clear" && winner && (
-                          <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : ""}</div>
+                          <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
                         )}
                         {r.outcome === "contested" && winner && (
                           <div>
@@ -12629,7 +12925,7 @@ export default function Headliners() {
                                 </div>
                               ))}
                             </div>
-                            <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : ""}</div>
+                            <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
                           </div>
                         )}
                       </div>
@@ -14164,6 +14460,53 @@ export default function Headliners() {
                 </div>
               </div>
             )}
+            {/* v199.25: Festival Principles panel. Shows the current player's 3 principles
+                (private — only your own, since principles are hidden from opponents). Each
+                row shows the principle's name, requirements, and current progress. Completed
+                principles get a highlight + prompt; used ones are struck through. */}
+            {gameMode === "quickYear" && (playerPrinciples[currentPlayerId] || []).length > 0 && (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "linear-gradient(180deg, rgba(134,239,172,0.08) 0%, rgba(96,165,250,0.06) 100%)", border: "1.5px solid rgba(134,239,172,0.4)" }}>
+                <div style={{ color: "#86efac", fontWeight: 800, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center" }}>📜 Your Festival Principles</div>
+                {(playerPrinciples[currentPlayerId] || []).map((pr, i) => {
+                  const am = currentPD?.amenities || {};
+                  const complete = isPrincipleComplete(pr, currentPD);
+                  const stageCount = (currentPD?.stages || []).length;
+                  const atCap = stageCount >= QUICKYEAR_MAX_STAGES;
+                  // Progress breakdown — show current/needed per req
+                  const progressBits = Object.entries(pr.reqs).map(([type, needed]) => {
+                    const have = am[type] || 0;
+                    const met = have >= needed;
+                    return (
+                      <span key={type} style={{ color: met ? "#86efac" : "#94a3b8", marginRight: 6 }}>
+                        {AMENITY_ICONS?.[type] || ""} {Math.min(have, needed)}/{needed}
+                      </span>
+                    );
+                  });
+                  const bgColor = pr.used ? "rgba(100,116,139,0.15)" : complete ? "rgba(134,239,172,0.15)" : "rgba(15,14,26,0.5)";
+                  const borderColor = pr.used ? "#475569" : complete ? "#86efac" : "#2a2a4a";
+                  return (
+                    <div key={pr.id} style={{ padding: 6, borderRadius: 6, marginBottom: i < (playerPrinciples[currentPlayerId] || []).length - 1 ? 5 : 0, background: bgColor, border: `1px solid ${borderColor}`, opacity: pr.used ? 0.5 : 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 12 }}>{pr.emoji}</span>
+                          <span style={{ color: pr.used ? "#64748b" : "#e2e8f0", fontWeight: 700, fontSize: 11, textDecoration: pr.used ? "line-through" : "none" }}>{pr.name}</span>
+                        </div>
+                        {pr.used
+                          ? <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic" }}>spent</span>
+                          : complete
+                            ? <span style={{ fontSize: 9, color: atCap ? "#fdba74" : "#86efac", fontWeight: 700 }}>{atCap ? `+${UNUSED_PRINCIPLE_BONUS} 🎟️ at end` : "READY"}</span>
+                            : null
+                        }
+                      </div>
+                      <div style={{ fontSize: 9, color: "#94a3b8", marginLeft: 16 }}>{progressBits}</div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 9, color: "#86efac", fontStyle: "italic", marginTop: 6, textAlign: "center", opacity: 0.75 }}>
+                  Complete a principle → spend to open a stage (max {QUICKYEAR_MAX_STAGES}). Unused completed = +{UNUSED_PRINCIPLE_BONUS} 🎟️ each.
+                </div>
+              </div>
+            )}
             {/* v199.9: Quick Play season-scoring panel with PROJECTED mid-season total.
                 Running total (pd.tickets) only reflects season bonuses that have already
                 been applied (previous seasons' close). Mid-season, a player might have built
@@ -14701,11 +15044,22 @@ export default function Headliners() {
               const pd = playerData[currentPlayerId] || {};
               const fame = pd.fame || 0;
               const kind = turnAction === "pickAmenity" ? "amenity die" : "artist (pool or deck)";
+              const canRefresh = turnAction === "artist" && canUsePoolRefresh(pd) && !qyPoolRefreshUsed;
               return (
                 <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "rgba(251,146,60,0.08)", border: "1px solid rgba(251,146,60,0.4)", textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: "#fdba74", fontWeight: 700, letterSpacing: 0.5 }}>
                     🔥 Fame {fame} — <strong style={{ color: "#fcd34d" }}>{qyPicksLeft} {kind} pick{qyPicksLeft === 1 ? "" : "s"} left</strong> in this action
                   </div>
+                  {/* v199.24: Fame 4+ pool refresh. Once per artist action. Replaces unclaimed
+                      pool artists with fresh deck draws, keeping any approached by agents. */}
+                  {canRefresh && (
+                    <button onClick={refreshArtistPool} style={{ ...bs, marginTop: 8, fontSize: 11, padding: "6px 12px", background: "rgba(196,181,253,0.15)", border: "1px solid #c4b5fd", color: "#c4b5fd", fontWeight: 700 }}>
+                      🔁 Refresh Pool (Fame 4+ perk)
+                    </button>
+                  )}
+                  {turnAction === "artist" && canUsePoolRefresh(pd) && qyPoolRefreshUsed && (
+                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 6, fontStyle: "italic" }}>✓ Pool refresh used this action</div>
+                  )}
                 </div>
               );
             })()}
@@ -14728,6 +15082,31 @@ export default function Headliners() {
             </div>}
 
             {!actionTaken && !turnAction && !noTurnsLeft && <div>
+              {/* v199.25: Festival Principles — show a dedicated button for each completable
+                  unused principle. Clicking spends it to open a new stage. Doesn't consume
+                  the player's main action — it's a free bonus action available any time
+                  during their turn (as long as the principle is complete + they're under
+                  the max stage cap). */}
+              {gameMode === "quickYear" && (() => {
+                const principles = playerPrinciples[currentPlayerId] || [];
+                const stageCount = (currentPD?.stages || []).length;
+                const available = principles.filter(pr => !pr.used && isPrincipleComplete(pr, currentPD));
+                if (available.length === 0) return null;
+                const atCap = stageCount >= QUICKYEAR_MAX_STAGES;
+                return (
+                  <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(134,239,172,0.1), rgba(96,165,250,0.08))", border: "1px solid rgba(134,239,172,0.4)" }}>
+                    <div style={{ color: "#86efac", fontSize: 10, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", textAlign: "center", marginBottom: 8 }}>📜 Completed Principles — Spend to Open a Stage</div>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                      {available.map(pr => (
+                        <button key={pr.id} onClick={() => openStageViaPrinciple(currentPlayerId, pr.id)} disabled={atCap} style={{ ...bs, fontSize: 12, padding: "8px 12px", background: atCap ? "rgba(100,116,139,0.1)" : "rgba(134,239,172,0.15)", border: `1px solid ${atCap ? "#475569" : "#86efac"}`, color: atCap ? "#64748b" : "#86efac", fontWeight: 700, cursor: atCap ? "not-allowed" : "pointer" }} title={atCap ? `Max ${QUICKYEAR_MAX_STAGES} stages reached` : `Open a new stage via ${pr.name}`}>
+                          {pr.emoji} {pr.name} → + Stage
+                        </button>
+                      ))}
+                    </div>
+                    {atCap && <div style={{ color: "#64748b", fontSize: 10, fontStyle: "italic", textAlign: "center", marginTop: 6 }}>Max {QUICKYEAR_MAX_STAGES} stages reached — unused completed principles = +{UNUSED_PRINCIPLE_BONUS} 🎟️ each at game end.</div>}
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                 <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
                 {hasAgent(currentPlayerId) && (() => {
@@ -15173,7 +15552,9 @@ export default function Headliners() {
                 </div>
               </div>
               
-              {((currentPD.amenities?.portaloo) || 0) > 0 && draw2Picks.length === 0 && <button onClick={() => {
+              {/* v199.24: portaloo-sacrifice-for-pool-refresh retired in Quick Play (artifact
+                  of pre-Fame-tier design). Classic multi-year keeps it for compatibility. */}
+              {gameMode !== "quickYear" && ((currentPD.amenities?.portaloo) || 0) > 0 && draw2Picks.length === 0 && <button onClick={() => {
                 setPlayerData(p => {
                   const cur = p[currentPlayerId];
                   const fields = cur.fields || emptyFields();
@@ -16068,24 +16449,57 @@ export default function Headliners() {
           {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
               per-year columns (there's only one year). Classic keeps the full per-year grid. */}
           {gameMode === "quickYear" ? (
-            <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(252,211,77,0.35)", padding: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr minmax(80px, auto) minmax(70px, auto)", gap: 10, alignItems: "center", fontSize: 12 }}>
-                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
-                <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>Festival</div>
-                <div style={{ color: "#fbbf24", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>🎟️ Tickets</div>
-                <div style={{ color: "#f97316", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9, textAlign: "right" }}>🔥 Fame</div>
-                {ranked.map((row, idx) => {
-                  const finalFame = row.byYear[1]?.fame || 0;
-                  const finalTickets = row.byYear[1]?.raw || 0;
-                  return <React.Fragment key={row.player.id}>
-                    <div style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 16 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</div>
-                    <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</div>
-                    <div style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: idx === 0 ? 800 : 600, textAlign: "right", fontSize: 14 }}>{finalTickets.toLocaleString()}</div>
-                    <div style={{ color: "#fed7aa", textAlign: "right", fontSize: 13 }}>{finalFame}</div>
-                  </React.Fragment>;
-                })}
-              </div>
-              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Winner = highest ticket count at festival close. Fame shown for reference.</p>
+            /* v199.24: per-season breakdown. Each player gets a row block showing their
+               performance each season (Autumn/Winter/Spring/Summer) side-by-side, plus a
+               bold TOTAL column on the right. For each season: tickets scored + artists
+               played + fame delta. The totals column shows ending Fame, cumulative artists,
+               and total tickets as the big number. */
+            <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left" }}>
+              {ranked.map((row, idx) => {
+                const finalFame = row.byYear[1]?.fame || 0;
+                const finalTickets = row.byYear[1]?.raw || 0;
+                const hist = quickYearHistory[row.player.id] || {};
+                const stages = (playerData[row.player.id]?.stageArtists) || [];
+                const totalArtists = stages.reduce((sum, st) => sum + (Array.isArray(st) ? st.length : 0), 0);
+                return (
+                  <div key={row.player.id} style={{ marginBottom: 10, borderRadius: 12, background: idx === 0 ? "linear-gradient(135deg, rgba(252,211,77,0.12), rgba(251,146,60,0.06))" : "rgba(20,18,34,0.6)", border: idx === 0 ? "1.5px solid rgba(252,211,77,0.5)" : "1px solid #2a2a4a", padding: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ color: idx === 0 ? "#fbbf24" : "#c4b5fd", fontWeight: 800, fontSize: 18 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
+                        <span style={{ color: "#e2e8f0", fontWeight: 800, fontSize: 15 }}>{row.player.festivalName}{row.player.isAI ? " 🤖" : ""}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                        <span style={{ color: "#f97316", fontWeight: 700, fontSize: 12 }}>🔥 {finalFame}</span>
+                        <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 12 }}>🎤 {totalArtists}</span>
+                        <span style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: 800, fontSize: 20 }}>🎟️ {finalTickets.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    {/* Per-season breakdown row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, fontSize: 10, marginTop: 6 }}>
+                      {["autumn", "winter", "spring", "summer"].map(sKey => {
+                        const sData = hist[sKey];
+                        return (
+                          <div key={sKey} style={{ padding: 6, borderRadius: 6, background: "rgba(15,14,26,0.5)", border: "1px solid #2a2a4a" }}>
+                            <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, fontSize: 9, marginBottom: 3 }}>{QUICKYEAR_SEASON_EMOJI[sKey]} {QUICKYEAR_SEASON_LABELS[sKey]}</div>
+                            {sData ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                                <div style={{ color: "#86efac", fontWeight: 700 }}>🎟️ +{sData.ticketsThisSeason}</div>
+                                <div style={{ color: "#c4b5fd" }}>🎤 +{sData.artistsThisSeason}</div>
+                                <div style={{ color: sData.fameDelta > 0 ? "#86efac" : sData.fameDelta < 0 ? "#f87171" : "#64748b" }}>
+                                  🔥 {sData.fameDelta > 0 ? `+${sData.fameDelta}` : sData.fameDelta < 0 ? sData.fameDelta : "—"} <span style={{ color: "#64748b" }}>({sData.fame})</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ color: "#475569", fontStyle: "italic", fontSize: 9 }}>no data</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Each season column shows tickets scored, artists played, and Fame change (ending value in parens). Winner = highest ticket count at festival close.</p>
             </div>
           ) : (
             <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
