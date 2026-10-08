@@ -101,7 +101,7 @@ const FAME_MAX = 5;
 // store 2 "spending reserve" Fame above the 5-status cap). 4 seasons × 3 turns each.
 // Season order starts in Autumn (planning), moves through Winter, Spring, and ends
 // in Summer (the festival payoff). Mirrors a real festival-planning calendar.
-const FAME_CAP_QUICKYEAR = 7;
+const FAME_CAP_QUICKYEAR = 5; // v199.9: was 7 (status 5 + overflow 2). Hard cap now 5 — any Fame beyond that is wasted. Encourages spending.
 const QUICKYEAR_TOTAL_TURNS = 12;
 const QUICKYEAR_SEASONS = ["autumn", "winter", "spring", "summer"];
 const QUICKYEAR_SEASON_LABELS = { autumn: "Autumn", winter: "Winter", spring: "Spring", summer: "Summer" };
@@ -147,6 +147,28 @@ const HOTLINE_AGENT_POOL = [
   { id: "frankie_phoenix",     name: "Frankie Phoenix",     letter: "X", emoji: "🔥", trigger: "loss",           effect: "When you lose a contest to another player, play the top artist from the deck on any of your stages (ignore Fame and amenity requirements)." },
 ];
 const HOTLINE_AGENTS_PER_GAME = 9; // each player's private dial has 9 agents drawn from the pool
+
+// v199.9: season objectives. 8 to choose from; 1 unique objective drawn per season
+// (4 drawn at game start, one per Autumn/Winter/Spring/Summer, no repeats).
+// First player to complete it this season gets +4 🎟️; second gets +3 🎟️. After both
+// are claimed, the objective is closed for the season.
+// trigger: how the game knows the objective was completed.
+//   "lineup_complete" — a stage reached 3 artists (fired in bookArtistToStage)
+//   "lineup_genre_match" — a stage reached 3 artists AND all 3 share a genre
+//   "stage_opened" — a new stage opened this season (fired in spendStageCredit / wherever)
+//   "microtrend_count" — N microtrends claimed this season by this player
+//   "amenity_count" — N amenities placed this season by this player
+//   "tempt_success" — a tempt was won (fired in commitAgentContest + uncontested path)
+const QUICKYEAR_OBJECTIVE_POOL = [
+  { id: "complete_lineup",     label: "Complete a lineup on one stage",     trigger: "lineup_complete" },
+  { id: "open_new_stage",      label: "Open a new stage",                   trigger: "stage_opened" },
+  { id: "three_microtrends",   label: "Complete 3 microtrends this season", trigger: "microtrend_count", threshold: 3 },
+  { id: "two_microtrends",     label: "Complete 2 microtrends this season", trigger: "microtrend_count", threshold: 2 },
+  { id: "genre_match_lineup",  label: "Complete a lineup using a genre match", trigger: "lineup_genre_match" },
+  { id: "three_amenities",     label: "Place 3 amenities this season",      trigger: "amenity_count", threshold: 3 },
+  { id: "two_amenities",       label: "Place 2 amenities this season",      trigger: "amenity_count", threshold: 2 },
+  { id: "successful_tempt",    label: "Successfully tempt an artist",       trigger: "tempt_success" },
+];
 const GENRE_COLORS = { Pop: "#ec4899", Rock: "#ef4444", Electronic: "#94a3b8", "Hip Hop": "#f97316", Indie: "#22c55e", Funk: "#a855f7" };
 const ALL_GENRES = ["Pop", "Rock", "Electronic", "Hip Hop", "Indie", "Funk"];
 
@@ -2185,9 +2207,21 @@ export default function Headliners() {
   const [quickYearTurnsTaken, setQuickYearTurnsTaken] = useState(0);
   // Season-end scoring modal state. Null when idle; { season, seasonScores, isGameEnd, nextPlayerIdx } when open.
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
-  // v199.4: season objectives + secret objectives + per-season metric tracking all removed.
-  // Season scoring is now a flat snapshot (1 ticket per campsite + 1 per artist, calculated
-  // in runQuickYearSeasonEnd). Hotline + microtrends carry the per-season variability.
+  // v199.9: season objectives re-introduced. 1 per season, drawn at game start from
+  // QUICKYEAR_OBJECTIVE_POOL (unique — no repeats across seasons).
+  // seasonObjectives: { autumn: obj, winter: obj, spring: obj, summer: obj }
+  // seasonObjectiveClaims: { autumn: { first: pid|null, second: pid|null }, ... }
+  const [seasonObjectives, setSeasonObjectives] = useState({});
+  const seasonObjectivesRef = useRef({});
+  useEffect(() => { seasonObjectivesRef.current = seasonObjectives; }, [seasonObjectives]);
+  const [seasonObjectiveClaims, setSeasonObjectiveClaims] = useState({});
+  const seasonObjectiveClaimsRef = useRef({});
+  useEffect(() => { seasonObjectiveClaimsRef.current = seasonObjectiveClaims; }, [seasonObjectiveClaims]);
+  // Per-season per-player counters for microtrends and amenities. Reset at season boundary.
+  // seasonCounters: { pid: { microtrends: n, amenities: n } }
+  const [seasonCounters, setSeasonCounters] = useState({});
+  const seasonCountersRef = useRef({});
+  useEffect(() => { seasonCountersRef.current = seasonCounters; }, [seasonCounters]);
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -2308,6 +2342,13 @@ export default function Headliners() {
   };
   const [dice, setDice] = useState([]);
   const [turnAction, setTurnAction] = useState(null);
+  // v199.10: Quick Play Fame-scaled action picks. On action start we set this to the
+  // Fame-tiered max (amenity: 1 at Fame 0-1, 2 at Fame 2+; artist: 1 at Fame 0-1, 2 at
+  // Fame 2-3, 3 at Fame 4-5). Each pick decrements; action ends when counter hits 0.
+  // Only active in Quick Play; classic multi-year mode keeps its 1-pick-per-action flow.
+  const [qyPicksLeft, setQyPicksLeft] = useState(0);
+  const qyPicksLeftRef = useRef(0);
+  useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
   const [actionTaken, setActionTaken] = useState(false);
   const [undoSnapshot, setUndoSnapshot] = useState(null);
 
@@ -2560,6 +2601,8 @@ export default function Headliners() {
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("🎪 Stage Open", `${pName} spent a stage credit → opened "${sName}"!`);
     showFloatingBonus(`🎪 Opened ${sName}!`, "#4ade80");
+    // v199.9: season-objective trigger.
+    checkSeasonObjective("stage_opened", pid);
   };
 
   // v158: contract helpers.
@@ -3416,6 +3459,18 @@ export default function Headliners() {
   // unlock higher-Fame artists (since none exist above Fame 5) but can be spent via
   // the Fame spend menu (1/turn). Reads gameModeRef so it's safe to call outside render.
   const getFameCap = () => gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
+  // v199.10: Quick Play Fame-tier action caps.
+  // Fame 0-1 → 1 pick; Fame 2-3 → 2 picks; Fame 4-5 → 2 amenity picks / 3 artist picks.
+  const getFameAmenityMax = (pd) => {
+    const fame = pd?.fame || 0;
+    return fame >= 2 ? 2 : 1;
+  };
+  const getFameArtistMax = (pd) => {
+    const fame = pd?.fame || 0;
+    if (fame >= 4) return 3;
+    if (fame >= 2) return 2;
+    return 1;
+  };
 
   // v199.4: season-stat tracking removed with the objective pool. These functions used to
   // accumulate per-season metric counters for drawn objectives; season scoring is now a flat
@@ -3443,6 +3498,12 @@ export default function Headliners() {
     // v199.6: reset the per-season taken set — all 9 agents are available again.
     setSeasonAgentsTaken(new Set());
     seasonAgentsTakenRef.current = new Set();
+    // v199.9: reset per-season counters for microtrends/amenities so this season's
+    // objective (e.g. "Place 3 amenities this season") can be freshly tracked.
+    const freshCounters = {};
+    players.forEach(p => { freshCounters[p.id] = { microtrends: 0, amenities: 0 }; });
+    setSeasonCounters(freshCounters);
+    seasonCountersRef.current = freshCounters;
     processHotlineQueue(queue);
   };
   // Advance the hotline queue — if the head is an AI, auto-pick after a short delay then
@@ -3574,17 +3635,19 @@ export default function Headliners() {
           break;
         }
         if (isAI) {
-          // AI: on win keep original; on loss take whichever neighbor has highest tickets.
-          if (outcome === "win") {
-            addLog("🎯 Tony Tactic", `${pName} 🤖: kept original tempt (${artist?.name})`);
-          } else {
-            const pick = (left && (!right || (left.tickets || 0) >= (right.tickets || 0))) ? left : right;
-            if (pick) {
-              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), pick] } }));
-              addLog("🎯 Tony Tactic", `${pName} 🤖: salvaged ${pick.name} from a neighboring pool slot`);
-              showFloatingBonus(`🎯 ${pick.name}!`, "#fcd34d");
-            }
-          }
+          // v199.9: AI picks the highest-tickets option (keep original vs. left vs. right).
+          // On loss, original isn't an option. The actual swap mechanics (removing original
+          // if a neighbor is chosen, removing neighbor from pool) are deferred to the Tony
+          // picker's take() function; we simulate that here for AI by setting tonyPicker
+          // and auto-triggering take() asynchronously.
+          const candidates = [];
+          if (outcome === "win" && artist) candidates.push({ kind: "original", a: artist });
+          if (left) candidates.push({ kind: "left", a: left });
+          if (right) candidates.push({ kind: "right", a: right });
+          if (candidates.length === 0) break;
+          candidates.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0));
+          const pick = candidates[0];
+          setTonyPicker({ pid, outcome, artist, leftArtist: left, rightArtist: right, _aiAutoPick: pick.kind });
         } else {
           setTonyPicker({ pid, outcome, artist, leftArtist: left, rightArtist: right });
           addLog("🎯 Tony Tactic", `${pName}: pick which artist to take — original or neighbor`);
@@ -3756,6 +3819,54 @@ export default function Headliners() {
       }
       default: break;
     }
+  };
+
+  // v199.9: central season-objective trigger check. Called from every mechanic that could
+  // complete the current season's objective (artist booking, stage opening, microtrend
+  // claim, amenity placement, tempt win). The caller passes a `triggerType` and the
+  // triggering pid; this function matches the current season's objective trigger, awards
+  // tickets to 1st (+4) and 2nd (+3) place in strict completion order, and silently
+  // no-ops once both are claimed. Count-based objectives (microtrends/amenities) check
+  // the player's per-season counter against the threshold.
+  const checkSeasonObjective = (triggerType, pid, extra = {}) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const season = quickYearSeasonRef.current;
+    const obj = (seasonObjectivesRef.current || {})[season];
+    if (!obj) return;
+    if (obj.trigger !== triggerType) return;
+    // For count-based objectives, require threshold met.
+    if (obj.threshold != null) {
+      const counter = (seasonCountersRef.current || {})[pid] || {};
+      const metric = triggerType === "microtrend_count" ? "microtrends" : triggerType === "amenity_count" ? "amenities" : null;
+      if (!metric) return;
+      if ((counter[metric] || 0) < obj.threshold) return;
+    }
+    // Check for a genre-match on lineup_genre_match (extra.stageArtists is the full stage).
+    if (triggerType === "lineup_genre_match") {
+      const stage = extra?.stageArtists || [];
+      if (stage.length < 3) return;
+      // All 3 must share at least one genre.
+      const genreSets = stage.map(a => new Set((a.genre || "").split(",").map(g => g.trim().toLowerCase()).filter(Boolean)));
+      const shared = [...genreSets[0]].filter(g => genreSets[1].has(g) && genreSets[2].has(g));
+      if (shared.length === 0) return;
+    }
+    // Award tickets. Idempotent — if this pid already claimed either slot, skip.
+    const claims = (seasonObjectiveClaimsRef.current || {})[season] || {};
+    if (claims.first === pid || claims.second === pid) return;
+    if (claims.first && claims.second) return; // closed
+    const slot = claims.first ? "second" : "first";
+    const reward = slot === "first" ? 4 : 3;
+    const nextClaims = { ...(seasonObjectiveClaimsRef.current || {}) };
+    nextClaims[season] = { ...claims, [slot]: pid };
+    setSeasonObjectiveClaims(nextClaims);
+    seasonObjectiveClaimsRef.current = nextClaims;
+    // Apply the ticket bonus via bonusTickets.
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid]?.bonusTickets || 0) + reward } }));
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    logTicketGain(pid, reward, `Season Objective ${slot === "first" ? "1st" : "2nd"}: ${obj.label}`);
+    addLog(`🎯 ${slot === "first" ? "1st" : "2nd"}`, `${pName}: completed "${obj.label}" → +${reward} 🎟️`);
+    showFloatingBonus(`🎯 +${reward} 🎟️!`, "#fcd34d");
+    setTimeout(() => recalcTickets(), 50);
   };
 
   // v199.4: season-end scoring is now a flat per-season ticket snapshot — the drawn-objective
@@ -4391,8 +4502,22 @@ export default function Headliners() {
           return false;
         }
         const agent = hotlineAgentsRef.current[pid];
-        // Store the active agent on the placement so we can resolve the right effect later.
-        const basePlacement = { type: "pool", poolIdx, artistName: artist.name, placedTurn: turnNumber, agentId: agent.id };
+        // v199.9: capture pool neighbors AT PLACEMENT TIME (not resolution). Pool state
+        // can change between placement and resolution (other players tempt, discards flow)
+        // and resolving-time snapshots were missing neighbors. Freezing the neighbors here
+        // means Tony Tactic's picker always has the correct options even if the pool
+        // mutated between turns.
+        const leftNeighborSnapshot = poolIdx > 0 ? artistPool[poolIdx - 1] : null;
+        const rightNeighborSnapshot = poolIdx >= 0 && poolIdx + 1 < artistPool.length ? artistPool[poolIdx + 1] : null;
+        const basePlacement = {
+          type: "pool",
+          poolIdx,
+          artistName: artist.name,
+          placedTurn: turnNumber,
+          agentId: agent.id,
+          leftNeighbor: leftNeighborSnapshot,
+          rightNeighbor: rightNeighborSnapshot,
+        };
         setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), basePlacement] }));
         markAgentUsed(pid);
         setTimeout(() => recalcTickets(), 30);
@@ -4476,18 +4601,19 @@ export default function Headliners() {
         if (gameModeRef.current === "quickYear") {
           const agentId = resolution.agentId || hotlineAgentsRef.current[resolution.pid]?.id;
           if (agentId) {
-            const poolIdx = artistPool.findIndex(a => a.name === resolution.artist.name);
-            const leftN = poolIdx > 0 ? artistPool[poolIdx - 1] : null;
-            const rightN = poolIdx >= 0 && poolIdx + 1 < artistPool.length ? artistPool[poolIdx + 1] : null;
+            // v199.9: use placement-time neighbors frozen on the resolution object
+            // (set in resolvePoolAgents from the stored tempt placement). Reliable.
             applyHotlineAgentEffect(resolution.pid, "win", {
               artist: resolution.artist,
               agentId,
               wasUncontested: true,
               contestOpponent: null,
-              neighborLeft: leftN,
-              neighborRight: rightN,
+              neighborLeft: resolution.leftNeighbor || null,
+              neighborRight: resolution.rightNeighbor || null,
             });
           }
+          // v199.9: season-objective tempt_success trigger (uncontested).
+          checkSeasonObjective("tempt_success", resolution.pid);
         }
         // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
         // modal renders during the AI's turn and the human user ends up picking a stage
@@ -4759,15 +4885,17 @@ export default function Headliners() {
       // THEY TEMPTED, not whatever agent they have now. Critical for cross-season tempts:
       // if a tempt was placed late in Autumn and resolves in Winter (after Hotline respin),
       // the Autumn agent still fires. Fixes the Fiona-Fighter-skipped bug.
+      // v199.9: also carry placement-time neighbor snapshots so Tony Tactic's picker
+      // always has the right options even if the pool mutated between turns.
       const contestants = [];
       Object.entries(currentTempts).forEach(([oPid, list]) => {
         (list || []).forEach(p => {
           if (p.type === "pool" && p.artistName === placement.artistName) {
-            contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn, agentId: p.agentId });
+            contestants.push({ pid: parseInt(oPid), placedTurn: p.placedTurn, agentId: p.agentId, leftNeighbor: p.leftNeighbor, rightNeighbor: p.rightNeighbor });
           }
         });
       });
-      if (contestants.length === 1) return { type: "uncontested", artist, poolIdx, pid, agentId: placement.agentId };
+      if (contestants.length === 1) return { type: "uncontested", artist, poolIdx, pid, agentId: placement.agentId, leftNeighbor: placement.leftNeighbor, rightNeighbor: placement.rightNeighbor };
       return { type: "contested", artist, poolIdx, contestants };
     }
 
@@ -4840,7 +4968,9 @@ export default function Headliners() {
       const value = getContestValue(opd, rolledFace);
       const tickets = opd.tickets || 0;
       const festivalName = players.find(p => p.id === c.pid)?.festivalName || `Player ${c.pid}`;
-      return { pid: c.pid, festivalName, value, tickets, placedTurn: c.placedTurn, isWinner: false };
+      // v199.9: carry placement-time agentId + neighbors through to commit so Tony
+      // Tactic's picker has reliable options even if pool state has mutated since.
+      return { pid: c.pid, festivalName, value, tickets, placedTurn: c.placedTurn, isWinner: false, agentId: c.agentId, leftNeighbor: c.leftNeighbor, rightNeighbor: c.rightNeighbor };
     });
     // Sort: value desc, then tickets desc, then placedTurn asc
     const sorted = [...contestantData].sort((a, b) => {
@@ -5048,9 +5178,6 @@ export default function Headliners() {
     // tempts that cross a season boundary — the agent that was in play when the tempt was
     // placed still fires at resolution, regardless of whether the player has since respun.
     if (gameModeRef.current === "quickYear") {
-      const origPool = artistPool; // closure-captured, pre-newPool mutation
-      const neighborLeft = idx > 0 ? origPool[idx - 1] : null;
-      const neighborRight = idx >= 0 && idx + 1 < origPool.length ? origPool[idx + 1] : null;
       contestantData.forEach(c => {
         const agentId = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
         if (!agentId) return;
@@ -5060,10 +5187,14 @@ export default function Headliners() {
           agentId,
           contestOpponent: outcome === "loss" ? winnerId : null,
           wasUncontested: false,
-          neighborLeft,
-          neighborRight,
+          // v199.9: use per-contestant placement-time neighbors (frozen when their tempt
+          // was placed) instead of recomputing from current pool. Reliable for Tony Tactic.
+          neighborLeft: c.leftNeighbor || null,
+          neighborRight: c.rightNeighbor || null,
         });
       });
+      // v199.9: season-objective tempt_success trigger (contested — fires for the winner).
+      checkSeasonObjective("tempt_success", winnerId);
     }
   };
 
@@ -7133,6 +7264,17 @@ export default function Headliners() {
     const stageBecameFull = isHeadliner; // slotCount === 3 means we're placing the 3rd artist
     applyIdentityOnPlay(pid, artist, { viaSpecialGuest: false, stageBecameFull });
 
+    // v199.9: season-objective triggers. "Complete a lineup" fires when a stage hits 3.
+    // "Complete a lineup using a genre match" additionally requires all 3 artists to
+    // share at least one genre.
+    if (stageBecameFull) {
+      // sa snapshot above is pre-add; the new artist is now the 3rd — reconstruct the
+      // full lineup for the genre check.
+      const fullStageArtists = [...(sa[stageIdx] || []), artist];
+      checkSeasonObjective("lineup_complete", pid);
+      checkSeasonObjective("lineup_genre_match", pid, { stageArtists: fullStageArtists });
+    }
+
     // v169: capture "who played what most recently" BEFORE this play's effect fires,
     // so Eminem's inheritance effect can read the value from the PRIOR play (not the
     // one currently happening). We snapshot into a ref inside applyEffect via closure.
@@ -7276,7 +7418,7 @@ export default function Headliners() {
         } }));
         addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
@@ -7324,7 +7466,7 @@ export default function Headliners() {
         } }));
         addLog("🎵 Microtrend", `${festival} claimed the forecast "${claimedTrend.genre}" microtrend (anti-lead) → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
         // v197.12/22: "Word of Mouth" (port_3) also fires on forecast claims.
         // Interactive pool-or-deck picker (see comment at first site).
@@ -7860,11 +8002,34 @@ export default function Headliners() {
       gameAgentPoolRef.current = chosenPool;
       setSeasonAgentsTaken(new Set());
       seasonAgentsTakenRef.current = new Set();
+      // v199.9: draw 4 unique season objectives from QUICKYEAR_OBJECTIVE_POOL (8 total).
+      // One per season, no repeats. Each has a trigger that completes it in-game.
+      const shuffledObjs = shuffle([...QUICKYEAR_OBJECTIVE_POOL]).slice(0, 4);
+      const seasonObjs = {
+        autumn: shuffledObjs[0],
+        winter: shuffledObjs[1],
+        spring: shuffledObjs[2],
+        summer: shuffledObjs[3],
+      };
+      setSeasonObjectives(seasonObjs);
+      seasonObjectivesRef.current = seasonObjs;
+      setSeasonObjectiveClaims({ autumn: {}, winter: {}, spring: {}, summer: {} });
+      seasonObjectiveClaimsRef.current = { autumn: {}, winter: {}, spring: {}, summer: {} };
+      // Initialize per-season counters for all players (reset each season boundary).
+      const freshCounters = {};
+      players.forEach(p => { freshCounters[p.id] = { microtrends: 0, amenities: 0 }; });
+      setSeasonCounters(freshCounters);
+      seasonCountersRef.current = freshCounters;
       addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
       addLog("⚡ Scoring", "At each season close, every player scores 1 🎟️ per campsite + 1 🎟️ per artist on their stages. Highest tickets at Summer close wins.");
-      addLog("⚡ Fame", "Fame is status (cap 5, 2-point overflow to 7). Climb the Fame ladder to unlock bigger artists.");
+      addLog("⚡ Fame", "Fame is status (hard cap 5). Climb the Fame ladder to unlock bigger artists and scale your actions.");
       addLog("📞 Hotline", `Season start: each player spins the Hotline dial. ${HOTLINE_AGENTS_PER_GAME} agents are available this game (of ${HOTLINE_AGENT_POOL.length}); each one can only be assigned to one player per season. First come first served. One tempt per agent. Re-spin for 1 Fame.`);
       addLog("📞 Agents available", chosenPool.map(a => `${a.emoji} ${a.name}`).join(" · "));
+      addLog("🎯 Objectives", `Each season has ONE objective. First to complete it: +4 🎟️. Second: +3 🎟️.`);
+      QUICKYEAR_SEASONS.forEach(sKey => {
+        const obj = seasonObjs[sKey];
+        if (obj) addLog(`${QUICKYEAR_SEASON_EMOJI[sKey]} ${QUICKYEAR_SEASON_LABELS[sKey]}`, `Objective: ${obj.label}`);
+      });
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
       setTimeout(() => beginHotlineSpinsForSeason(), 300);
@@ -8026,6 +8191,14 @@ export default function Headliners() {
         // v198.3: AI bonus amenity counts toward Quick Play season objectives (mirrors human path).
         const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[aType];
         if (metricKey) bumpSeasonStat(pid, metricKey, 1);
+        // v199.9: season-objective amenity_count trigger (AI bonus amenity path).
+        if (gameModeRef.current === "quickYear") {
+          const next = { ...(seasonCountersRef.current || {}) };
+          next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), amenities: ((next[pid]?.amenities) || 0) + 1 };
+          setSeasonCounters(next);
+          seasonCountersRef.current = next;
+          checkSeasonObjective("amenity_count", pid);
+        }
         const remaining = (pe.placeCount || 1) - 1;
         if (remaining > 0) {
           if (pe.type === "placeAmenity") setPendingEffect({ ...pe, placeCount: remaining, chosenType: null });
@@ -8819,7 +8992,18 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
-  const handlePickAmenity = () => { setTurnAction("pickAmenity"); if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); } };
+  const handlePickAmenity = () => {
+    setTurnAction("pickAmenity");
+    if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
+    // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
+    // Fame 0-1 → 1 die; Fame 2+ → 2 dice.
+    if (gameModeRef.current === "quickYear") {
+      const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+      const maxPicks = getFameAmenityMax(pd);
+      setQyPicksLeft(maxPicks);
+      qyPicksLeftRef.current = maxPicks;
+    }
+  };
   // Direct amenity placement when player picks a die. Build 1: defaults to field 0.
   // Build 2 will accept a fieldIdx parameter and the UI will prompt for selection.
   // Check microtrends — amenity-kind microtrends are claimed by the first player to place
@@ -8860,7 +9044,7 @@ export default function Headliners() {
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]}!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -8882,7 +9066,7 @@ export default function Headliners() {
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched the forecast "${AMENITY_LABELS[amenityType]}" (anti-lead) → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} forecast Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1);
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
@@ -8900,6 +9084,14 @@ export default function Headliners() {
     // v198: track for Quick Play season objectives — "Most campsites/portaloos/catering/security built this season"
     const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[amenityType];
     if (metricKey) bumpSeasonStat(currentPlayerId, metricKey, 1);
+    // v199.9: season-objective amenity_count trigger (Place 2/3 amenities this season).
+    if (gameModeRef.current === "quickYear") {
+      const next = { ...(seasonCountersRef.current || {}) };
+      next[currentPlayerId] = { ...(next[currentPlayerId] || { microtrends: 0, amenities: 0 }), amenities: ((next[currentPlayerId]?.amenities) || 0) + 1 };
+      setSeasonCounters(next);
+      seasonCountersRef.current = next;
+      checkSeasonObjective("amenity_count", currentPlayerId);
+    }
     // v158: check whether this placement satisfies any shared contract on this field.
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
     setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
@@ -8960,6 +9152,17 @@ export default function Headliners() {
         placeAmenityCounter(chosenType, 0);
         setSelectedDie(null);
         setPickingFieldFor(null);
+        // v199.10: Quick Play Fame-tier scaling applies here too (sec_1 AI branch).
+        if (gameModeRef.current === "quickYear") {
+          const left = qyPicksLeftRef.current - 1;
+          setQyPicksLeft(left);
+          qyPicksLeftRef.current = left;
+          if (left <= 0) {
+            setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
+            setTurnAction(null);
+            setActionTaken(true);
+          }
+        }
         return;
       }
       // Human: open modal to pick amenity type
@@ -8980,6 +9183,18 @@ export default function Headliners() {
     placeAmenityCounter(dv, 0);
     setSelectedDie(null);
     setPickingFieldFor(null);
+    // v199.10: Quick Play Fame-tier scaling — decrement picks counter. When it hits 0,
+    // the action ends (turn consumed). Until then, the player can keep clicking dice.
+    if (gameModeRef.current === "quickYear") {
+      const left = qyPicksLeftRef.current - 1;
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+      if (left <= 0) {
+        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
+        setTurnAction(null);
+        setActionTaken(true);
+      }
+    }
   };
   // v166: handleChoiceSelect removed — compound faces no longer exist.
   // Called when user clicks a field on PlayerBoard while pickingFieldFor is set
@@ -8992,6 +9207,17 @@ export default function Headliners() {
     placeAmenityCounter(amenityType, fieldIdx);
     setSelectedDie(null);
     setPickingFieldFor(null);
+    // v199.10: Quick Play Fame-tier scaling (field-picker path).
+    if (gameModeRef.current === "quickYear") {
+      const left = qyPicksLeftRef.current - 1;
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+      if (left <= 0) {
+        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
+        setTurnAction(null);
+        setActionTaken(true);
+      }
+    }
   };
   const cancelFieldPlacement = () => {
     setSelectedDie(null);
@@ -9004,7 +9230,21 @@ export default function Headliners() {
     grantCat1IfEligible(currentPlayerId, fresh);
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
-  const handleArtistAction = () => { takeUndoSnapshot(); setTurnAction("artist"); setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null); };
+  const handleArtistAction = () => {
+    takeUndoSnapshot();
+    setTurnAction("artist");
+    setArtistAction(null);
+    setSelectedArtist(null);
+    setSelectedStageIdx(null);
+    // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
+    // Fame 0-1 → 1 draw; Fame 2-3 → 2 draws; Fame 4-5 → 3 draws (each from pool OR deck).
+    if (gameModeRef.current === "quickYear") {
+      const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+      const maxPicks = getFameArtistMax(pd);
+      setQyPicksLeft(maxPicks);
+      qyPicksLeftRef.current = maxPicks;
+    }
+  };
 
   /** Take a full undo snapshot of all mutable game state */
   const takeUndoSnapshot = () => {
@@ -9112,6 +9352,23 @@ export default function Headliners() {
     trackGoalProgress(currentPlayerId, "artistsSigned");
     // Council reward: drawArtists councils give +N additional artists from the deck
     applyDrawArtistsBonus(currentPlayerId);
+    // v199.10: Quick Play Fame-tier scaling — if the player has more picks remaining,
+    // STAY in artist mode so they can click another pool artist or draw from the deck.
+    // Only end the turn when the counter hits 0.
+    if (gameModeRef.current === "quickYear") {
+      const left = qyPicksLeftRef.current - 1;
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+      if (left > 0) {
+        // More picks allowed — stay in artist mode, reset artistAction so player can
+        // choose pool OR deck for the next pick.
+        setArtistAction(null);
+        setSelectedArtist(null);
+        setSelectedStageIdx(null);
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
+    }
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     setTimeout(() => recalcTickets(), 50);
   };
@@ -9171,7 +9428,37 @@ export default function Headliners() {
     setTimeout(() => recalcTickets(), 50);
   };
   const handleReserveFromDeck = () => {
-    // Draw 2 cards from deck
+    // v199.10: Quick Play — simpler deck draw. Each deck "pick" draws 1 card blindly
+    // (no reveal/pick-1-of-2 complexity). Player gets 1/2/3 picks per action based on
+    // Fame tier, each pick freely chosen as pool OR deck. The old draw-2-keep-1-swap-other
+    // mechanic is a classic-mode-only cherry-pick that would duplicate the fame scaling.
+    if (gameModeRef.current === "quickYear") {
+      const drawn = drawFromDeck(1);
+      if (drawn.length === 0) { addLog("Deck", "No artists left to draw!"); return; }
+      const card = drawn[0];
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), card] } }));
+      addLog(currentPlayer.festivalName, `drew ${card.name} from deck`);
+      setLastActionFor(currentPlayerId, `drew ${card.name} from the deck`);
+      trackGoalProgress(currentPlayerId, "artistsSigned");
+      applyDrawArtistsBonus(currentPlayerId);
+      // Deck draws are hidden-info reveals — no undo back-track.
+      setUndoSnapshot(null);
+      const left = qyPicksLeftRef.current - 1;
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+      if (left > 0) {
+        // More picks allowed — stay in artist mode so player can draw again or pick from pool.
+        setArtistAction(null);
+        setSelectedArtist(null);
+        setSelectedStageIdx(null);
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
+      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+      setTimeout(() => recalcTickets(), 50);
+      return;
+    }
+    // Classic mode: original draw-2-keep-1 mechanic.
     const drawn = drawFromDeck(2);
     if (drawn.length === 0) { addLog("Deck", "No artists left to draw!"); return; }
     setDeckDrawnCard(drawn); // store array of 2 (or 1 if deck low)
@@ -9291,7 +9578,7 @@ export default function Headliners() {
     // clear the working buffer so their next turn starts fresh.
     setLastAction(prev => ({ ...prev, [currentPlayerId]: currentTurnActions[currentPlayerId] || [] }));
     setCurrentTurnActions(prev => ({ ...prev, [currentPlayerId]: [] }));
-    setTurnAction(null); setSelectedDie(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0);
+    setTurnAction(null); setSelectedDie(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0); setQyPicksLeft(0); qyPicksLeftRef.current = 0;
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
     setPlaysThisTurn(0); // v170: reset the per-turn play counter
 
@@ -11186,7 +11473,7 @@ export default function Headliners() {
             <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${gameMode === "quickYear" ? "#f59e0b" : "#4c1d95"}`, background: gameMode === "quickYear" ? "#f59e0b" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{gameMode === "quickYear" ? "✓" : ""}</div>
             <div style={{ flex: 1 }}>
               <div style={{ color: gameMode === "quickYear" ? "#fcd34d" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>⚡ Quick Play (1 Year) — 12 turns, 4 seasons</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame is status (cap 5, overflow 7). Each season start: Hotline spin assigns your tempt agent. Each season close: +1 🎟️ per campsite + 1 🎟️ per artist on stages. Highest tickets at Summer close wins." : "Off — standard multi-year game (uses the year count setting above)."}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame hard-caps at 5 (scales how many artists/amenities you can take per action). Season start: Hotline spin assigns your agent. Season close: +1 🎟️ per campsite + 1 🎟️ per artist + season-objective bonus. Highest tickets at Summer close wins." : "Off — standard multi-year game (uses the year count setting above)."}</div>
             </div>
           </label>
         </div>
@@ -11548,34 +11835,84 @@ export default function Headliners() {
           </div>
         );
       })()}
-      {/* v199.5: Tony Tactic picker — pick 1 of up to 3 artists at tempt resolution.
-          If won, "keep original" is an option. If lost, only neighbors are available. */}
+      {/* v199.9: Tony Tactic picker — proper "instead" semantics. Keep original = no-op
+          (artist already in hand from normal flow). Take left/right = remove original from
+          hand (if won; discard it), remove neighbor from pool, add neighbor to hand.
+          On loss, original isn't in hand (opponent took it), so take-neighbor just adds
+          the neighbor to hand (and removes it from pool).
+          If the neighbor isn't in the pool anymore (another player tempted it between
+          placement and resolution), the picker still shows the option but the pool
+          removal is a no-op — the player still gets the neighbor artist in their hand
+          as if Tony reserved it in advance. */}
       {tonyPicker && (() => {
-        const { pid, outcome, artist, leftArtist, rightArtist } = tonyPicker;
-        const take = (chosenArtist, label) => {
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), chosenArtist] } }));
-          const pName = players.find(p => p.id === pid)?.festivalName || "?";
-          addLog("🎯 Tony Tactic", `${pName}: ${label} ${chosenArtist.name}`);
-          showFloatingBonus(`🎯 ${chosenArtist.name}!`, "#fcd34d");
+        const { pid, outcome, artist, leftArtist, rightArtist, _aiAutoPick } = tonyPicker;
+        const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        const takeOriginal = () => {
+          addLog("🎯 Tony Tactic", `${pName}: kept original (${artist?.name})`);
+          setTonyPicker(null);
+        };
+        const takeNeighbor = (neighbor, sideLabel) => {
+          setPlayerData(p => {
+            const cur = p[pid];
+            if (!cur) return p;
+            let newHand = cur.hand || [];
+            // On a WIN, remove the original from hand (we're swapping it out).
+            if (outcome === "win" && artist) {
+              const removeIdx = newHand.findIndex(a => a.name === artist.name);
+              if (removeIdx >= 0) {
+                newHand = newHand.filter((_, i) => i !== removeIdx);
+              }
+            }
+            // Add the neighbor to hand.
+            newHand = [...newHand, neighbor];
+            return { ...p, [pid]: { ...cur, hand: newHand } };
+          });
+          // Discard the swapped-out original (only on win).
+          if (outcome === "win" && artist) {
+            setDiscardPile(prev => [...prev, artist]);
+          }
+          // Remove the neighbor from the artist pool if it's still there.
+          setArtistPool(prev => prev.filter(a => a.name !== neighbor.name));
+          addLog("🎯 Tony Tactic", outcome === "win"
+            ? `${pName}: swapped ${artist?.name} for ${sideLabel} (${neighbor.name})`
+            : `${pName}: took ${sideLabel} (${neighbor.name}) as consolation`);
+          showFloatingBonus(`🎯 ${neighbor.name}!`, "#fcd34d");
           setTonyPicker(null);
           setTimeout(() => recalcTickets(), 50);
         };
+        // AI auto-pick path — fire the appropriate take() once and clear.
+        if (_aiAutoPick) {
+          setTimeout(() => {
+            if (_aiAutoPick === "original") takeOriginal();
+            else if (_aiAutoPick === "left" && leftArtist) takeNeighbor(leftArtist, "left neighbor");
+            else if (_aiAutoPick === "right" && rightArtist) takeNeighbor(rightArtist, "right neighbor");
+            else setTonyPicker(null);
+          }, 600);
+          return (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+              <div style={{ ...card, textAlign: "center", maxWidth: 420, width: "100%" }}>
+                <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 18 }}>🎯 Tony Tactic</h3>
+                <p style={{ color: "#94a3b8", fontSize: 11, marginTop: 6 }}>{pName} 🤖 is making a call…</p>
+              </div>
+            </div>
+          );
+        }
         const options = [];
-        if (outcome === "win" && artist) options.push({ artist, label: "Kept original" });
-        if (leftArtist) options.push({ artist: leftArtist, label: "Took left neighbor" });
-        if (rightArtist) options.push({ artist: rightArtist, label: "Took right neighbor" });
+        if (outcome === "win" && artist) options.push({ onClick: takeOriginal, label: "Keep original", artist });
+        if (leftArtist) options.push({ onClick: () => takeNeighbor(leftArtist, "left neighbor"), label: "Take left neighbor", artist: leftArtist });
+        if (rightArtist) options.push({ onClick: () => takeNeighbor(rightArtist, "right neighbor"), label: "Take right neighbor", artist: rightArtist });
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ ...card, textAlign: "center", maxWidth: 620, width: "100%" }}>
               <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🎯 Tony Tactic</h3>
               <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>
                 {outcome === "win"
-                  ? "You won the tempt. Keep the original artist, OR swap for a neighbor from the pool."
-                  : "You lost the tempt — but Tony lets you take a neighbor artist instead."}
+                  ? `You tempted ${artist?.name} and won. Keep them, OR swap them out for a pool neighbor instead (${artist?.name} would be discarded).`
+                  : `You lost ${artist?.name} to another player — but Tony negotiated a side deal. Take a pool neighbor as consolation.`}
               </p>
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, options.length)}, 1fr)`, gap: 10 }}>
                 {options.map((o, i) => (
-                  <button key={i} onClick={() => take(o.artist, o.label)} style={{
+                  <button key={i} onClick={o.onClick} style={{
                     padding: 12, borderRadius: 10, cursor: "pointer", textAlign: "left",
                     background: "rgba(252,211,77,0.08)", border: "1px solid rgba(252,211,77,0.4)", color: "#e2e8f0",
                   }}>
@@ -13092,21 +13429,57 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
-            {/* v199.4: Quick Play season-scoring hint. Replaces the old season-objectives panel
-                — all players score the same way, every season, so the panel is a tiny
-                reminder of the formula + current running ticket totals. */}
+            {/* v199.9: Quick Play season-scoring panel with PROJECTED mid-season total.
+                Running total (pd.tickets) only reflects season bonuses that have already
+                been applied (previous seasons' close). Mid-season, a player might have built
+                3 campsites and played 2 artists this season but see 0 added to their running
+                total — confusing. We now show "running + projected this-season bonus" so the
+                leaderboard reflects what they'd score if the season ended NOW. */}
             {gameMode === "quickYear" && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.25)" }}>
               <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎟️ Season Scoring</div>
+              {/* v199.9: current season's drawn objective — the race. +4 🎟️ to the first
+                  player to complete it this season, +3 🎟️ to the second. Shows claim status. */}
+              {(() => {
+                const obj = seasonObjectives[quickYearSeason];
+                if (!obj) return null;
+                const claims = (seasonObjectiveClaims[quickYearSeason] || {});
+                const firstName = claims.first != null ? (players.find(p => p.id === claims.first)?.festivalName || "?") : null;
+                const secondName = claims.second != null ? (players.find(p => p.id === claims.second)?.festivalName || "?") : null;
+                return (
+                  <div style={{ padding: 6, borderRadius: 6, marginBottom: 6, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)" }}>
+                    <div style={{ color: "#fca5a5", fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 3 }}>🎯 Season Objective</div>
+                    <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{obj.label}</div>
+                    <div style={{ fontSize: 9, color: firstName ? "#64748b" : "#86efac", marginBottom: 1 }}>
+                      <strong>1st (+4 🎟️):</strong> {firstName ? <s>{firstName}</s> : "unclaimed"}
+                    </div>
+                    <div style={{ fontSize: 9, color: secondName ? "#64748b" : "#86efac" }}>
+                      <strong>2nd (+3 🎟️):</strong> {secondName ? <s>{secondName}</s> : (firstName ? "open" : "unclaimed")}
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 6 }}>
                 At each season close: <strong style={{ color: "#86efac" }}>1 🎟️ per campsite + 1 🎟️ per artist</strong> on your stages.
               </div>
-              <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, fontStyle: "italic" }}>Running tickets (incl. this season's bonus):</div>
+              <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, fontStyle: "italic" }}>Projected total (running + current-season bonus if it closed now):</div>
               {players.map(p => {
                 const pd = playerData[p.id];
-                const total = pd?.tickets || 0;
-                return <div key={p.id} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
-                  <span>{p.festivalName}{p.isAI ? " 🤖" : ""}</span>
-                  <span style={{ color: "#fcd34d", fontWeight: 700 }}>🎟️ {total}</span>
+                const running = pd?.tickets || 0;
+                // Compute this-season bonus as it would score right now.
+                const fields = pd?.fields || [];
+                const campsiteCount = fields.reduce((sum, f) => sum + (f?.amenities?.campsite || 0), 0);
+                const stages = pd?.stageArtists || [];
+                const artistCount = stages.reduce((sum, s) => sum + (Array.isArray(s) ? s.length : 0), 0);
+                const projectedBonus = campsiteCount + artistCount;
+                const projected = running + projectedBonus;
+                return <div key={p.id} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>{p.festivalName}{p.isAI ? " 🤖" : ""}</span>
+                    <span style={{ color: "#fcd34d", fontWeight: 700 }}>🎟️ {projected}</span>
+                  </div>
+                  <div style={{ fontSize: 8, color: "#64748b", marginLeft: 4 }}>
+                    {running} banked + {projectedBonus} projected ({campsiteCount} 🏕️ + {artistCount} 🎤)
+                  </div>
                 </div>;
               })}
             </div>}
@@ -13586,6 +13959,21 @@ export default function Headliners() {
               </div>
               <button onClick={() => undoLastTempt(currentPlayerId)} style={{ ...bs, fontSize: 11, padding: "4px 10px", color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.15)" }}>↩️ Undo Last Tempt</button>
             </div>}
+            {/* v199.10: Quick Play Fame-tier pick counter. Shows during pickAmenity or
+                artist actions, giving the player a running indicator of how many picks
+                they still have in this action before it ends. */}
+            {gameMode === "quickYear" && (turnAction === "pickAmenity" || turnAction === "artist") && qyPicksLeft > 0 && (() => {
+              const pd = playerData[currentPlayerId] || {};
+              const fame = pd.fame || 0;
+              const kind = turnAction === "pickAmenity" ? "amenity die" : "artist (pool or deck)";
+              return (
+                <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "rgba(251,146,60,0.08)", border: "1px solid rgba(251,146,60,0.4)", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "#fdba74", fontWeight: 700, letterSpacing: 0.5 }}>
+                    🔥 Fame {fame} — <strong style={{ color: "#fcd34d" }}>{qyPicksLeft} {kind} pick{qyPicksLeft === 1 ? "" : "s"} left</strong> in this action
+                  </div>
+                </div>
+              );
+            })()}
             {actionTaken && !noTurnsLeft && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
