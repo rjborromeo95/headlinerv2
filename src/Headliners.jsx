@@ -1082,6 +1082,75 @@ function DiceDisplay({ dice, onPick, disabled, onReroll, canReroll }) {
   );
 }
 
+// v199.29: Festival Principle card — shown in the player's hand alongside artist cards.
+// White-backed to stand out from genre-colored artists. Shows requirements, live progress,
+// and status (complete / used / in-progress). Clickable when complete to open a new stage
+// (if under the stage cap). This replaces the sidebar panel.
+function PrincipleCard({ principle, amenities, stageCount, maxStages, amenityIcons, onOpenStage, unusedBonus, small }) {
+  const am = amenities || {};
+  const reqEntries = Object.entries(principle.reqs || {});
+  const allMet = reqEntries.every(([type, needed]) => (am[type] || 0) >= needed);
+  const atCap = stageCount >= maxStages;
+  const used = principle.used;
+  const complete = !used && allMet;
+  const mob = typeof window !== "undefined" && window.innerWidth < 768;
+  const sz = small
+    ? (mob ? { width: 140, minHeight: 100, padding: "8px 10px" } : { width: 110, minHeight: 90, padding: "6px 8px" })
+    : (mob ? { width: 170, minHeight: 140, padding: "10px 12px" } : { width: 150, minHeight: 130, padding: "8px 10px" });
+  // State → border + glow.
+  const borderColor = used ? "#475569" : complete ? (atCap ? "#fbbf24" : "#22c55e") : "#cbd5e1";
+  const borderWidth = complete ? "2px" : "2px";
+  const glowShadow = complete && !atCap
+    ? "0 0 14px rgba(34,197,94,0.6), 0 2px 8px rgba(0,0,0,0.3)"
+    : (complete && atCap ? "0 0 14px rgba(251,191,36,0.5), 0 2px 8px rgba(0,0,0,0.3)" : "0 2px 8px rgba(0,0,0,0.2)");
+  const clickable = complete && !atCap && onOpenStage;
+  const bg = used ? "rgba(226,232,240,0.5)" : "#f8fafc";
+  const nameColor = used ? "#64748b" : "#0f172a";
+  const metaColor = used ? "#94a3b8" : "#475569";
+  return (
+    <div onClick={clickable ? onOpenStage : undefined} style={{
+      ...sz, borderRadius: mob ? 12 : 10, border: `${borderWidth} solid ${borderColor}`,
+      background: bg, color: nameColor,
+      cursor: clickable ? "pointer" : "default",
+      opacity: used ? 0.55 : 1, display: "flex", flexDirection: "column", gap: 2,
+      position: "relative", overflow: "hidden", transition: "all 0.15s", flexShrink: 0,
+      boxShadow: glowShadow,
+      animation: complete && !atCap ? "affordPulse 2s ease-in-out infinite" : "none",
+    }}>
+      {/* top-right status badge */}
+      {used && <div style={{ position: "absolute", top: 4, right: 4, background: "#64748b", color: "white", fontSize: 8, fontWeight: 800, padding: "2px 5px", borderRadius: 4, letterSpacing: 0.5 }}>SPENT</div>}
+      {complete && !atCap && <div style={{ position: "absolute", top: 4, right: 4, background: "#22c55e", color: "white", fontSize: 8, fontWeight: 800, padding: "2px 5px", borderRadius: 4, letterSpacing: 0.5 }}>READY</div>}
+      {complete && atCap && <div style={{ position: "absolute", top: 4, right: 4, background: "#fbbf24", color: "#422006", fontSize: 8, fontWeight: 800, padding: "2px 5px", borderRadius: 4, letterSpacing: 0.5 }}>+{unusedBonus}🎟️</div>}
+      {/* Header: emoji + name */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: small ? 14 : 18 }}>{principle.emoji}</span>
+        <span style={{ fontWeight: 800, fontSize: small ? 10 : 12, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.1, color: nameColor, textDecoration: used ? "line-through" : "none" }}>{principle.name}</span>
+      </div>
+      {/* Requirements progress */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 2 }}>
+        {reqEntries.map(([type, needed]) => {
+          const have = am[type] || 0;
+          const met = have >= needed;
+          return (
+            <div key={type} style={{ fontSize: small ? 9 : 10, color: met ? "#059669" : metaColor, fontWeight: met ? 700 : 500, display: "flex", alignItems: "center", gap: 3 }}>
+              <span>{amenityIcons?.[type] || ""}</span>
+              <span>{Math.min(have, needed)}/{needed}</span>
+              {met && <span style={{ color: "#059669", fontWeight: 800 }}>✓</span>}
+            </div>
+          );
+        })}
+      </div>
+      {/* Footer hint */}
+      {complete && !atCap && !used && (
+        <div style={{ fontSize: small ? 8 : 9, color: "#22c55e", fontWeight: 700, marginTop: "auto", textAlign: "center" }}>▸ Click to open stage</div>
+      )}
+      {complete && atCap && !used && (
+        <div style={{ fontSize: small ? 8 : 9, color: "#f59e0b", fontWeight: 700, marginTop: "auto", textAlign: "center" }}>Scores at game end</div>
+      )}
+    </div>
+  );
+}
+
 function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
   const [rolling, setRolling] = useState(false);
   const [animFrames, setAnimFrames] = useState([]);
@@ -1930,9 +1999,12 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     if (a.cateringCost > counts.catering) neededForArtists.catering += weight;
     if (a.portalooCost > counts.portaloo) neededForArtists.portaloo += weight;
   });
-  // v172: if an amenity microtrend is active, boost that amenity type too
+  // v172: if an amenity microtrend is active, boost that amenity type too.
+  // v199.29: boost dramatically — matching a microtrend grants +1 Fame which unlocks
+  // Fame tiers (2+ = 2 picks per action, 4+ = pool refresh). AI should actively chase
+  // these when it can afford to.
   if (activeAmenity && neededForArtists[activeAmenity] !== undefined) {
-    neededForArtists[activeAmenity] += 4;
+    neededForArtists[activeAmenity] += (fame < 4 ? 12 : 4);
   }
   // v197.18: Infrastructure Reward bonus. Same shape as aiPickAmenityType — bias the
   // AI toward amenity types where there's a reward on offer that the AI doesn't
@@ -9703,8 +9775,17 @@ export default function Headliners() {
       const aiPdSnap = playerData[currentPlayerId] || {};
       const aiStages = (aiPdSnap.stages || []).length;
       const aiCredits = aiPdSnap.stageOpenCredits || 0;
-      const wantsStageProgress = aiStages < 3 && aiCredits === 0;
-      const pick = aiPickDie(currentDice, pd, decision.preferredType, wantsStageProgress, decision.wantsFameThisTurn);
+      // v199.29: in Quick Play, stages open via Festival Principles (not stage dice/credits),
+      // so AI should NEVER chase stage dice there — they're repurposed as +1 Fame now.
+      const wantsStageProgress = gameModeRef.current !== "quickYear" && aiStages < 3 && aiCredits === 0;
+      // v199.29: aggressive Fame bias in Quick Play. The AI should climb the Fame ladder
+      // to unlock Fame tiers (2+ = 2 picks per action, 4+ = pool refresh). Previously
+      // wantsFameThisTurn was only true on turn 1 at Fame 0-1. Now any time Fame < 4 in
+      // Quick Play, the AI prioritizes the Fame die when one is in the roll.
+      const aiFame = aiPdSnap.fame || 0;
+      const wantsFameOverride = gameModeRef.current === "quickYear" && aiFame < 4;
+      const effectiveWantsFame = decision.wantsFameThisTurn || wantsFameOverride;
+      const pick = aiPickDie(currentDice, pd, decision.preferredType, wantsStageProgress, effectiveWantsFame);
       const dieVal = currentDice[pick.idx];
 
       if (dieVal === "fame" || pick.type === "fame") {
@@ -14288,9 +14369,35 @@ export default function Headliners() {
             const nPlayers = players.length || 1;
             const roundsCompleted = Math.floor(quickYearTurnsTaken / nPlayers);
             const currentTurn = Math.min(QUICKYEAR_TOTAL_TURNS, roundsCompleted + 1);
+            // v199.29: inline microtrend chip next to the season/turn header. Was buried
+            // in a tab panel players rarely opened — now permanently visible.
+            const activeTrend = (microtrends || []).find(mt => mt && mt.claimedBy === null);
+            const claimedTrend = (microtrends || []).find(mt => mt && mt.claimedBy !== null);
+            const trend = activeTrend || claimedTrend;
+            const trendClaimed = !!claimedTrend && !activeTrend;
+            const trendClaimer = trendClaimed ? players.find(p => p.id === claimedTrend.claimedBy)?.festivalName : null;
+            const trendLabel = trend
+              ? (trend.kind === "amenity"
+                ? `${AMENITY_ICONS[trend.amenity]} ${AMENITY_LABELS[trend.amenity]}`
+                : `${trend.genre}`)
+              : null;
+            const trendColor = trend
+              ? (trend.kind === "amenity" ? "#fbbf24" : (GENRE_COLORS[trend.genre] || "#fbbf24"))
+              : "#fbbf24";
             return <div style={{ marginBottom: 12 }}>
-              <h3 style={{ color: "#fcd34d", fontSize: 14, letterSpacing: 2, textTransform: "uppercase", margin: 0 }}>{QUICKYEAR_SEASON_EMOJI[quickYearSeason]} {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</h3>
-              <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>Turn {currentTurn} / {QUICKYEAR_TOTAL_TURNS}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <h3 style={{ color: "#fcd34d", fontSize: 14, letterSpacing: 2, textTransform: "uppercase", margin: 0 }}>{QUICKYEAR_SEASON_EMOJI[quickYearSeason]} {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</h3>
+                <div style={{ color: "#94a3b8", fontSize: 10 }}>Turn {currentTurn} / {QUICKYEAR_TOTAL_TURNS}</div>
+              </div>
+              {trend && (
+                <div style={{ marginTop: 6, padding: "6px 8px", borderRadius: 8, background: trendClaimed ? "rgba(100,116,139,0.1)" : `${trendColor}15`, border: `1px solid ${trendClaimed ? "#475569" : trendColor}60`, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 9, fontWeight: 800, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1 }}>🎵 Microtrend</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: trendClaimed ? "#6b7280" : trendColor, textDecoration: trendClaimed ? "line-through" : "none" }}>{trendLabel}</span>
+                  {trendClaimed
+                    ? <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic" }}>claimed by {trendClaimer}</span>
+                    : <span style={{ fontSize: 9, color: "#86efac", fontWeight: 600 }}>+1 🔥 to first</span>}
+                </div>
+              )}
             </div>;
           })() : <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>}
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
@@ -14412,6 +14519,9 @@ export default function Headliners() {
               })()}
               {/* v155/v166: Stage-open progress panel — shown for current player when in "trends" mode. */}
               {stageOpenMode === "trends" && p.id === currentPlayerId && (() => {
+                // v199.29: Stage Progress HUD removed in Quick Play (redundant — stages open
+                // via Festival Principles now, not progress-counting). Classic mode retains it.
+                if (gameMode === "quickYear") return null;
                 const stages = (playerData[p.id]?.stages || []).length;
                 const credits = playerData[p.id]?.stageOpenCredits || 0;
                 const progress = playerData[p.id]?.stageProgress || 0;
@@ -14536,53 +14646,8 @@ export default function Headliners() {
                 </div>
               </div>
             )}
-            {/* v199.25: Festival Principles panel. Shows the current player's 3 principles
-                (private — only your own, since principles are hidden from opponents). Each
-                row shows the principle's name, requirements, and current progress. Completed
-                principles get a highlight + prompt; used ones are struck through. */}
-            {gameMode === "quickYear" && (playerPrinciples[currentPlayerId] || []).length > 0 && (
-              <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "linear-gradient(180deg, rgba(134,239,172,0.08) 0%, rgba(96,165,250,0.06) 100%)", border: "1.5px solid rgba(134,239,172,0.4)" }}>
-                <div style={{ color: "#86efac", fontWeight: 800, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center" }}>📜 Your Festival Principles</div>
-                {(playerPrinciples[currentPlayerId] || []).map((pr, i) => {
-                  const am = currentPD?.amenities || {};
-                  const complete = isPrincipleComplete(pr, currentPD);
-                  const stageCount = (currentPD?.stages || []).length;
-                  const atCap = stageCount >= QUICKYEAR_MAX_STAGES;
-                  // Progress breakdown — show current/needed per req
-                  const progressBits = Object.entries(pr.reqs).map(([type, needed]) => {
-                    const have = am[type] || 0;
-                    const met = have >= needed;
-                    return (
-                      <span key={type} style={{ color: met ? "#86efac" : "#94a3b8", marginRight: 6 }}>
-                        {AMENITY_ICONS?.[type] || ""} {Math.min(have, needed)}/{needed}
-                      </span>
-                    );
-                  });
-                  const bgColor = pr.used ? "rgba(100,116,139,0.15)" : complete ? "rgba(134,239,172,0.15)" : "rgba(15,14,26,0.5)";
-                  const borderColor = pr.used ? "#475569" : complete ? "#86efac" : "#2a2a4a";
-                  return (
-                    <div key={pr.id} style={{ padding: 6, borderRadius: 6, marginBottom: i < (playerPrinciples[currentPlayerId] || []).length - 1 ? 5 : 0, background: bgColor, border: `1px solid ${borderColor}`, opacity: pr.used ? 0.5 : 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ fontSize: 12 }}>{pr.emoji}</span>
-                          <span style={{ color: pr.used ? "#64748b" : "#e2e8f0", fontWeight: 700, fontSize: 11, textDecoration: pr.used ? "line-through" : "none" }}>{pr.name}</span>
-                        </div>
-                        {pr.used
-                          ? <span style={{ fontSize: 9, color: "#64748b", fontStyle: "italic" }}>spent</span>
-                          : complete
-                            ? <span style={{ fontSize: 9, color: atCap ? "#fdba74" : "#86efac", fontWeight: 700 }}>{atCap ? `+${UNUSED_PRINCIPLE_BONUS} 🎟️ at end` : "READY"}</span>
-                            : null
-                        }
-                      </div>
-                      <div style={{ fontSize: 9, color: "#94a3b8", marginLeft: 16 }}>{progressBits}</div>
-                    </div>
-                  );
-                })}
-                <div style={{ fontSize: 9, color: "#86efac", fontStyle: "italic", marginTop: 6, textAlign: "center", opacity: 0.75 }}>
-                  Complete a principle → spend to open a stage (max {QUICKYEAR_MAX_STAGES}). Unused completed = +{UNUSED_PRINCIPLE_BONUS} 🎟️ each.
-                </div>
-              </div>
-            )}
+            {/* v199.29: Festival Principles sidebar panel removed — principles now show
+                in the player's hand (as white-backed cards alongside artist cards). */}
             {/* v199.9: Quick Play season-scoring panel with PROJECTED mid-season total.
                 Running total (pd.tickets) only reflects season bonuses that have already
                 been applied (previous seasons' close). Mid-season, a player might have built
@@ -15087,20 +15152,36 @@ export default function Headliners() {
             </div>
           </div>
 
-          {/* Player Hand */}
-          {handCards.length > 0 && <div style={{ marginTop: 8 }}>
-            <button onClick={() => setShowHand(!showHand)} style={{ ...bs, padding: "4px 12px", fontSize: 11, marginBottom: 6 }}>
-              {showHand ? "Hide" : "Show"} Hand ({handCards.length} cards)
-            </button>
-            {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-              {handCards.map((a, i) => <ArtistCard key={i} artist={a} showCost small
-                affordable={canBookArtistAnywhere(a, currentPD)}
-                genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
-                onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
-              />)}
-            </div>}
-          </div>}
+          {/* Player Hand — v199.29: includes both artist cards AND Festival Principle cards. */}
+          {(() => {
+            const principles = (gameMode === "quickYear") ? (playerPrinciples[currentPlayerId] || []) : [];
+            const totalItems = handCards.length + principles.length;
+            if (totalItems === 0) return null;
+            return <div style={{ marginTop: 8 }}>
+              <button onClick={() => setShowHand(!showHand)} style={{ ...bs, padding: "4px 12px", fontSize: 11, marginBottom: 6 }}>
+                {showHand ? "Hide" : "Show"} Hand ({handCards.length} card{handCards.length === 1 ? "" : "s"}{principles.length > 0 ? ` + ${principles.length} principle${principles.length === 1 ? "" : "s"}` : ""})
+              </button>
+              {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
+                {handCards.map((a, i) => <ArtistCard key={`a-${i}`} artist={a} showCost small
+                  affordable={canBookArtistAnywhere(a, currentPD)}
+                  genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                  disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
+                  onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
+                />)}
+                {principles.map((pr, i) => <PrincipleCard
+                  key={`p-${i}`}
+                  principle={pr}
+                  amenities={currentPD?.amenities}
+                  stageCount={(currentPD?.stages || []).length}
+                  maxStages={QUICKYEAR_MAX_STAGES}
+                  amenityIcons={AMENITY_ICONS}
+                  unusedBonus={UNUSED_PRINCIPLE_BONUS}
+                  onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
+                  small
+                />)}
+              </div>}
+            </div>;
+          })()}
 
           {/* Action bar */}
           <div style={{ ...card, width: "100%", maxWidth: 700, marginTop: 12, padding: 16, alignSelf: "center" }}>
