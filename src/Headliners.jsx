@@ -7753,7 +7753,10 @@ export default function Headliners() {
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
       // v189: councils gone. `councils` and `councilsDealt` remain in the shape (all null / empty)
       // so downstream code that reads them keeps working without touching every callsite.
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: 1, baseFame: 1, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: [], councils: [null], councilDiceGrantedThisYear: [false], councilAmenityGrantedThisYear: [false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
+      // v199.18: Quick Play starts players at 0 Fame (previously 1). Classic multi-year
+      // keeps 1 as the baseline so year-start carryover / fame-economy balance isn't disrupted.
+      const startingFame = gameModeRef.current === "quickYear" ? 0 : 1;
+      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: startingFame, baseFame: startingFame, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: [], councils: [null], councilDiceGrantedThisYear: [false], councilAmenityGrantedThisYear: [false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -12151,14 +12154,23 @@ export default function Headliners() {
           system that previously lived here. */}
       {seasonEndScoring && (() => {
         const { season, seasonScores, isGameEnd } = seasonEndScoring;
-        // Read live ticket totals from playerDataRef so the "Running total" column reflects
+        // Read live totals from playerDataRef so the "Running total" column reflects
         // this season's bonus already applied (we called setPlayerData + recalcTickets in
-        // runQuickYearSeasonEnd). Sort descending by total.
+        // runQuickYearSeasonEnd). Sort descending by ticket total.
         const livePD = playerDataRef.current || playerData;
-        const rows = [...seasonScores].map(s => ({
-          ...s,
-          total: livePD[s.pid]?.tickets || 0,
-        })).sort((a, b) => b.total - a.total);
+        const rows = [...seasonScores].map(s => {
+          const pd = livePD[s.pid] || {};
+          // v199.19: cumulative artist count — total artists currently across all stages.
+          // Since artists are added to stages but never removed, this IS the cumulative
+          // count of artists played over the game to this point.
+          const stages = pd.stageArtists || [];
+          const artistsCumulative = stages.reduce((sum, st) => sum + (Array.isArray(st) ? st.length : 0), 0);
+          return {
+            ...s,
+            total: pd.tickets || 0,
+            artistsCumulative,
+          };
+        }).sort((a, b) => b.total - a.total);
         const nextSeasonLabel = season === "autumn" ? "Winter" : season === "winter" ? "Spring" : season === "spring" ? "Summer" : null;
         return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%", padding: 24 }}>
@@ -12171,15 +12183,23 @@ export default function Headliners() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
               {rows.map((r, idx) => (
                 <div key={r.pid} style={{ padding: 12, borderRadius: 10, background: idx === 0 ? "linear-gradient(135deg, rgba(252,211,77,0.1), rgba(251,146,60,0.05))" : "rgba(15,14,26,0.6)", border: idx === 0 ? "1px solid rgba(252,211,77,0.4)" : "1px solid #2a2a4a", textAlign: "left" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 16, color: idx === 0 ? "#fcd34d" : "#c4b5fd", fontWeight: 800 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
                       <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14 }}>{r.name}{r.isAI ? " 🤖" : ""}</span>
                     </div>
-                    <div style={{ color: idx === 0 ? "#fcd34d" : "#60a5fa", fontWeight: 800, fontSize: 18 }}>🎟️ {r.total.toLocaleString()}</div>
+                    {/* v199.19: show running tickets AND running artists played side-by-side.
+                        Tickets stays as the primary (winner-colored, larger). Artists is a
+                        secondary stat players can track across seasons for narrative. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 3 }}>
+                        🎤 <span style={{ fontSize: 14 }}>{r.artistsCumulative}</span>
+                      </div>
+                      <div style={{ color: idx === 0 ? "#fcd34d" : "#60a5fa", fontWeight: 800, fontSize: 18 }}>🎟️ {r.total.toLocaleString()}</div>
+                    </div>
                   </div>
                   <div style={{ color: "#94a3b8", fontSize: 11, marginLeft: 24 }}>
-                    This season: <strong style={{ color: "#86efac" }}>+{r.bonus}</strong> ({r.campsites} 🏕️ campsite{r.campsites === 1 ? "" : "s"} + {r.artists} 🎤 artist{r.artists === 1 ? "" : "s"})
+                    This season: <strong style={{ color: "#86efac" }}>+{r.bonus} 🎟️</strong> ({r.campsites} 🏕️ campsite{r.campsites === 1 ? "" : "s"} + {r.artists} 🎤 artist{r.artists === 1 ? "" : "s"} currently on stages)
                   </div>
                 </div>
               ))}
