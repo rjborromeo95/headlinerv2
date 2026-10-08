@@ -8763,6 +8763,24 @@ export default function Headliners() {
         if (resolution && resolution.type === "uncontested") {
           // v179: +2 Fame for uncontested tempt win (fires at resolution, before book/hand branch)
           grantUncontestedTemptBonus(currentPlayerId);
+          // v199.16 bugfix: fire the Hotline dispatcher BEFORE the book-decision runs.
+          // Same bug as the human "Let's Go!" path — this AI tempt resolution never ran
+          // the agent effect, so AI Hamish players never got their amenity, AI Fiona
+          // players never drew their consolation cards, etc. Mirror checkNextTempt's logic.
+          if (gameModeRef.current === "quickYear") {
+            const agentId = resolution.agentId || hotlineAgentsRef.current[resolution.pid]?.id;
+            if (agentId) {
+              applyHotlineAgentEffect(resolution.pid, "win", {
+                artist: resolution.artist,
+                agentId,
+                wasUncontested: true,
+                contestOpponent: null,
+                neighborLeft: resolution.leftNeighbor || null,
+                neighborRight: resolution.rightNeighbor || null,
+              });
+            }
+            checkSeasonObjective("tempt_success", resolution.pid);
+          }
           // v194: tempt-to-stage now requires genre-match (see canTemptDirectToStage).
           // Amenity costs no longer create a direct-to-stage path via tempt — if the tempter
           // can't satisfy the genre-subset rule, the artist goes to hand and must be played
@@ -8782,6 +8800,16 @@ export default function Headliners() {
             const cur = temptPlacementsRef.current || {};
             temptPlacementsRef.current = { ...cur, [currentPlayerId]: (cur[currentPlayerId] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) };
           };
+          // v199.16: honor _consumedByAgent flag — Hamish discards the artist and opens
+          // the amenity picker; skip the normal book-or-hand flow entirely.
+          if (artist?._consumedByAgent) {
+            const newPool = [...artistPool]; const idx = newPool.findIndex(a => a.name === artist.name);
+            if (idx >= 0) newPool.splice(idx, 1); setArtistPool(newPool);
+            if (isTempt) popTemptRefTurnStart(); else exhaustAgent(currentPlayerId);
+            addLog("💫 Tempt", `${currentPlayer?.festivalName} resolved tempt — consumed by ${artist._consumedByAgent.replace(/_/g, " ")}`);
+            scheduleNext(400);
+            return;
+          }
           if (bookable.length > 0) {
             // Prefer a genre-match headliner stage when available (fires genreMatchEffect).
             const genreStage = bookable.find(si => canBookHeadlinerViaGenre(artist, pd2, si));
@@ -13248,6 +13276,39 @@ export default function Headliners() {
             const resolution = resolvePoolAgents(currentPlayerId);
             if (resolution && resolution.type === "uncontested") {
               grantUncontestedTemptBonus(resolution.pid);
+              // v199.16 bugfix: fire the Hotline dispatcher BEFORE the book-decision modal
+              // opens. Previously this path (the human "Let's Go!" at turn start) opened
+              // the modal without ever running the agent effect — so Hamish's amenity
+              // picker never fired, Fiona's +3 draws never fired, Patty's flag never set,
+              // etc. The checkNextTempt path has done this since v199.5; the turn-start
+              // path was missed. Mirror its logic here and also honor the _consumedByAgent
+              // short-circuit so Hamish can skip the book-decision cleanly.
+              if (gameModeRef.current === "quickYear") {
+                const agentId = resolution.agentId || hotlineAgentsRef.current[resolution.pid]?.id;
+                if (agentId) {
+                  applyHotlineAgentEffect(resolution.pid, "win", {
+                    artist: resolution.artist,
+                    agentId,
+                    wasUncontested: true,
+                    contestOpponent: null,
+                    neighborLeft: resolution.leftNeighbor || null,
+                    neighborRight: resolution.rightNeighbor || null,
+                  });
+                }
+                checkSeasonObjective("tempt_success", resolution.pid);
+              }
+              // If an agent consumed the artist (Hamish discards + opens amenity picker),
+              // skip the book-decision modal — pop the placement, remove from pool, done.
+              if (resolution.artist?._consumedByAgent) {
+                setTemptPlacements(prev => ({ ...prev, [resolution.pid]: (prev[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === resolution.artist.name)) }));
+                const curTempts = temptPlacementsRef.current || {};
+                temptPlacementsRef.current = { ...curTempts, [resolution.pid]: (curTempts[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === resolution.artist.name)) };
+                const newPool = [...(artistPool || [])];
+                const poolIdx2 = newPool.findIndex(a => a.name === resolution.artist.name);
+                if (poolIdx2 >= 0) { newPool.splice(poolIdx2, 1); setArtistPool(newPool); }
+                addLog("💫 Tempt", `${players.find(p => p.id === resolution.pid)?.festivalName || "?"} resolved tempt — consumed by ${resolution.artist._consumedByAgent.replace(/_/g, " ")}`);
+                return;
+              }
               setPendingAgentArtist({ pid: resolution.pid, artist: resolution.artist });
             } else if (resolution && resolution.type === "contested") {
               const contest = resolveAgentContestRoll(resolution.contestants, resolution.artist, resolution.poolIdx);
