@@ -3750,6 +3750,12 @@ export default function Headliners() {
               const newHand = (cur.hand || []).filter(a => a.name !== artist.name);
               return { ...p, [pid]: { ...cur, hand: newHand } };
             });
+            // v199.11 bugfix: mark the artist as consumed-by-agent. The uncontested + contested
+            // win paths check this flag after dispatcher returns and skip the normal
+            // play-or-hand book decision modal. Without this, the player saw the book
+            // decision on top of (or instead of) Hamish's amenity picker, and could end
+            // up with the artist on a stage AND in the discard pile at once.
+            artist._consumedByAgent = "hamish_hammer";
           }
           setPendingEffect({ type: "placeAmenity", artistName: `Hamish the Hammer (${pName})`, placeCount: 1 });
           setPendingEffectPid(pid);
@@ -3940,21 +3946,34 @@ export default function Headliners() {
     const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
     setSeasonEndScoring(null);
     if (isGameEnd) {
-      // v198.4: populate allTickets for the game-over leaderboard. Classic mode fills
-      // this via beginRoundEnd for each year, but Quick Play skips that whole flow.
-      // Compute directly from playerDataRef (the authoritative live state) and commit
-      // both setters SIDE-BY-SIDE — the previous version nested setAllTickets inside a
-      // setPlayerData updater, which React doesn't reliably run with the computed data,
-      // so the leaderboard ended up with all zeros.
+      // v199.13 bugfix: previously this read playerDataRef at modal-close time. In some
+      // games the ref was stale (or the season-end bonus setPlayerData hadn't flushed in
+      // time), so computeTicketsForPlayer returned 0 for everyone — the game-over
+      // leaderboard showed 0 tickets / 0 fame across the board.
+      //
+      // Fix: use seasonEndScoring.seasonScores (computed synchronously in runQuickYearSeasonEnd
+      // from the authoritative pre-bonus pd) and SIMULATE applying the summer bonus here
+      // directly. This mirrors what the setPlayerData above should have done but doesn't
+      // depend on React having flushed anything in time. The player's "live" playerData
+      // STILL gets updated via setPlayerData so the UI reads correct values on game-over.
       const currentPD = playerDataRef.current || playerData || {};
+      const bonusByPid = {};
+      (seasonEndScoring.seasonScores || []).forEach(s => { bonusByPid[s.pid] = s.bonus || 0; });
       const fresh = {};
       const nextAllTickets = { ...allTickets };
       players.forEach(p => {
         const pd = currentPD[p.id];
-        if (!pd) return;
-        // Pass year 1 explicitly — in Quick Play, year is always 1. Pass pid so
-        // infrastructure-reward hooks (camp_1 Big Base etc.) apply correctly.
-        const computed = computeTicketsForPlayer(pd, 1, p.id);
+        if (!pd) {
+          // Defensive: if a player has no pd at all, still show a 0 row rather than nothing.
+          if (!nextAllTickets[p.id]) nextAllTickets[p.id] = {};
+          nextAllTickets[p.id][1] = { raw: 0, fame: 0, fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0, starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0 };
+          return;
+        }
+        // Simulate the summer bonus application for this computation ONLY — the real
+        // setPlayerData in runQuickYearSeasonEnd will still land, we just can't trust it
+        // to be visible to playerDataRef right now.
+        const pdWithBonus = { ...pd, bonusTickets: (pd.bonusTickets || 0) + (bonusByPid[p.id] || 0) };
+        const computed = computeTicketsForPlayer(pdWithBonus, 1, p.id);
         fresh[p.id] = computed;
         if (!nextAllTickets[p.id]) nextAllTickets[p.id] = {};
         nextAllTickets[p.id][1] = {
@@ -4623,6 +4642,22 @@ export default function Headliners() {
         const winner = players.find(p => p.id === resolution.pid);
         const winPd = playerDataRef.current?.[resolution.pid] || playerData[resolution.pid] || {};
         const artist = resolution.artist;
+        // v199.11 bugfix: if an agent effect consumed the artist (currently Hamish the Hammer,
+        // which discards the tempt for an amenity), skip the normal play-or-hand book
+        // decision. The artist is already in the discard pile and the agent's follow-up
+        // (amenity picker) is pending. Still pop the placement + remove from pool so the
+        // tempt is cleanly closed.
+        if (artist?._consumedByAgent) {
+          setTemptPlacements(prev => ({ ...prev, [resolution.pid]: (prev[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) }));
+          const curTempts = temptPlacementsRef.current || {};
+          temptPlacementsRef.current = { ...curTempts, [resolution.pid]: (curTempts[resolution.pid] || []).filter(p => !(p.type === "pool" && p.artistName === artist.name)) };
+          const newPool = [...(artistPool || [])];
+          const poolIdx2 = newPool.findIndex(a => a.name === artist.name);
+          if (poolIdx2 >= 0) { newPool.splice(poolIdx2, 1); setArtistPool(newPool); }
+          addLog("💫 Tempt", `${winner?.festivalName || "?"} resolved tempt — consumed by ${artist._consumedByAgent.replace(/_/g, " ")}`);
+          checkNextTempt(resolution.pid);
+          return;
+        }
         if (winner?.isAI) {
           // v196.1 bugfix: this AI branch was using canBookArtistOnStage/canBookHeadlinerViaGenre
           // (the LOOSE rule that permits headliner placement when existing artists share ≥1
@@ -5096,6 +5131,51 @@ export default function Headliners() {
         });
         return next;
       });
+    }
+    // v199.11 bugfix: Hamish the Hammer (and any future "consume the artist") agent effects
+    // need to intercept the book-decision. Normally the dispatcher runs at the END of
+    // commitAgentContest, AFTER the artist is already on a stage or in hand — so Hamish's
+    // "discard the artist, gain amenity" would conflict (artist both on stage AND in discard).
+    // Fix: pre-run the dispatcher for the WINNER only when their agent would consume the
+    // artist. The dispatcher sets artist._consumedByAgent + pendingEffect; we then skip
+    // the book-decision entirely and let the amenity picker handle the rest.
+    if (gameModeRef.current === "quickYear") {
+      const winnerContestant = contestantData.find(c => c.pid === winnerId);
+      const winnerAgentId = winnerContestant?.agentId || hotlineAgentsRef.current[winnerId]?.id;
+      // Agents that fully consume the artist on win (currently only Hamish — future-proofed
+      // via a lookup table so new consuming agents just need to be listed here).
+      const consumingAgents = new Set(["hamish_hammer"]);
+      if (winnerAgentId && consumingAgents.has(winnerAgentId)) {
+        applyHotlineAgentEffect(winnerId, "win", {
+          artist,
+          agentId: winnerAgentId,
+          contestOpponent: null,
+          wasUncontested: false,
+          neighborLeft: winnerContestant.leftNeighbor || null,
+          neighborRight: winnerContestant.rightNeighbor || null,
+        });
+        // Fire losers' effects + tempt_success objective trigger now too (otherwise they
+        // never run — we're about to return before the normal end-of-function dispatcher loop).
+        contestantData.forEach(c => {
+          if (c.pid === winnerId) return; // already fired above
+          const lossAgentId = c.agentId || hotlineAgentsRef.current[c.pid]?.id;
+          if (!lossAgentId) return;
+          applyHotlineAgentEffect(c.pid, "loss", {
+            artist,
+            agentId: lossAgentId,
+            contestOpponent: winnerId,
+            wasUncontested: false,
+            neighborLeft: c.leftNeighbor || null,
+            neighborRight: c.rightNeighbor || null,
+          });
+        });
+        checkSeasonObjective("tempt_success", winnerId);
+        addLog("💫 Tempt Contest", `${players.find(p => p.id === winnerId)?.festivalName} won ${artist.name} — consumed by their agent`);
+        bumpYearlyStat(winnerId, "temptsWon");
+        bumpYearEvent(winnerId, "contestWinsThisYear");
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
     }
     // v131: under tempt mode, also verify the winner can actually PLAY the artist right now.
     // If not (fame or amenities short, no genre-match slot), the artist goes to hand.
@@ -9096,6 +9176,15 @@ export default function Headliners() {
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
     setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
     sfx.placeAmenity();
+    // v199.11 bug fix: in Quick Play with Fame-tier scaling, don't end the turn here if
+    // the player still has picks left to make. The caller (handleDiePick / sec_1 branch
+    // / field-picker / sec1 modal confirm) decrements qyPicksLeftRef AFTER this returns
+    // and ends the turn itself when the counter hits 0. qyPicksLeftRef > 1 at this point
+    // means "there's at least one more pick after this one" → keep the action open.
+    if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
+      // Deferred: handleDiePick's post-call logic will decrement + decide.
+      return;
+    }
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
     setTurnAction(null);
     setActionTaken(true);
@@ -9152,16 +9241,12 @@ export default function Headliners() {
         placeAmenityCounter(chosenType, 0);
         setSelectedDie(null);
         setPickingFieldFor(null);
-        // v199.10: Quick Play Fame-tier scaling applies here too (sec_1 AI branch).
+        // v199.11: Quick Play Fame-tier scaling applies here too (sec_1 AI branch).
+        // Just decrement; placeAmenityCounter handles end-of-turn.
         if (gameModeRef.current === "quickYear") {
-          const left = qyPicksLeftRef.current - 1;
+          const left = Math.max(0, qyPicksLeftRef.current - 1);
           setQyPicksLeft(left);
           qyPicksLeftRef.current = left;
-          if (left <= 0) {
-            setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-            setTurnAction(null);
-            setActionTaken(true);
-          }
         }
         return;
       }
@@ -9183,17 +9268,13 @@ export default function Headliners() {
     placeAmenityCounter(dv, 0);
     setSelectedDie(null);
     setPickingFieldFor(null);
-    // v199.10: Quick Play Fame-tier scaling — decrement picks counter. When it hits 0,
-    // the action ends (turn consumed). Until then, the player can keep clicking dice.
+    // v199.11: Quick Play Fame-tier scaling — just decrement the counter here;
+    // placeAmenityCounter itself handles ending the turn when the counter hits its
+    // last pick (qyPicksLeftRef <= 1 when it runs).
     if (gameModeRef.current === "quickYear") {
-      const left = qyPicksLeftRef.current - 1;
+      const left = Math.max(0, qyPicksLeftRef.current - 1);
       setQyPicksLeft(left);
       qyPicksLeftRef.current = left;
-      if (left <= 0) {
-        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-        setTurnAction(null);
-        setActionTaken(true);
-      }
     }
   };
   // v166: handleChoiceSelect removed — compound faces no longer exist.
@@ -9207,16 +9288,12 @@ export default function Headliners() {
     placeAmenityCounter(amenityType, fieldIdx);
     setSelectedDie(null);
     setPickingFieldFor(null);
-    // v199.10: Quick Play Fame-tier scaling (field-picker path).
+    // v199.11: Quick Play Fame-tier scaling (field-picker path).
+    // Just decrement; placeAmenityCounter handles end-of-turn.
     if (gameModeRef.current === "quickYear") {
-      const left = qyPicksLeftRef.current - 1;
+      const left = Math.max(0, qyPicksLeftRef.current - 1);
       setQyPicksLeft(left);
       qyPicksLeftRef.current = left;
-      if (left <= 0) {
-        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-        setTurnAction(null);
-        setActionTaken(true);
-      }
     }
   };
   const cancelFieldPlacement = () => {
@@ -9406,8 +9483,11 @@ export default function Headliners() {
     finishDraw2(picks);
   };
   const draw2PickFromDeck = () => {
+    // v199.11: Quick Play draws 1 card per pick (Fame scaling gives you N clicks total,
+    // each one is 1 card from pool OR deck freely). Classic retains the Fame-tiered
+    // multi-draw where one click yields 2-3 artists.
     const pd = playerData[currentPlayerId] || {};
-    const drawCount = getDeckDrawCount(pd);
+    const drawCount = gameModeRef.current === "quickYear" ? 1 : getDeckDrawCount(pd);
     const drawn = drawFromDeck(drawCount);
     if (drawn.length === 0) { addLog("Deck", "No artists left!"); return; }
     // Drawing from deck = no undo (hidden information revealed) and no put back
@@ -9424,6 +9504,19 @@ export default function Headliners() {
     // Council reward: drawArtists councils give +N additional artists from deck
     applyDrawArtistsBonus(currentPlayerId);
     setDraw2Picks([]); setDraw2DeckCard(null);
+    // v199.11: Quick Play Fame-scaling — if the player has more picks remaining, keep
+    // the action open (don't end turn). The pool/deck UI stays live. Each subsequent
+    // click decrements the counter until it hits 0, then the turn ends.
+    if (gameModeRef.current === "quickYear") {
+      const left = Math.max(0, qyPicksLeftRef.current - 1);
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+      if (left > 0) {
+        // Stay open — allow another pool/deck pick.
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
+    }
     setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
     setTimeout(() => recalcTickets(), 50);
   };
@@ -11736,6 +11829,12 @@ export default function Headliners() {
           setSelectedDie(null);
           setPickingFieldFor(null);
           setSec1Choice(null);
+          // v199.11: Quick Play Fame-tier scaling (sec_1 modal confirm path).
+          if (gameModeRef.current === "quickYear") {
+            const left = Math.max(0, qyPicksLeftRef.current - 1);
+            setQyPicksLeft(left);
+            qyPicksLeftRef.current = left;
+          }
         };
         return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ ...card, textAlign: "center", maxWidth: 500, width: "100%" }}>
@@ -14386,7 +14485,9 @@ export default function Headliners() {
             {/* Unified Artist Action Panel */}
             {!actionTaken && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "draw2") && !selectedArtist && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#ec4899", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Artist Action</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Book from hand, take 1 from pool, or draw {getDeckDrawCount(currentPD)} from deck ({currentPD?.fame >= 4 ? "Fame 4-5" : "Fame 1-3"})</p>
+              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{gameMode === "quickYear"
+                ? `Book from hand, OR take artists from pool/deck (1 card each pick). Pool/deck picks: ${qyPicksLeft} left`
+                : `Book from hand, take 1 from pool, or draw ${getDeckDrawCount(currentPD)} from deck (${currentPD?.fame >= 4 ? "Fame 4-5" : "Fame 1-3"})`}</p>
               
               {/* Hand */}
               {handCards.length > 0 && <div style={{ marginBottom: 12 }}>
@@ -14415,7 +14516,7 @@ export default function Headliners() {
 
               {/* Pool + Deck row — v196: pool = 1 card, deck = 2 or 3 based on Fame */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pool (1 card) or Deck ({getDeckDrawCount(currentPD)} cards)</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Pool (1 card) or Deck (1 card) — pick ${qyPicksLeft} more` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
@@ -14431,7 +14532,7 @@ export default function Headliners() {
                     </div>;
                   })}
                   <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
-                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +{getDeckDrawCount(currentPD)}</span>
+                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +{gameMode === "quickYear" ? 1 : getDeckDrawCount(currentPD)}</span>
                   </button>
                 </div>
               </div>
@@ -15251,7 +15352,25 @@ export default function Headliners() {
     // Following (default): highest cumulative tickets across all years.
     // Consistency: most year-leads. Ties → cumulative.
     // Talk of the Town: highest single-year peak. Ties → second-best year, then cumulative.
+    // v199.13: in Quick Play, read tickets/fame directly from playerData (the authoritative
+    // live state) rather than from allTickets. Previous flow depended on continueFromSeasonEnd
+    // having successfully populated allTickets, which was flaky — some games the leaderboard
+    // showed 0 for everyone. Direct read from playerData.tickets and playerData.baseFame
+    // eliminates that race condition entirely.
     const perPlayer = players.map(p => {
+      if (gameMode === "quickYear") {
+        const pd = playerData[p.id] || playerDataRef.current?.[p.id] || {};
+        // computeTicketsForPlayer is called by recalcTickets throughout the game — pd.tickets
+        // should be current. If somehow it isn't, recompute here as a defensive measure.
+        let total = pd.tickets;
+        if (total == null || total === 0) {
+          const recomputed = computeTicketsForPlayer(pd, 1, p.id);
+          total = recomputed?.tickets || 0;
+        }
+        const fame = pd.fame != null ? pd.fame : (pd.baseFame || 0);
+        const byYear = { 1: { raw: total, fame } };
+        return { player: p, total, peak: total, yearTickets: [total, 0, 0, 0], byYear };
+      }
       const byYear = allTickets[p.id] || {};
       const yearTickets = [1,2,3,4].map(y => byYear[y]?.raw || 0);
       const total = yearTickets.reduce((s, t) => s + t, 0);
