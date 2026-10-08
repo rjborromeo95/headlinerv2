@@ -2287,8 +2287,10 @@ export default function Headliners() {
   // v199.21: Legendary Artists / Festival Contracts state.
   // gameLegendaryArtists: 3 artists drawn from LEGENDARY_ARTIST_POOL at game start,
   //   displayed publicly for the whole game.
-  // legendaryTokens: { artistId: { autumn: pid|null, winter: pid|null, spring: pid|null } }
-  //   Null = unclaimed this season. First player to meet the season's req claims the slot.
+  // v199.22: legendaryTokens: { artistId: { autumn: [pid, pid, ...], winter: [...], spring: [...] } }
+  //   Each season is an ARRAY of pids. Every player who meets the season's req earns their own
+  //   token (no first-come gating). A player can appear at most once per season per artist.
+  //   Max tokens per player per artist = 3 (one per qualifying season).
   // legendaryResolution: null | { results: [{ artist, winner, tokens, outcome, rolls? }] }
   //   Set at Summer close, drives the Legendary Lineup resolution modal shown before game-over.
   const [gameLegendaryArtists, setGameLegendaryArtists] = useState([]);
@@ -3980,9 +3982,10 @@ export default function Headliners() {
     const counters = seasonCountersRef.current[pid] || {};
 
     legendaries.forEach(la => {
-      // Skip if this season's token is already claimed (first-to-complete only).
-      const existing = (legendaryTokensRef.current[la.id] || {})[season];
-      if (existing != null) return;
+      // v199.22: multiple players can claim each season's token. Skip only if THIS player
+      // has already claimed it (no self-double-dip). Other players claiming it doesn't block us.
+      const existing = (legendaryTokensRef.current[la.id] || {})[season] || [];
+      if (existing.includes(pid)) return;
 
       const req = la.requirements[season];
       if (!req) return;
@@ -4032,9 +4035,11 @@ export default function Headliners() {
       }
 
       if (met) {
-        // Award token for this (artist, season) to this player.
+        // v199.22: push THIS player's pid onto the season's claimer array (every player can claim).
         const nextTokens = { ...(legendaryTokensRef.current || {}) };
-        nextTokens[la.id] = { ...(nextTokens[la.id] || {}), [season]: pid };
+        const curArtist = { ...(nextTokens[la.id] || { autumn: [], winter: [], spring: [] }) };
+        curArtist[season] = [...(curArtist[season] || []), pid];
+        nextTokens[la.id] = curArtist;
         setLegendaryTokens(nextTokens);
         legendaryTokensRef.current = nextTokens;
         const pName = players.find(p => p.id === pid)?.festivalName || "?";
@@ -4125,11 +4130,15 @@ export default function Headliners() {
       const livePD = playerDataRef.current || playerData;
       legendaryResults = legendaries.map(la => {
         const seasons = tokens[la.id] || {};
+        // v199.22: each season's claimer entry is now an ARRAY of pids. Walk every entry
+        // in each array to tally per-player tokens.
         const tokenCounts = {};
-        Object.values(seasons).forEach(pid => {
-          if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
+        ["autumn", "winter", "spring"].forEach(sKey => {
+          (seasons[sKey] || []).forEach(pid => {
+            if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
+          });
         });
-        const perSeason = { autumn: seasons.autumn ?? null, winter: seasons.winter ?? null, spring: seasons.spring ?? null };
+        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [] };
         const maxCount = Math.max(0, ...Object.values(tokenCounts));
         if (maxCount === 0) {
           return { artist: la, winner: null, outcome: "no_tokens", tokenCounts, perSeason };
@@ -8455,7 +8464,9 @@ export default function Headliners() {
       setGameLegendaryArtists(chosenLegendaries);
       gameLegendaryArtistsRef.current = chosenLegendaries;
       const initialTokens = {};
-      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: null, winter: null, spring: null }; });
+      // v199.22: each season's slot is now an ARRAY of pids who claimed, not a single pid.
+      // Every player who meets the req earns their own token — no first-to-claim gating.
+      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: [], winter: [], spring: [] }; });
       setLegendaryTokens(initialTokens);
       legendaryTokensRef.current = initialTokens;
       setLegendaryResolution(null);
@@ -14037,45 +14048,54 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
-            {/* v199.21: Legendary Lineup panel. Shows the 3 legendary artists for this
-                game, their 3 season requirements, and who's claimed each season's token.
-                Current season's row is highlighted; completed-but-unclaimed rows show "open",
-                claimed rows show the claimer's name struck through. */}
+            {/* v199.21: Legendary Lineup panel. v199.22: tokens are per-player (not first-come),
+                so each requirement row shows a colored dot for every player who's claimed it.
+                Current season's row is highlighted. Gold styling throughout to signal the
+                "legendary" theme. */}
             {gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
-              <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "linear-gradient(135deg, rgba(252,211,77,0.08), rgba(168,85,247,0.05))", border: "1px solid rgba(252,211,77,0.3)" }}>
-                <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎸 Legendary Lineup</div>
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "linear-gradient(180deg, rgba(252,211,77,0.22) 0%, rgba(234,179,8,0.12) 60%, rgba(168,85,247,0.08) 100%)", border: "2px solid rgba(252,211,77,0.65)", boxShadow: "0 0 16px rgba(252,211,77,0.18), inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+                <div style={{ color: "#fde68a", fontWeight: 800, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center", textShadow: "0 0 8px rgba(252,211,77,0.4)" }}>🎸 Legendary Lineup</div>
                 {gameLegendaryArtists.map((la, i) => {
                   const tokens = legendaryTokens[la.id] || {};
+                  // Tally per-player tokens across all qualifying season arrays.
                   const tokenCounts = {};
-                  Object.values(tokens).forEach(pid => { if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1; });
+                  ["autumn", "winter", "spring"].forEach(sKey => {
+                    (tokens[sKey] || []).forEach(pid => { if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1; });
+                  });
                   return (
-                    <div key={la.id} style={{ padding: 6, borderRadius: 6, marginBottom: i < gameLegendaryArtists.length - 1 ? 5 : 0, background: "rgba(15,14,26,0.5)", border: "1px solid #2a2a4a" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                    <div key={la.id} style={{ padding: 7, borderRadius: 7, marginBottom: i < gameLegendaryArtists.length - 1 ? 6 : 0, background: "rgba(15,14,26,0.65)", border: "1px solid rgba(252,211,77,0.3)" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ fontSize: 14 }}>{la.emoji}</span>
-                          <span style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11 }}>{la.name}</span>
+                          <span style={{ color: "#fde68a", fontWeight: 800, fontSize: 11 }}>{la.name}</span>
                           <span style={{ color: "#94a3b8", fontSize: 9 }}>· {la.genre} · {la.tickets}🎟️</span>
                         </div>
                       </div>
                       {QUICKYEAR_SEASONS.filter(s => s !== "summer").map(sKey => {
                         const req = la.requirements[sKey];
-                        const claimerPid = tokens[sKey];
-                        const claimer = claimerPid != null ? players.find(p => p.id === claimerPid) : null;
+                        const claimerPids = tokens[sKey] || [];
                         const isCurrent = sKey === quickYearSeason;
                         return (
-                          <div key={sKey} style={{ fontSize: 9, color: isCurrent ? "#e2e8f0" : "#64748b", marginLeft: 20, display: "flex", justifyContent: "space-between", padding: "1px 0" }}>
-                            <span style={{ opacity: claimer ? 0.5 : 1 }}>
-                              {QUICKYEAR_SEASON_EMOJI[sKey]} <span style={{ textDecoration: claimer ? "line-through" : "none" }}>{req.label}</span>
+                          <div key={sKey} style={{ fontSize: 9, color: isCurrent ? "#e2e8f0" : "#64748b", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6 }}>
+                            <span style={{ flex: 1 }}>
+                              {QUICKYEAR_SEASON_EMOJI[sKey]} {req.label}
                             </span>
-                            <span style={{ color: claimer ? "#86efac" : "#64748b", fontWeight: 700, fontStyle: claimer ? "normal" : "italic", marginLeft: 8 }}>
-                              {claimer ? (claimer.festivalName.slice(0, 10) + (claimer.isAI ? " 🤖" : "")) : (isCurrent ? "open" : "—")}
-                            </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 2, minHeight: 10 }}>
+                              {claimerPids.length === 0
+                                ? <span style={{ color: isCurrent ? "#64748b" : "#334155", fontSize: 9, fontStyle: "italic" }}>{isCurrent ? "open" : "—"}</span>
+                                : claimerPids.map((pid, j) => {
+                                    const pl = players.find(p => p.id === pid);
+                                    if (!pl) return null;
+                                    return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(255,255,255,0.3)", boxShadow: "0 0 3px rgba(0,0,0,0.5)", display: "inline-block" }} />;
+                                  })
+                              }
+                            </div>
                           </div>
                         );
                       })}
                       {Object.keys(tokenCounts).length > 0 && (
-                        <div style={{ fontSize: 9, color: "#c4b5fd", marginLeft: 20, marginTop: 2, fontStyle: "italic" }}>
-                          Tokens: {Object.entries(tokenCounts).map(([pid, c]) => {
+                        <div style={{ fontSize: 9, color: "#fde68a", marginLeft: 18, marginTop: 3, fontStyle: "italic", opacity: 0.9 }}>
+                          Tokens: {Object.entries(tokenCounts).sort((a, b) => b[1] - a[1]).map(([pid, c]) => {
                             const n = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
                             return `${n.slice(0, 8)}: ${c}`;
                           }).join(" · ")}
@@ -14084,7 +14104,7 @@ export default function Headliners() {
                     </div>
                   );
                 })}
-                <div style={{ fontSize: 9, color: "#94a3b8", fontStyle: "italic", marginTop: 6, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#fde68a", fontStyle: "italic", marginTop: 7, textAlign: "center", opacity: 0.75 }}>
                   Summer close: majority tokens wins. Ties → contest die (modifier: tickets).
                 </div>
               </div>
