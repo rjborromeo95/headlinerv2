@@ -3954,7 +3954,13 @@ export default function Headliners() {
             const openStages = (pd.stageArtists || []).map((s, i) => (Array.isArray(s) && s.length < 3) ? i : -1).filter(i => i >= 0);
             const stageIdx = openStages.find(i => canBookArtistOnStage(pick, pd, i));
             if (stageIdx != null) {
-              bookArtistToStage(pid, pick, stageIdx);
+              // v199.30 bugfix: correct arg order is (artist, stageIdx, pid). Also pop
+              // from hand (bookArtistToStage via a direct call doesn't do this itself).
+              setPlayerData(p => {
+                const cur = p[pid] || {};
+                return { ...p, [pid]: { ...cur, hand: (cur.hand || []).filter(a => a.name !== pick.name) } };
+              });
+              bookArtistToStage(pick, stageIdx, pid);
               addLog("🧩 Problem-Solver Parv", `${pName} 🤖: played ${pick.name} free from hand`);
               showFloatingBonus(`🧩 ${pick.name}!`, "#fcd34d");
             } else {
@@ -12904,7 +12910,17 @@ export default function Headliners() {
             setParvPicker(null);
             return;
           }
-          bookArtistToStage(pid, artist, stageIdx);
+          // v199.30 bugfix: correct argument order is (artist, stageIdx, pid), not
+          // (pid, artist, stageIdx). The wrong order was passing numbers/objects to the
+          // wrong params and bookArtistToStage silently failed, hanging the game.
+          // Also need to remove the artist from hand (bookArtistToStage via hand play
+          // normally does this inline, but calling it directly like this bypasses that
+          // path — handle it here).
+          setPlayerData(p => {
+            const cur = p[pid] || {};
+            return { ...p, [pid]: { ...cur, hand: (cur.hand || []).filter(a => a.name !== artist.name) } };
+          });
+          bookArtistToStage(artist, stageIdx, pid);
           addLog("🧩 Problem-Solver Parv", `${pName}: played ${artist.name} free from hand (consolation)`);
           showFloatingBonus(`🧩 ${artist.name}!`, "#fcd34d");
           setParvPicker(null);
