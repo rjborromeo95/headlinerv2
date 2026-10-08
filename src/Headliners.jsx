@@ -4329,6 +4329,10 @@ export default function Headliners() {
           const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage ${stageCount + 1}`;
           setPlayerData(prev => {
             const cur = prev[pid] || {};
+            // v199.17: Quick Play — opening a stage no longer grants +1 Fame. The season
+            // objective system awards tickets instead (via checkSeasonObjective), so this
+            // Fame bonus is retired for Quick Play. Classic multi-year keeps it as before.
+            const grantHereForMode = grantOpeningFame && gameModeRef.current !== "quickYear";
             return {
               ...prev,
               [pid]: {
@@ -4337,12 +4341,13 @@ export default function Headliners() {
                 stageArtists: [...(cur.stageArtists || []), []],
                 stageNames: [...(cur.stageNames || []), sName],
                 stageColors: [...(cur.stageColors || []), STAGE_COLORS[stageCount % STAGE_COLORS.length]],
-                baseFame: grantOpeningFame ? Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
+                baseFame: grantHereForMode ? Math.min(FAME_MAX, (cur.baseFame || 0) + 1) : (cur.baseFame || 0),
               }
             };
           });
-          if (grantOpeningFame) logFameGain(pid, 1, `Opened new stage via "${obj.name}"`);
-          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened "${sName}"${grantOpeningFame ? " (+1 🔥 Fame for next year)" : ""}!`);
+          const grantedFameHere = grantOpeningFame && gameModeRef.current !== "quickYear";
+          if (grantedFameHere) logFameGain(pid, 1, `Opened new stage via "${obj.name}"`);
+          addLog("🎯 Objective", `${p.festivalName} completed "${obj.name}" → opened "${sName}"${grantedFameHere ? " (+1 🔥 Fame for next year)" : ""}!`);
         } else {
           // v165: dormant ticket source removed. Legacy alt-objective +10 tickets
           // when 3 stages already open — the alt-objective system is retired.
@@ -4574,17 +4579,22 @@ export default function Headliners() {
 
   // v131: undo the most recent tempt for a player — refund 1 Fame, pop the last placement.
   // Callable before the player ends their turn. Safe to no-op if there's nothing to undo.
+  // v199.17: Quick Play doesn't charge a Fame cost to tempt (it's Hotline-gated), so
+  // withdrawing a tempt doesn't refund Fame there — just pop the placement.
   const undoLastTempt = (pid) => {
     if (!temptModeRef.current) return false;
     const tempts = (temptPlacements[pid] || []);
     if (tempts.length === 0) return false;
     const removed = tempts[tempts.length - 1];
     setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(0, -1) }));
-    // No logFameGain here — undoing is a refund, not a celebration.
-    // v196: refund 2 Fame (matches new tempt cost of 2).
-    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
-    addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 2 🔥 Fame refunded`);
+    if (gameModeRef.current !== "quickYear") {
+      // No logFameGain here — undoing is a refund, not a celebration.
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
+      addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName} — 2 🔥 Fame refunded`);
+    } else {
+      addLog("💫 Tempt", `${pName} withdrew their tempt of ${removed.artistName}`);
+    }
     showFloatingBonus(`↩️ ${removed.artistName} withdrawn`, "#94a3b8");
     setTimeout(() => recalcTickets(), 30);
     return true;
@@ -4903,11 +4913,15 @@ export default function Headliners() {
       // Find the artist in the pool by name (index may have shifted)
       const poolIdx = currentPool.findIndex(a => a.name === placement.artistName);
       if (poolIdx < 0) {
-        // Artist no longer in pool — refund the full tempt cost (v196: 2 Fame) and drop.
+        // Artist no longer in pool — drop the placement. Classic refunds the 2 Fame tempt
+        // cost; Quick Play has no tempt Fame cost to refund (v199.17).
         setTemptPlacements(prev => ({ ...prev, [pid]: (prev[pid] || []).slice(1) }));
-        // No logFameGain — refunds shouldn't feel like celebrations.
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
-        addLog("💫 Tempt", `${placement.artistName} no longer available — 2 🔥 Fame refunded`);
+        if (gameModeRef.current !== "quickYear") {
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_MAX, (p[pid].baseFame || 0) + 2) } }));
+          addLog("💫 Tempt", `${placement.artistName} no longer available — 2 🔥 Fame refunded`);
+        } else {
+          addLog("💫 Tempt", `${placement.artistName} no longer available`);
+        }
         return null;
       }
       const artist = currentPool[poolIdx];
@@ -5030,15 +5044,20 @@ export default function Headliners() {
   // of resolution, before the artist is booked or sent to hand.
   const grantUncontestedTemptBonus = (pid) => {
     if (!temptModeRef.current) return;
-    setPlayerData(p => {
-      const opd = p[pid] || {};
-      return { ...p, [pid]: { ...opd, baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (opd.baseFame || 0) + 2) } };
-    });
+    // v199.17: Quick Play — uncontested tempt win no longer grants +2 Fame. Tempts are
+    // now agent-gated via Hotline (free), and the Fame economy was running too hot with
+    // this bonus in play. Classic mode retains the +2 as before.
     const name = players.find(p => p.id === pid)?.festivalName || "?";
-    logFameGain(pid, 2, "Uncontested tempt win");
-    addLog("💫 Tempt", `${name} gained +2 🔥 Fame for winning an uncontested tempt!`);
-    showFloatingBonus("+2 🔥 uncontested!", "#f97316");
-    sfx.gainFame();
+    if (gameModeRef.current !== "quickYear") {
+      setPlayerData(p => {
+        const opd = p[pid] || {};
+        return { ...p, [pid]: { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 2) } };
+      });
+      logFameGain(pid, 2, "Uncontested tempt win");
+      addLog("💫 Tempt", `${name} gained +2 🔥 Fame for winning an uncontested tempt!`);
+      showFloatingBonus("+2 🔥 uncontested!", "#f97316");
+      sfx.gainFame();
+    }
     bumpYearlyStat(pid, "temptsWon");
     // v190: `pd.fame` is a derived value (computed from baseFame in computeTicketsForPlayer).
     // Without a recalc, `setPlayerData` above updates baseFame but the displayed fame stays
@@ -5094,15 +5113,13 @@ export default function Headliners() {
     }
     const winPd = playerDataRef.current?.[winnerId] || playerData[winnerId] || {};
     const openStages = (winPd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
-    // v177: fame-refund timing bug fix. Under tempt mode, every contestant paid 1 Fame
-    // upfront to place their tempt. The refund happens at the END of this function
-    // (after the play/hand decision). Without adjustment, canPlayNow would check
-    // against fame that STILL has the tempt cost deducted — so a player who had
-    // exactly enough Fame to play the artist BEFORE tempting would fail the check
-    // and their artist would go to hand (losing the TEMPT effect entirely since we
-    // no longer treat tempted-to-hand as tempt-play; see v177 change below).
-    // Fix: for the play-eligibility check, mentally credit back the 1 Fame refund.
-    const winPdForCheck = isTempt
+    // v177: fame-refund timing bug fix. Classic tempt mode had each contestant pay 1 Fame
+    // upfront that gets refunded at the end of this function — the play-eligibility check
+    // mentally credits that refund back so a player who could play the artist BEFORE
+    // tempting still qualifies after.
+    // v199.17: Quick Play no longer charges or refunds tempt Fame, so the mental credit
+    // doesn't apply there — winPd is used as-is.
+    const winPdForCheck = (isTempt && gameModeRef.current !== "quickYear")
       ? { ...winPd, fame: (winPd.fame || 0) + 1, baseFame: (winPd.baseFame || 0) + 1 }
       : winPd;
     // v177: apply the actual Fame refund BEFORE the play-or-hand decision, so that
@@ -5119,14 +5136,21 @@ export default function Headliners() {
         });
         return next;
       });
-      setPlayerData(p => {
-        const next = { ...p };
-        contestantData.forEach(c => {
-          const opd = next[c.pid] || {};
-          next[c.pid] = { ...opd, baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (opd.baseFame || 0) + 1) };
+      // v199.17: Quick Play — contested tempts no longer refund +1 Fame to each
+      // contestant. The refund logic was a holdover from the Fame-costed tempt era
+      // (contestants paid 1 Fame upfront, got 1 back on resolution — net 0). Quick Play
+      // tempts are now Hotline-gated with no Fame cost, so there's nothing to refund.
+      // Classic mode retains the +1 refund as before.
+      if (gameModeRef.current !== "quickYear") {
+        setPlayerData(p => {
+          const next = { ...p };
+          contestantData.forEach(c => {
+            const opd = next[c.pid] || {};
+            next[c.pid] = { ...opd, baseFame: Math.min(FAME_MAX, (opd.baseFame || 0) + 1) };
+          });
+          return next;
         });
-        return next;
-      });
+      }
     }
     // v199.11 bugfix: Hamish the Hammer (and any future "consume the artist") agent effects
     // need to intercept the book-decision. Normally the dispatcher runs at the END of
