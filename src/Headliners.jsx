@@ -148,6 +148,67 @@ const HOTLINE_AGENT_POOL = [
 ];
 const HOTLINE_AGENTS_PER_GAME = 9; // each player's private dial has 9 agents drawn from the pool
 
+// v199.21: Legendary Artists / Festival Contracts system.
+// At game start, 3 legendary artists are drawn and displayed publicly. Each has 3 seasonal
+// requirements (Autumn/Winter/Spring). First player to complete a seasonal requirement earns
+// 1 contract token for that artist. At Summer close, the player with the most tokens for
+// each artist wins them — ties resolve via contest die (modifier: current ticket count).
+// Won legendary artists are played free onto a stage, +10 tickets.
+//
+// Requirement types:
+//   play_genre     — play N artists of a specific genre (scope: cumulative or season)
+//   tempt_genre    — win N tempts of a specific genre this season
+//   on_stages      — have N artists of a specific genre currently across all stages
+//   build_amenity  — build N of a specific amenity type this season
+//
+// scope: "cumulative" means counted across the whole game to that point (easier to satisfy);
+//        "season" means counted only within the current season (requires focus).
+const LEGENDARY_ARTIST_POOL = [
+  { id: "elvis", name: "ELVIS PRESLEY", genre: "Rock", tickets: 10, emoji: "👑",
+    requirements: {
+      autumn: { type: "play_genre",   genre: "Rock",     count: 1, scope: "cumulative", label: "Play a Rock artist" },
+      winter: { type: "play_genre",   genre: "Rock",     count: 2, scope: "season",     label: "Play 2 Rock artists this season" },
+      spring: { type: "on_stages",    genre: "Rock",     count: 3,                       label: "Have 3 Rock artists on stages" },
+    },
+  },
+  { id: "madonna", name: "MADONNA", genre: "Pop", tickets: 10, emoji: "🎀",
+    requirements: {
+      autumn: { type: "play_genre",   genre: "Pop",      count: 1, scope: "cumulative", label: "Play a Pop artist" },
+      winter: { type: "tempt_genre",  genre: "Pop",      count: 1, scope: "season",     label: "Tempt a Pop artist" },
+      spring: { type: "play_genre",   genre: "Pop",      count: 2, scope: "season",     label: "Play 2 Pop artists this season" },
+    },
+  },
+  { id: "tupac", name: "TUPAC", genre: "Hip Hop", tickets: 10, emoji: "💎",
+    requirements: {
+      autumn: { type: "play_genre",   genre: "Hip Hop",  count: 1, scope: "cumulative", label: "Play a Hip Hop artist" },
+      winter: { type: "on_stages",    genre: "Hip Hop",  count: 2,                       label: "Have 2 Hip Hop artists on stages" },
+      spring: { type: "play_genre",   genre: "Hip Hop",  count: 2, scope: "season",     label: "Play 2 Hip Hop artists this season" },
+    },
+  },
+  { id: "kraftwerk", name: "KRAFTWERK", genre: "Electronic", tickets: 10, emoji: "🤖",
+    requirements: {
+      autumn: { type: "build_amenity", amenity: "campsite", count: 1,                   label: "Build a campsite" },
+      winter: { type: "play_genre",   genre: "Electronic", count: 2, scope: "season",   label: "Play 2 Electronic artists this season" },
+      spring: { type: "on_stages",    genre: "Electronic", count: 2,                     label: "Have 2 Electronic artists on stages" },
+    },
+  },
+  { id: "james_brown", name: "JAMES BROWN", genre: "Funk", tickets: 10, emoji: "🕺",
+    requirements: {
+      autumn: { type: "play_genre",   genre: "Funk",     count: 1, scope: "cumulative", label: "Play a Funk artist" },
+      winter: { type: "tempt_genre",  genre: "Funk",     count: 1, scope: "season",     label: "Tempt a Funk artist" },
+      spring: { type: "on_stages",    genre: "Funk",     count: 2,                       label: "Have 2 Funk artists on stages" },
+    },
+  },
+  { id: "pixies", name: "PIXIES", genre: "Indie", tickets: 10, emoji: "🎸",
+    requirements: {
+      autumn: { type: "play_genre",   genre: "Indie",    count: 1, scope: "cumulative", label: "Play an Indie artist" },
+      winter: { type: "play_genre",   genre: "Indie",    count: 2, scope: "season",     label: "Play 2 Indie artists this season" },
+      spring: { type: "on_stages",    genre: "Indie",    count: 3,                       label: "Have 3 Indie artists on stages" },
+    },
+  },
+];
+const LEGENDARY_ARTISTS_PER_GAME = 3;
+
 // v199.9: season objectives. 8 to choose from; 1 unique objective drawn per season
 // (4 drawn at game start, one per Autumn/Winter/Spring/Summer, no repeats).
 // First player to complete it this season gets +4 🎟️; second gets +3 🎟️. After both
@@ -2213,11 +2274,30 @@ export default function Headliners() {
   const [seasonObjectiveClaims, setSeasonObjectiveClaims] = useState({});
   const seasonObjectiveClaimsRef = useRef({});
   useEffect(() => { seasonObjectiveClaimsRef.current = seasonObjectiveClaims; }, [seasonObjectiveClaims]);
-  // Per-season per-player counters for microtrends and amenities. Reset at season boundary.
-  // seasonCounters: { pid: { microtrends: n, amenities: n } }
+  // Per-season per-player counters. Reset at season boundary.
+  // seasonCounters: { pid: {
+  //   microtrends: n, amenities: n,
+  //   campsitesBuilt: n,                // v199.21: for Kraftwerk Autumn ("build a campsite")
+  //   genrePlays: { "Rock": n, "Pop": n, ... },   // v199.21: for legendary play_genre reqs
+  //   genreTempts: { "Pop": n, "Funk": n, ... },  // v199.21: for legendary tempt_genre reqs
+  // } }
   const [seasonCounters, setSeasonCounters] = useState({});
   const seasonCountersRef = useRef({});
   useEffect(() => { seasonCountersRef.current = seasonCounters; }, [seasonCounters]);
+  // v199.21: Legendary Artists / Festival Contracts state.
+  // gameLegendaryArtists: 3 artists drawn from LEGENDARY_ARTIST_POOL at game start,
+  //   displayed publicly for the whole game.
+  // legendaryTokens: { artistId: { autumn: pid|null, winter: pid|null, spring: pid|null } }
+  //   Null = unclaimed this season. First player to meet the season's req claims the slot.
+  // legendaryResolution: null | { results: [{ artist, winner, tokens, outcome, rolls? }] }
+  //   Set at Summer close, drives the Legendary Lineup resolution modal shown before game-over.
+  const [gameLegendaryArtists, setGameLegendaryArtists] = useState([]);
+  const gameLegendaryArtistsRef = useRef([]);
+  useEffect(() => { gameLegendaryArtistsRef.current = gameLegendaryArtists; }, [gameLegendaryArtists]);
+  const [legendaryTokens, setLegendaryTokens] = useState({});
+  const legendaryTokensRef = useRef({});
+  useEffect(() => { legendaryTokensRef.current = legendaryTokens; }, [legendaryTokens]);
+  const [legendaryResolution, setLegendaryResolution] = useState(null);
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -3494,10 +3574,16 @@ export default function Headliners() {
     // v199.6: reset the per-season taken set — all 9 agents are available again.
     setSeasonAgentsTaken(new Set());
     seasonAgentsTakenRef.current = new Set();
-    // v199.9: reset per-season counters for microtrends/amenities so this season's
-    // objective (e.g. "Place 3 amenities this season") can be freshly tracked.
+    // v199.9/v199.21: reset per-season counters. Legendary-tracking fields (campsitesBuilt,
+    // genrePlays, genreTempts) all reset too so season-scoped reqs (e.g. "play 2 Rock this
+    // season") start fresh each season.
     const freshCounters = {};
-    players.forEach(p => { freshCounters[p.id] = { microtrends: 0, amenities: 0 }; });
+    players.forEach(p => {
+      freshCounters[p.id] = {
+        microtrends: 0, amenities: 0, campsitesBuilt: 0,
+        genrePlays: {}, genreTempts: {},
+      };
+    });
     setSeasonCounters(freshCounters);
     seasonCountersRef.current = freshCounters;
     processHotlineQueue(queue);
@@ -3871,6 +3957,110 @@ export default function Headliners() {
     setTimeout(() => recalcTickets(), 50);
   };
 
+  // v199.21: Legendary Artist contract check. Called after any play/tempt/amenity action
+  // that could satisfy a legendary artist's current-season requirement. First player to meet
+  // the req claims that artist's season token. Each (artist, season) pair awards exactly one
+  // token — subsequent checks for the same (artist, season) silently no-op even if another
+  // player meets it.
+  //
+  // Trigger types & where fired:
+  //   "play"   — bookArtistToStage (every artist play, including from hand or legendary unlock)
+  //   "tempt"  — uncontested winner path + contested winner path (dispatcher sites)
+  //   "build"  — placeAmenityCounter (every amenity die placement, from any build path)
+  //
+  // The checker reads live state via refs — it's safe to call synchronously after a mutation
+  // because we also mutate the ref alongside setState at each trigger site.
+  const checkLegendaryContracts = (pid) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const season = quickYearSeasonRef.current;
+    if (season === "summer") return; // summer is resolution only, no token awards
+    const legendaries = gameLegendaryArtistsRef.current || [];
+    if (legendaries.length === 0) return;
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    const counters = seasonCountersRef.current[pid] || {};
+
+    legendaries.forEach(la => {
+      // Skip if this season's token is already claimed (first-to-complete only).
+      const existing = (legendaryTokensRef.current[la.id] || {})[season];
+      if (existing != null) return;
+
+      const req = la.requirements[season];
+      if (!req) return;
+
+      let met = false;
+      switch (req.type) {
+        case "play_genre": {
+          if (req.scope === "cumulative") {
+            // Count artists of this genre currently on any of this player's stages.
+            const stages = pd.stageArtists || [];
+            let count = 0;
+            stages.forEach(stage => (stage || []).forEach(a => {
+              const genres = (a.genre || "").split(",").map(g => g.trim());
+              if (genres.includes(req.genre)) count++;
+            }));
+            met = count >= req.count;
+          } else {
+            // Season-scoped count from the per-season counters.
+            const seasonCount = (counters.genrePlays || {})[req.genre] || 0;
+            met = seasonCount >= req.count;
+          }
+          break;
+        }
+        case "tempt_genre": {
+          const seasonCount = (counters.genreTempts || {})[req.genre] || 0;
+          met = seasonCount >= req.count;
+          break;
+        }
+        case "on_stages": {
+          const stages = pd.stageArtists || [];
+          let count = 0;
+          stages.forEach(stage => (stage || []).forEach(a => {
+            const genres = (a.genre || "").split(",").map(g => g.trim());
+            if (genres.includes(req.genre)) count++;
+          }));
+          met = count >= req.count;
+          break;
+        }
+        case "build_amenity": {
+          if (req.amenity === "campsite") {
+            const built = counters.campsitesBuilt || 0;
+            met = built >= req.count;
+          }
+          // Future-proofed: other amenity types could be added here if needed.
+          break;
+        }
+      }
+
+      if (met) {
+        // Award token for this (artist, season) to this player.
+        const nextTokens = { ...(legendaryTokensRef.current || {}) };
+        nextTokens[la.id] = { ...(nextTokens[la.id] || {}), [season]: pid };
+        setLegendaryTokens(nextTokens);
+        legendaryTokensRef.current = nextTokens;
+        const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        addLog(`${la.emoji} ${la.name}`, `${pName} earned ${QUICKYEAR_SEASON_LABELS[season]} contract token (${req.label})`);
+        showFloatingBonus(`${la.emoji} +1 token!`, "#fcd34d");
+      }
+    });
+  };
+
+  // v199.21: tempt-win helper — bumps per-genre tempt counter and checks legendaries.
+  // Called at every tempt-success site (uncontested + contested, human + AI). Multi-genre
+  // artists bump every one of their genres (so tempting a Pop/Electronic artist counts
+  // for both Madonna's Pop tempt req AND an Electronic tempt req).
+  const bumpGenreTemptAndCheckLegendary = (pid, artist) => {
+    if (gameModeRef.current !== "quickYear" || !artist) return;
+    const artistGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
+    const next = { ...(seasonCountersRef.current || {}) };
+    const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+    const nextGenreTempts = { ...(cur.genreTempts || {}) };
+    artistGenres.forEach(g => { nextGenreTempts[g] = (nextGenreTempts[g] || 0) + 1; });
+    next[pid] = { ...cur, genreTempts: nextGenreTempts };
+    setSeasonCounters(next);
+    seasonCountersRef.current = next;
+    checkLegendaryContracts(pid);
+  };
+
   // v199.4: season-end scoring is now a flat per-season ticket snapshot — the drawn-objective
   // system (with its Fame-reward 1st/2nd place model) is gone. For each player, count
   // their current campsites across all fields + current artists across all stages, and
@@ -3924,6 +4114,108 @@ export default function Headliners() {
 
     setTimeout(() => recalcTickets(), 50);
 
+    // v199.21: at Summer close, resolve all Legendary Artist contracts BEFORE opening
+    // the season-end modal. Each legendary tallies tokens across the 3 qualifying seasons,
+    // ties are broken with a contest die + current ticket modifier, winners get the artist
+    // played free onto a stage (opens a new stage if needed), +10 tickets.
+    let legendaryResults = null;
+    if (isGameEnd) {
+      const legendaries = gameLegendaryArtistsRef.current || [];
+      const tokens = legendaryTokensRef.current || {};
+      const livePD = playerDataRef.current || playerData;
+      legendaryResults = legendaries.map(la => {
+        const seasons = tokens[la.id] || {};
+        const tokenCounts = {};
+        Object.values(seasons).forEach(pid => {
+          if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
+        });
+        const perSeason = { autumn: seasons.autumn ?? null, winter: seasons.winter ?? null, spring: seasons.spring ?? null };
+        const maxCount = Math.max(0, ...Object.values(tokenCounts));
+        if (maxCount === 0) {
+          return { artist: la, winner: null, outcome: "no_tokens", tokenCounts, perSeason };
+        }
+        const tied = Object.entries(tokenCounts).filter(([, c]) => c === maxCount).map(([pid]) => parseInt(pid, 10));
+        if (tied.length === 1) {
+          return { artist: la, winner: tied[0], outcome: "clear", tokens: maxCount, tokenCounts, perSeason };
+        }
+        // Tie — roll contest die for each tied player, add current tickets as modifier.
+        const rolls = tied.map(pid => {
+          const dieFace = 1 + Math.floor(Math.random() * 6);
+          const tickets = (livePD[pid]?.tickets || 0);
+          return { pid, die: dieFace, tickets, total: dieFace + tickets, name: players.find(p => p.id === pid)?.festivalName || "?" };
+        });
+        rolls.sort((a, b) => b.total - a.total);
+        // On re-tie (same total), pick one at random — rare but possible.
+        const topTotal = rolls[0].total;
+        const topTied = rolls.filter(r => r.total === topTotal);
+        const winner = topTied.length === 1 ? rolls[0].pid : topTied[Math.floor(Math.random() * topTied.length)].pid;
+        return { artist: la, winner, outcome: "contested", tokens: maxCount, tokenCounts, perSeason, rolls, deadlockBroken: topTied.length > 1 };
+      });
+
+      // Apply: each winner gets the Legendary artist played onto a stage (auto-opens one
+      // if no space), with +tickets added to bonusTickets.
+      setPlayerData(prev => {
+        const next = { ...prev };
+        legendaryResults.forEach(r => {
+          if (r.winner == null) return;
+          const cur = next[r.winner];
+          if (!cur) return;
+          const sa = (cur.stageArtists || []).map(s => Array.isArray(s) ? [...s] : []);
+          let targetStage = sa.findIndex(s => s.length < 3);
+          let openedNewStage = false;
+          const stages = [...(cur.stages || [])];
+          const stageNames = [...(cur.stageNames || [])];
+          const stageColors = [...(cur.stageColors || [])];
+          if (targetStage < 0) {
+            sa.push([]);
+            stages.push({ fameRequired: 0 });
+            stageNames.push(`${r.artist.name} Stage`);
+            stageColors.push("#fcd34d");
+            targetStage = sa.length - 1;
+            openedNewStage = true;
+          }
+          // Build the legendary artist card to drop on the stage. Flag it so downstream
+          // code can recognize it (visuals, ticket breakdown).
+          const legendaryArtist = {
+            name: r.artist.name,
+            genre: r.artist.genre,
+            fame: 5,
+            tickets: r.artist.tickets,
+            effect: "LEGENDARY — played free via Legendary Contract",
+            isLegendary: true,
+            legendaryEmoji: r.artist.emoji,
+          };
+          sa[targetStage] = [...sa[targetStage], legendaryArtist];
+          next[r.winner] = {
+            ...cur,
+            stageArtists: sa,
+            stages, stageNames, stageColors,
+            bonusTickets: (cur.bonusTickets || 0) + r.artist.tickets,
+          };
+          r.openedNewStage = openedNewStage;
+          r.playedOnStage = targetStage;
+        });
+        return next;
+      });
+
+      legendaryResults.forEach(r => {
+        if (r.winner == null) {
+          addLog(`${r.artist.emoji} ${r.artist.name}`, `No tokens claimed — ${r.artist.name} walks away.`);
+        } else {
+          const pName = players.find(p => p.id === r.winner)?.festivalName || "?";
+          if (r.outcome === "clear") {
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `${pName} wins with ${r.tokens}/3 tokens → +${r.artist.tickets} 🎟️`);
+          } else {
+            const rollsText = r.rolls.map(ro => `${ro.name}: 🎲${ro.die} + 🎟️${ro.tickets} = ${ro.total}`).join(" vs ");
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `Tie at ${r.tokens} tokens → contest die: ${rollsText}. ${pName} wins → +${r.artist.tickets} 🎟️`);
+          }
+        }
+      });
+
+      setLegendaryResolution({ results: legendaryResults });
+      setTimeout(() => recalcTickets(), 80);
+    }
+
     // Open the season-end modal so players can see the breakdown. After they close it,
     // advance to the next season (or trigger game end).
     setSeasonEndScoring({
@@ -3931,6 +4223,7 @@ export default function Headliners() {
       seasonScores,
       isGameEnd,
       nextPlayerIdx,
+      legendaryResults, // v199.21: attached so the modal can render the Legendary Lineup reveal.
     });
   };
 
@@ -4639,6 +4932,8 @@ export default function Headliners() {
           }
           // v199.9: season-objective tempt_success trigger (uncontested).
           checkSeasonObjective("tempt_success", resolution.pid);
+          // v199.21: Legendary tempt tracking (uncontested, checkNextTempt path).
+          bumpGenreTemptAndCheckLegendary(resolution.pid, resolution.artist);
         }
         // v150: AI tempts must NOT open the pendingAgentArtist modal — otherwise the
         // modal renders during the AI's turn and the human user ends up picking a stage
@@ -5190,6 +5485,8 @@ export default function Headliners() {
           });
         });
         checkSeasonObjective("tempt_success", winnerId);
+        // v199.21: Legendary tempt tracking (contested winner, Hamish shortcut).
+        bumpGenreTemptAndCheckLegendary(winnerId, artist);
         addLog("💫 Tempt Contest", `${players.find(p => p.id === winnerId)?.festivalName} won ${artist.name} — consumed by their agent`);
         bumpYearlyStat(winnerId, "temptsWon");
         bumpYearEvent(winnerId, "contestWinsThisYear");
@@ -5295,6 +5592,8 @@ export default function Headliners() {
       });
       // v199.9: season-objective tempt_success trigger (contested — fires for the winner).
       checkSeasonObjective("tempt_success", winnerId);
+      // v199.21: Legendary tempt tracking (contested winner path).
+      bumpGenreTemptAndCheckLegendary(winnerId, contest.artist);
     }
   };
 
@@ -7348,7 +7647,11 @@ export default function Headliners() {
       }
       // v165: full-lineup Fame bonus removed as part of the fame-sources prune. The +5
       // ticket first-lineup bonus above still fires — this only removes the fame.
-      return { ...prev, [pid]: pd };
+      // v199.21: sync playerDataRef immediately so synchronous callers below (e.g.
+      // checkLegendaryContracts) see the artist on the stage.
+      const result = { ...prev, [pid]: pd };
+      playerDataRef.current = result;
+      return result;
     });
 
     const pd = playerData[pid];
@@ -7373,6 +7676,20 @@ export default function Headliners() {
       const fullStageArtists = [...(sa[stageIdx] || []), artist];
       checkSeasonObjective("lineup_complete", pid);
       checkSeasonObjective("lineup_genre_match", pid, { stageArtists: fullStageArtists });
+    }
+    // v199.21: Legendary Artist play tracking. Bump per-genre play counter for every
+    // genre on the booked artist, then check all legendary contracts for completion. Multi-
+    // genre artists (e.g. Lady Gaga = Pop + Electronic) count for every one of their genres.
+    if (gameModeRef.current === "quickYear") {
+      const artistGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
+      const next = { ...(seasonCountersRef.current || {}) };
+      const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+      const nextGenrePlays = { ...(cur.genrePlays || {}) };
+      artistGenres.forEach(g => { nextGenrePlays[g] = (nextGenrePlays[g] || 0) + 1; });
+      next[pid] = { ...cur, genrePlays: nextGenrePlays };
+      setSeasonCounters(next);
+      seasonCountersRef.current = next;
+      checkLegendaryContracts(pid);
     }
 
     // v169: capture "who played what most recently" BEFORE this play's effect fires,
@@ -8114,24 +8431,42 @@ export default function Headliners() {
         spring: shuffledObjs[2],
         summer: shuffledObjs[3],
       };
-      setSeasonObjectives(seasonObjs);
-      seasonObjectivesRef.current = seasonObjs;
+      // v199.21: season objectives system replaced by Legendary Artists / Festival Contracts.
+      // Keep the state init empty-shaped so legacy code reading from it stays safe (checks
+      // against undefined/null entries naturally no-op), but skip drawing any season objectives.
+      setSeasonObjectives({});
+      seasonObjectivesRef.current = {};
       setSeasonObjectiveClaims({ autumn: {}, winter: {}, spring: {}, summer: {} });
       seasonObjectiveClaimsRef.current = { autumn: {}, winter: {}, spring: {}, summer: {} };
       // Initialize per-season counters for all players (reset each season boundary).
+      // v199.21: extended with campsitesBuilt + per-genre plays/tempts for Legendary reqs.
       const freshCounters = {};
-      players.forEach(p => { freshCounters[p.id] = { microtrends: 0, amenities: 0 }; });
+      players.forEach(p => {
+        freshCounters[p.id] = {
+          microtrends: 0, amenities: 0, campsitesBuilt: 0,
+          genrePlays: {}, genreTempts: {},
+        };
+      });
       setSeasonCounters(freshCounters);
       seasonCountersRef.current = freshCounters;
+      // v199.21: draw 3 legendary artists from the pool. These are visible to all players
+      // for the whole game — the public "legendary lineup" they're competing to acquire.
+      const chosenLegendaries = shuffle([...LEGENDARY_ARTIST_POOL]).slice(0, LEGENDARY_ARTISTS_PER_GAME);
+      setGameLegendaryArtists(chosenLegendaries);
+      gameLegendaryArtistsRef.current = chosenLegendaries;
+      const initialTokens = {};
+      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: null, winter: null, spring: null }; });
+      setLegendaryTokens(initialTokens);
+      legendaryTokensRef.current = initialTokens;
+      setLegendaryResolution(null);
       addLogH("⚡ Quick Play — 1 Year, 4 Seasons", "round");
       addLog("⚡ Scoring", "At each season close, every player scores 1 🎟️ per campsite + 1 🎟️ per artist on their stages. Highest tickets at Summer close wins.");
       addLog("⚡ Fame", "Fame is status (hard cap 5). Climb the Fame ladder to unlock bigger artists and scale your actions.");
       addLog("📞 Hotline", `Season start: each player spins the Hotline dial. ${HOTLINE_AGENTS_PER_GAME} agents are available this game (of ${HOTLINE_AGENT_POOL.length}); each one can only be assigned to one player per season. First come first served. One tempt per agent. Re-spin for 1 Fame.`);
       addLog("📞 Agents available", chosenPool.map(a => `${a.emoji} ${a.name}`).join(" · "));
-      addLog("🎯 Objectives", `Each season has ONE objective. First to complete it: +4 🎟️. Second: +3 🎟️.`);
-      QUICKYEAR_SEASONS.forEach(sKey => {
-        const obj = seasonObjs[sKey];
-        if (obj) addLog(`${QUICKYEAR_SEASON_EMOJI[sKey]} ${QUICKYEAR_SEASON_LABELS[sKey]}`, `Objective: ${obj.label}`);
+      addLog("🎸 Legendary Lineup", `${LEGENDARY_ARTISTS_PER_GAME} legendary artists this game. Each has 3 season requirements (Autumn/Winter/Spring). First to meet each req earns a contract token. At Summer close, player with most tokens for each artist wins — ties resolve via contest die.`);
+      chosenLegendaries.forEach(la => {
+        addLog(`${la.emoji} ${la.name}`, `${la.genre} · ${la.tickets} 🎟️ · Autumn: ${la.requirements.autumn.label} · Winter: ${la.requirements.winter.label} · Spring: ${la.requirements.spring.label}`);
       });
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
@@ -8295,12 +8630,19 @@ export default function Headliners() {
         const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[aType];
         if (metricKey) bumpSeasonStat(pid, metricKey, 1);
         // v199.9: season-objective amenity_count trigger (AI bonus amenity path).
+        // v199.21: also tracks campsite builds for Legendary (Kraftwerk Autumn).
         if (gameModeRef.current === "quickYear") {
           const next = { ...(seasonCountersRef.current || {}) };
-          next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), amenities: ((next[pid]?.amenities) || 0) + 1 };
+          const curSc = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+          next[pid] = {
+            ...curSc,
+            amenities: (curSc.amenities || 0) + 1,
+            campsitesBuilt: (curSc.campsitesBuilt || 0) + (aType === "campsite" ? 1 : 0),
+          };
           setSeasonCounters(next);
           seasonCountersRef.current = next;
           checkSeasonObjective("amenity_count", pid);
+          checkLegendaryContracts(pid);
         }
         const remaining = (pe.placeCount || 1) - 1;
         if (remaining > 0) {
@@ -8807,6 +9149,8 @@ export default function Headliners() {
               });
             }
             checkSeasonObjective("tempt_success", resolution.pid);
+            // v199.21: Legendary tempt tracking (AI uncontested).
+            bumpGenreTemptAndCheckLegendary(resolution.pid, resolution.artist);
           }
           // v194: tempt-to-stage now requires genre-match (see canTemptDirectToStage).
           // Amenity costs no longer create a direct-to-stage path via tempt — if the tempter
@@ -9216,12 +9560,19 @@ export default function Headliners() {
     const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[amenityType];
     if (metricKey) bumpSeasonStat(currentPlayerId, metricKey, 1);
     // v199.9: season-objective amenity_count trigger (Place 2/3 amenities this season).
+    // v199.21: also tracks campsite builds for Legendary (Kraftwerk Autumn).
     if (gameModeRef.current === "quickYear") {
       const next = { ...(seasonCountersRef.current || {}) };
-      next[currentPlayerId] = { ...(next[currentPlayerId] || { microtrends: 0, amenities: 0 }), amenities: ((next[currentPlayerId]?.amenities) || 0) + 1 };
+      const curSc = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+      next[currentPlayerId] = {
+        ...curSc,
+        amenities: (curSc.amenities || 0) + 1,
+        campsitesBuilt: (curSc.campsitesBuilt || 0) + (amenityType === "campsite" ? 1 : 0),
+      };
       setSeasonCounters(next);
       seasonCountersRef.current = next;
       checkSeasonObjective("amenity_count", currentPlayerId);
+      checkLegendaryContracts(currentPlayerId);
     }
     // v158: check whether this placement satisfies any shared contract on this field.
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
@@ -12165,21 +12516,73 @@ export default function Headliners() {
           // count of artists played over the game to this point.
           const stages = pd.stageArtists || [];
           const artistsCumulative = stages.reduce((sum, st) => sum + (Array.isArray(st) ? st.length : 0), 0);
+          // v199.20: current Fame at season close.
+          const fame = pd.fame != null ? pd.fame : (pd.baseFame || 0);
           return {
             ...s,
             total: pd.tickets || 0,
             artistsCumulative,
+            fame,
           };
         }).sort((a, b) => b.total - a.total);
         const nextSeasonLabel = season === "autumn" ? "Winter" : season === "winter" ? "Spring" : season === "spring" ? "Summer" : null;
-        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ ...card, textAlign: "center", maxWidth: 640, width: "100%", padding: 24 }}>
+        const legendaryResults = seasonEndScoring.legendaryResults || null;
+        return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflowY: "auto" }}>
+          <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%", padding: 24, maxHeight: "92vh", overflowY: "auto" }}>
             <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 24, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — Season Close</h2>
             <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>
               {isGameEnd
                 ? "Final season complete — the festival has run its course."
                 : "Season ends. Every player scores 1 🎟️ per campsite + 1 🎟️ per artist on stages."}
             </p>
+            {/* v199.21: Legendary Lineup resolution — Summer only. Shows each legendary's
+                token outcome: clear majority winner, tiebreak dice roll, or unclaimed. */}
+            {legendaryResults && legendaryResults.length > 0 && (
+              <div style={{ marginBottom: 18, padding: 14, borderRadius: 12, background: "linear-gradient(180deg, rgba(252,211,77,0.08), rgba(168,85,247,0.05))", border: "1px solid rgba(252,211,77,0.4)" }}>
+                <div style={{ color: "#fcd34d", fontWeight: 800, fontSize: 13, letterSpacing: 2, marginBottom: 10, textTransform: "uppercase" }}>🎸 Legendary Lineup — The Verdict</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {legendaryResults.map((r, i) => {
+                    const winner = r.winner != null ? players.find(p => p.id === r.winner) : null;
+                    return (
+                      <div key={i} style={{ padding: 10, borderRadius: 8, background: r.winner != null ? "rgba(252,211,77,0.1)" : "rgba(30,41,59,0.5)", border: r.winner != null ? "1px solid rgba(252,211,77,0.5)" : "1px dashed #475569", textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 20 }}>{r.artist.emoji}</span>
+                            <span style={{ color: "#fcd34d", fontWeight: 800, fontSize: 14 }}>{r.artist.name}</span>
+                            <span style={{ color: "#94a3b8", fontSize: 10 }}>· {r.artist.genre} · {r.artist.tickets} 🎟️</span>
+                          </div>
+                          <div style={{ color: "#94a3b8", fontSize: 10 }}>
+                            Tokens: {Object.entries(r.tokenCounts || {}).map(([pid, c]) => {
+                              const n = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
+                              return `${n}: ${c}`;
+                            }).join(" · ") || "none"}
+                          </div>
+                        </div>
+                        {r.outcome === "no_tokens" && (
+                          <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No one claimed any tokens — {r.artist.name} walks away.</div>
+                        )}
+                        {r.outcome === "clear" && winner && (
+                          <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens · +{r.artist.tickets} 🎟️{r.openedNewStage ? " · new stage opened" : ""}</div>
+                        )}
+                        {r.outcome === "contested" && winner && (
+                          <div>
+                            <div style={{ color: "#fdba74", fontSize: 11, marginBottom: 4 }}>🎲 Tied at {r.tokens} tokens — contest die decides:</div>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                              {r.rolls.map((ro, j) => (
+                                <div key={j} style={{ fontSize: 11, color: ro.pid === r.winner ? "#86efac" : "#94a3b8", fontWeight: ro.pid === r.winner ? 700 : 400 }}>
+                                  {ro.name}: 🎲 {ro.die} + 🎟️ {ro.tickets} = <strong>{ro.total}</strong>{ro.pid === r.winner ? " ✓" : ""}
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins · +{r.artist.tickets} 🎟️{r.openedNewStage ? " · new stage opened" : ""}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
               {rows.map((r, idx) => (
                 <div key={r.pid} style={{ padding: 12, borderRadius: 10, background: idx === 0 ? "linear-gradient(135deg, rgba(252,211,77,0.1), rgba(251,146,60,0.05))" : "rgba(15,14,26,0.6)", border: idx === 0 ? "1px solid rgba(252,211,77,0.4)" : "1px solid #2a2a4a", textAlign: "left" }}>
@@ -12188,10 +12591,13 @@ export default function Headliners() {
                       <span style={{ fontSize: 16, color: idx === 0 ? "#fcd34d" : "#c4b5fd", fontWeight: 800 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
                       <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14 }}>{r.name}{r.isAI ? " 🤖" : ""}</span>
                     </div>
-                    {/* v199.19: show running tickets AND running artists played side-by-side.
-                        Tickets stays as the primary (winner-colored, larger). Artists is a
-                        secondary stat players can track across seasons for narrative. */}
+                    {/* v199.19: show running tickets, running artists played, and current Fame
+                        side-by-side (v199.20 added Fame). Tickets stays primary (winner-colored,
+                        larger). Fame + artists are secondary stats players track across seasons. */}
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ color: "#f97316", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 3 }}>
+                        🔥 <span style={{ fontSize: 14 }}>{r.fame}</span>
+                      </div>
                       <div style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 3 }}>
                         🎤 <span style={{ fontSize: 14 }}>{r.artistsCumulative}</span>
                       </div>
@@ -13340,6 +13746,8 @@ export default function Headliners() {
                   });
                 }
                 checkSeasonObjective("tempt_success", resolution.pid);
+                // v199.21: Legendary tempt tracking (human turn-start uncontested).
+                bumpGenreTemptAndCheckLegendary(resolution.pid, resolution.artist);
               }
               // If an agent consumed the artist (Hamish discards + opens amenity picker),
               // skip the book-decision modal — pop the placement, remove from pool, done.
@@ -13629,6 +14037,58 @@ export default function Headliners() {
               {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
               <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
             </div>
+            {/* v199.21: Legendary Lineup panel. Shows the 3 legendary artists for this
+                game, their 3 season requirements, and who's claimed each season's token.
+                Current season's row is highlighted; completed-but-unclaimed rows show "open",
+                claimed rows show the claimer's name struck through. */}
+            {gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
+              <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "linear-gradient(135deg, rgba(252,211,77,0.08), rgba(168,85,247,0.05))", border: "1px solid rgba(252,211,77,0.3)" }}>
+                <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎸 Legendary Lineup</div>
+                {gameLegendaryArtists.map((la, i) => {
+                  const tokens = legendaryTokens[la.id] || {};
+                  const tokenCounts = {};
+                  Object.values(tokens).forEach(pid => { if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1; });
+                  return (
+                    <div key={la.id} style={{ padding: 6, borderRadius: 6, marginBottom: i < gameLegendaryArtists.length - 1 ? 5 : 0, background: "rgba(15,14,26,0.5)", border: "1px solid #2a2a4a" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 14 }}>{la.emoji}</span>
+                          <span style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11 }}>{la.name}</span>
+                          <span style={{ color: "#94a3b8", fontSize: 9 }}>· {la.genre} · {la.tickets}🎟️</span>
+                        </div>
+                      </div>
+                      {QUICKYEAR_SEASONS.filter(s => s !== "summer").map(sKey => {
+                        const req = la.requirements[sKey];
+                        const claimerPid = tokens[sKey];
+                        const claimer = claimerPid != null ? players.find(p => p.id === claimerPid) : null;
+                        const isCurrent = sKey === quickYearSeason;
+                        return (
+                          <div key={sKey} style={{ fontSize: 9, color: isCurrent ? "#e2e8f0" : "#64748b", marginLeft: 20, display: "flex", justifyContent: "space-between", padding: "1px 0" }}>
+                            <span style={{ opacity: claimer ? 0.5 : 1 }}>
+                              {QUICKYEAR_SEASON_EMOJI[sKey]} <span style={{ textDecoration: claimer ? "line-through" : "none" }}>{req.label}</span>
+                            </span>
+                            <span style={{ color: claimer ? "#86efac" : "#64748b", fontWeight: 700, fontStyle: claimer ? "normal" : "italic", marginLeft: 8 }}>
+                              {claimer ? (claimer.festivalName.slice(0, 10) + (claimer.isAI ? " 🤖" : "")) : (isCurrent ? "open" : "—")}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {Object.keys(tokenCounts).length > 0 && (
+                        <div style={{ fontSize: 9, color: "#c4b5fd", marginLeft: 20, marginTop: 2, fontStyle: "italic" }}>
+                          Tokens: {Object.entries(tokenCounts).map(([pid, c]) => {
+                            const n = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
+                            return `${n.slice(0, 8)}: ${c}`;
+                          }).join(" · ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 9, color: "#94a3b8", fontStyle: "italic", marginTop: 6, textAlign: "center" }}>
+                  Summer close: majority tokens wins. Ties → contest die (modifier: tickets).
+                </div>
+              </div>
+            )}
             {/* v199.9: Quick Play season-scoring panel with PROJECTED mid-season total.
                 Running total (pd.tickets) only reflects season bonuses that have already
                 been applied (previous seasons' close). Mid-season, a player might have built
