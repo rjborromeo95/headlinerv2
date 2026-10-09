@@ -4494,18 +4494,29 @@ export default function Headliners() {
         if (tied.length === 1) {
           return { artist: la, winner: tied[0], outcome: "clear", tokens: maxCount, tokenCounts, perSeason };
         }
-        // Tie — roll contest die for each tied player, add current tickets as modifier.
+        // v199.38: Tie — roll a CONTEST DIE FACE (one of campsite/portaloo/security/
+        // catering/fame/stage) and compare each tied player's count of that resource.
+        // Highest count wins. If still tied on count, ticket count breaks it. This
+        // matches how agent contests work (resolveAgentContestRoll) and makes the
+        // contest reward lane commitment rather than being a flat random roll.
+        const rolledFace = DICE_OPTIONS[Math.floor(Math.random() * DICE_OPTIONS.length)];
         const rolls = tied.map(pid => {
-          const dieFace = 1 + Math.floor(Math.random() * 6);
-          const tickets = (livePD[pid]?.tickets || 0);
-          return { pid, die: dieFace, tickets, total: dieFace + tickets, name: players.find(p => p.id === pid)?.festivalName || "?" };
+          const opd = livePD[pid] || {};
+          const value = getContestValue(opd, rolledFace);
+          const tickets = opd.tickets || 0;
+          return { pid, value, tickets, name: players.find(p => p.id === pid)?.festivalName || "?" };
         });
-        rolls.sort((a, b) => b.total - a.total);
-        // On re-tie (same total), pick one at random — rare but possible.
-        const topTotal = rolls[0].total;
-        const topTied = rolls.filter(r => r.total === topTotal);
+        // Sort: value desc, then tickets desc. Random pick on true deadlock.
+        rolls.sort((a, b) => {
+          if (b.value !== a.value) return b.value - a.value;
+          return b.tickets - a.tickets;
+        });
+        const topValue = rolls[0].value;
+        const topTickets = rolls[0].tickets;
+        const topTied = rolls.filter(r => r.value === topValue && r.tickets === topTickets);
         const winner = topTied.length === 1 ? rolls[0].pid : topTied[Math.floor(Math.random() * topTied.length)].pid;
-        return { artist: la, winner, outcome: "contested", tokens: maxCount, tokenCounts, perSeason, rolls, deadlockBroken: topTied.length > 1 };
+        const tiedOnValue = rolls.filter(r => r.value === topValue).length > 1;
+        return { artist: la, winner, outcome: "contested", tokens: maxCount, tokenCounts, perSeason, rolls, rolledFace, tiedOnValue, deadlockBroken: topTied.length > 1 };
       });
 
       // Apply: each winner gets the Legendary artist played onto a stage (auto-opens one
@@ -4586,8 +4597,12 @@ export default function Headliners() {
           if (r.outcome === "clear") {
             addLog(`${r.artist.emoji} ${r.artist.name}`, `${pName} wins with ${r.tokens}/3 tokens → ${payoutText}`);
           } else {
-            const rollsText = r.rolls.map(ro => `${ro.name}: 🎲${ro.die} + 🎟️${ro.tickets} = ${ro.total}`).join(" vs ");
-            addLog(`${r.artist.emoji} ${r.artist.name}`, `Tie at ${r.tokens} tokens → contest die: ${rollsText}. ${pName} wins → ${payoutText}`);
+            // v199.38: tiebreak face-based display. Contest die rolled a specific resource;
+            // highest count wins. Tickets only break value ties.
+            const faceInfo = getContestFaceLabel(r.rolledFace);
+            const rollsText = r.rolls.map(ro => `${ro.name}: ${faceInfo.icon}${ro.value}${r.tiedOnValue ? ` (🎟️${ro.tickets})` : ""}`).join(" vs ");
+            const tieBreakerNote = r.tiedOnValue ? ` — tied on ${faceInfo.label}, 🎟️ tickets broke it` : "";
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `Tie at ${r.tokens} tokens → contest die rolled ${faceInfo.icon} ${faceInfo.label}: ${rollsText}${tieBreakerNote}. ${pName} wins → ${payoutText}`);
           }
         }
       });
@@ -10261,6 +10276,12 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => {
+    // v199.37: defence-in-depth. If we're already mid-action with picks remaining,
+    // bail — do not reset qyPicksLeft. This prevents any state path that pops the
+    // player back to the main menu mid-pick from granting them bonus picks on re-entry.
+    if (turnAction === "pickAmenity" && gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+      return;
+    }
     setTurnAction("pickAmenity");
     if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
     // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
@@ -10415,11 +10436,16 @@ export default function Headliners() {
       // player still has amenity picks remaining (Fame-tier scaling gives 2+ picks per
       // action). Previously this always decremented turnsLeft and set actionTaken, so
       // picking Fame first killed the rest of the action. Pick order now doesn't matter.
+      // v199.37 bugfix: do NOT clear turnAction when picks remain. Previously we set it
+      // to null, which popped the player back to the main action menu — they could then
+      // click "Pick Amenity" again, which calls handlePickAmenity → resets qyPicksLeft
+      // to the max. That gave Fame-first players 1 Fame + 2 extra picks (3 total).
+      // Keeping turnAction = "pickAmenity" means the dice panel stays open and the player
+      // simply picks their next die — same flow as if they'd picked amenity dice first.
       if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
         const left = Math.max(0, qyPicksLeftRef.current - 1);
         setQyPicksLeft(left);
         qyPicksLeftRef.current = left;
-        setTurnAction(null);
         setTimeout(() => recalcTickets(), 50);
         return;
       }
@@ -10443,11 +10469,13 @@ export default function Headliners() {
         showFloatingBonus("+1 🎪 Stage Progress!", "#4ade80");
       }
       // v199.24: same picks-remaining respect for stage dice (parity with Fame fix above).
+      // v199.37: same bug fix — do NOT clear turnAction when picks remain. Keeps the dice
+      // panel open so the player can pick their next die, and prevents them from clicking
+      // "Pick Amenity" again (which would reset qyPicksLeft and grant extra picks).
       if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
         const left = Math.max(0, qyPicksLeftRef.current - 1);
         setQyPicksLeft(left);
         qyPicksLeftRef.current = left;
-        setTurnAction(null);
         setTimeout(() => recalcTickets(), 50);
         return;
       }
@@ -13589,19 +13617,37 @@ export default function Headliners() {
                         {r.outcome === "clear" && winner && (
                           <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
                         )}
-                        {r.outcome === "contested" && winner && (
-                          <div>
-                            <div style={{ color: "#fdba74", fontSize: 11, marginBottom: 4 }}>🎲 Tied at {r.tokens} tokens — contest die decides:</div>
-                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-                              {r.rolls.map((ro, j) => (
-                                <div key={j} style={{ fontSize: 11, color: ro.pid === r.winner ? "#86efac" : "#94a3b8", fontWeight: ro.pid === r.winner ? 700 : 400 }}>
-                                  {ro.name}: 🎲 {ro.die} + 🎟️ {ro.tickets} = <strong>{ro.total}</strong>{ro.pid === r.winner ? " ✓" : ""}
+                        {r.outcome === "contested" && winner && (() => {
+                          // v199.38: face-based tiebreak display. Contest die rolled a
+                          // specific resource (campsite / portaloo / security / catering /
+                          // Fame / stages). Players' counts of that resource are compared;
+                          // tickets only break value ties.
+                          const faceInfo = getContestFaceLabel(r.rolledFace);
+                          return (
+                            <div>
+                              <div style={{ fontSize: 11, marginBottom: 6, color: "#fdba74" }}>
+                                Tied at {r.tokens} tokens — contest die rolled{" "}
+                                <span style={{ color: faceInfo.color, fontWeight: 800 }}>{faceInfo.icon} {faceInfo.label}</span>:
+                                <span style={{ color: "#94a3b8", marginLeft: 6, fontStyle: "italic" }}>{faceInfo.statHint}</span>
+                              </div>
+                              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6, padding: "8px 10px", background: `${faceInfo.color}10`, borderRadius: 8, border: `1px solid ${faceInfo.color}30` }}>
+                                {r.rolls.map((ro, j) => (
+                                  <div key={j} style={{ fontSize: 11, color: ro.pid === r.winner ? "#86efac" : "#94a3b8", fontWeight: ro.pid === r.winner ? 700 : 400 }}>
+                                    {ro.name}: {faceInfo.icon} <strong>{ro.value}</strong>
+                                    {r.tiedOnValue && <span style={{ color: "#94a3b8", fontWeight: 400 }}> · 🎟️ {ro.tickets}</span>}
+                                    {ro.pid === r.winner && <span> ✓</span>}
+                                  </div>
+                                ))}
+                              </div>
+                              {r.tiedOnValue && (
+                                <div style={{ fontSize: 10, color: "#94a3b8", fontStyle: "italic", marginBottom: 6 }}>
+                                  Tied on {faceInfo.label} count — 🎟️ tickets broke the tie.
                                 </div>
-                              ))}
+                              )}
+                              <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
                             </div>
-                            <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })}
