@@ -1224,6 +1224,13 @@ function PrincipleCard({ principle, amenities, stageCount, maxStages, amenityIco
         <span style={{ fontSize: small ? 14 : 18 }}>{principle.emoji}</span>
         <span style={{ fontWeight: 800, fontSize: small ? 10 : 12, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.1, color: nameColor, textDecoration: used ? "line-through" : "none" }}>{principle.name}</span>
       </div>
+      {/* v199.42: Field badge — shows which field this principle reads amenities from.
+          Only renders when fieldIdx is set (Quick Play 3-field mode). */}
+      {principle.fieldIdx != null && (
+        <div style={{ fontSize: small ? 8 : 9, color: used ? "#94a3b8" : "#7c3aed", fontWeight: 700, letterSpacing: 0.5 }}>
+          FIELD {principle.fieldIdx + 1}
+        </div>
+      )}
       {/* Requirements progress */}
       <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 2 }}>
         {reqEntries.map(([type, needed]) => {
@@ -1720,9 +1727,38 @@ function aiScorePlacement(amenityType, field, council, year) {
 }
 
 // AI picks the best field to place a given amenity. Iterates fields, picks max score.
-function aiPickFieldForAmenity(pd, amenityType, year) {
-  // v189: with councils removed, all amenities go to field 0 (the single festival area).
-  return 0;
+// v199.42: optional `principles` param for Quick Play (3-field mode). When provided, scores
+// each field by how much placing this amenity would progress an unused incomplete principle
+// tied to that field. Fields with completed principles, used principles, or no principle get
+// a low score. Classic mode (no principles passed) returns 0 as before.
+function aiPickFieldForAmenity(pd, amenityType, year, principles) {
+  if (!principles || principles.length === 0) return 0;
+  const fields = pd?.fields || [];
+  // Build scores per field (0, 1, 2 for Quick Play).
+  const scores = fields.map((field, fieldIdx) => {
+    const pr = principles.find(p => p.fieldIdx === fieldIdx);
+    if (!pr) return 0; // no principle on this field
+    if (pr.used) return -5; // used — no benefit from building here
+    const needed = pr.reqs?.[amenityType] || 0;
+    const have = (field || {})[amenityType] || 0;
+    const gap = Math.max(0, needed - have);
+    if (gap === 0) return -3; // this type already satisfied; prefer other fields
+    // Score: higher gap = more useful. Also bonus if this placement would COMPLETE
+    // the principle (gap === 1 after this placement would make it 0).
+    let score = gap * 10;
+    if (gap === 1) {
+      // After this placement, this req is fully met. Check if ALL other reqs are also met.
+      const otherReqsMet = Object.entries(pr.reqs || {}).every(([t, n]) => {
+        if (t === amenityType) return true; // this one will be met
+        return ((field || {})[t] || 0) >= n;
+      });
+      if (otherReqsMet) score += 30; // completes the principle — big bonus
+    }
+    return score;
+  });
+  const maxScore = Math.max(...scores);
+  if (maxScore <= 0) return 0; // no useful choice, default to field 0
+  return scores.indexOf(maxScore);
 }
 
 // AI picks the best STARTING amenity considering its councils. Weight amenities that progress
@@ -4295,10 +4331,17 @@ export default function Headliners() {
 
   // v199.25: Festival Principle helpers.
   // isPrincipleComplete — pure check: does the player's CURRENT amenity count meet the
-  // principle's reqs? Reads amenities snapshot from the player's current fields totals.
+  // principle's reqs?
+  // v199.42: in Quick Play, principles are tied to a specific field (principle.fieldIdx).
+  // The check reads ONLY that field's amenities, not the aggregate across all fields.
+  // This forces players to distribute amenity placements across fields rather than
+  // feeding every principle from one pile.
   const isPrincipleComplete = (principle, pd) => {
     if (!principle || !pd) return false;
-    const am = pd.amenities || {};
+    const useFieldSpecific = gameModeRef.current === "quickYear" && principle.fieldIdx != null;
+    const am = useFieldSpecific
+      ? ((pd.fields || [])[principle.fieldIdx] || {})
+      : (pd.amenities || {});
     for (const [type, needed] of Object.entries(principle.reqs || {})) {
       if ((am[type] || 0) < needed) return false;
     }
@@ -6856,7 +6899,7 @@ export default function Headliners() {
     // Place an amenity of your choice — auto-pick best amenity via AI heuristic
     if (gl.includes("place 1 amenity") || gl.includes("place an amenity")) {
       const amt = aiPickAmenityType(pd);
-      const fIdx = aiPickFieldForAmenity(pd, amt, yearRef.current || year || 1);
+      const fIdx = aiPickFieldForAmenity(pd, amt, yearRef.current || year || 1, gameModeRef.current === "quickYear" ? (playerPrinciplesRef.current[currentPlayerId] || []) : null);
       setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, amt, +1) }));
       addLog("🎸 Genre-Match", `${festival}: placed bonus ${AMENITY_LABELS[amt]} in F${fIdx + 1}`);
     }
@@ -7122,7 +7165,7 @@ export default function Headliners() {
         if (isAI) {
           // AI: drop into a heuristic-picked field immediately
           const aiPd = playerDataRef.current?.[pid] || playerData[pid] || {};
-          const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1);
+          const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1, gameModeRef.current === "quickYear" ? (playerPrinciplesRef.current[currentPlayerId] || []) : null);
           setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], fIdx, amenityType, +1) }));
           addLog("🕵️ Agent Effect", `${artist.name}: +1 ${AMENITY_LABELS[amenityType]} → F${fIdx + 1} (AI agent booking)`);
         } else {
@@ -8702,14 +8745,25 @@ export default function Headliners() {
     // The 2 they decline (during setup) go out of the game permanently.
     const councilDeck = shuffle([...ALL_COUNCILS]);
     const data = {}; players.forEach((p, idx) => {
-      const fields = emptyFields();
+      // v199.42: Quick Play uses 3 fields (one per principle slot) so Festival Principles
+      // can't all be fed by the same amenity pile. Classic keeps the single aggregate field
+      // from v189. Each field is still tracked individually in pd.fields; pd.amenities
+      // remains the aggregate sum for backward-compat with helpers that read it.
+      const isQP = gameModeRef.current === "quickYear";
+      const fields = isQP ? Array.from({ length: 3 }, emptyField) : emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
-      // v189: councils gone. `councils` and `councilsDealt` remain in the shape (all null / empty)
-      // so downstream code that reads them keeps working without touching every callsite.
-      // v199.18: Quick Play starts players at 0 Fame (previously 1). Classic multi-year
-      // keeps 1 as the baseline so year-start carryover / fame-economy balance isn't disrupted.
-      const startingFame = gameModeRef.current === "quickYear" ? 0 : 1;
-      data[p.id] = { stages: [], fields, amenities: sumFields(fields), fame: startingFame, baseFame: startingFame, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: [], bonusTickets: 0, stageNames: [], stageColors: [], heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: [], councils: [null], councilDiceGrantedThisYear: [false], councilAmenityGrantedThisYear: [false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
+      // v199.18: Quick Play starts players at 0 Fame.
+      const startingFame = isQP ? 0 : 1;
+      // v199.42: Quick Play gives each player 1 starting stage so the game is playable
+      // from turn 1 (the pickAmenity step that previously placed a starting stage was
+      // removed in v199.41). Future stages open via Festival Principles.
+      const startingStages = isQP ? [{ fameRequired: 0 }] : [];
+      const startingStageArtists = isQP ? [[]] : [];
+      const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).slice();
+      const startingStageName = isQP ? (availNames[Math.floor(Math.random() * (availNames.length || 1))] || "Main Stage") : null;
+      const startingStageNames = isQP && startingStageName ? [startingStageName] : [];
+      const startingStageColors = isQP ? [STAGE_COLORS[0]] : [];
+      data[p.id] = { stages: startingStages, fields, amenities: sumFields(fields), fame: startingFame, baseFame: startingFame, vpPerSecurity: 0, vp: 0, tickets: 0, rawTickets: 0, setupAmenity: null, setupField: null, hand: [], stageArtists: startingStageArtists, bonusTickets: 0, stageNames: startingStageNames, stageColors: startingStageColors, heldDice: 0, fameHighWater: 0, filledStagesHighWater: 0, councilsDealt: [], councils: [null], councilDiceGrantedThisYear: [false], councilAmenityGrantedThisYear: [false], microtrendsCompletedCount: 0, freeStageOpensUsed: [] };
     });
     setPlayerData(data); setSetupIndex(0); setSetupSelectedAmenity(null); setSetupSelectedField(null);
     // Separate 0-fame and 5-fame artists for drafting
@@ -9152,10 +9206,13 @@ export default function Headliners() {
       quickYearHistoryRef.current = initialHistory;
       // v199.25: deal Festival Principles — each player gets PRINCIPLES_PER_PLAYER random
       // ones from the pool. Shuffled independently per player so hand composition varies.
+      // v199.42: each principle is tied to a specific field (0/1/2). Players can't feed
+      // multiple principles from the same amenity pile — each principle only reads its
+      // own field's amenities. One principle per field (since PRINCIPLES_PER_PLAYER = 3).
       const initialPrinciples = {};
       players.forEach(p => {
         const shuffled = shuffle([...FESTIVAL_PRINCIPLES]);
-        initialPrinciples[p.id] = shuffled.slice(0, PRINCIPLES_PER_PLAYER).map(pr => ({ ...pr, used: false }));
+        initialPrinciples[p.id] = shuffled.slice(0, PRINCIPLES_PER_PLAYER).map((pr, i) => ({ ...pr, used: false, fieldIdx: i }));
       });
       setPlayerPrinciples(initialPrinciples);
       playerPrinciplesRef.current = initialPrinciples;
@@ -9337,7 +9394,7 @@ export default function Headliners() {
       const pe = pendingEffect;
       if (pe.type === "placeSpecific" || (pe.type === "placeAmenity" && pe.chosenType)) {
         const aType = pe.amenityType || pe.chosenType;
-        const fieldIdx = aiPickFieldForAmenity(pd, aType, year || 1);
+        const fieldIdx = aiPickFieldForAmenity(pd, aType, year || 1, gameModeRef.current === "quickYear" ? (playerPrinciplesRef.current[currentPlayerId] || []) : null);
         setPlayerData(p => {
           const cur = p[pid];
           let updated = mutateAmenity(cur, fieldIdx, aType, +1);
@@ -10119,7 +10176,7 @@ export default function Headliners() {
               logFameGain(currentPlayerId, 1, "Effect");
               setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
             } else {
-              const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1);
+              const fIdx = aiPickFieldForAmenity(pd, pk.type, year || 1, gameModeRef.current === "quickYear" ? (playerPrinciplesRef.current[currentPlayerId] || []) : null);
               setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, pk.type, +1) }));
               claimAmenityMicrotrend(currentPlayerId, pk.type);
             }
@@ -10288,7 +10345,12 @@ export default function Headliners() {
       const amenityType = pick.type || dieVal;
       const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
       const aiPd = playerData[currentPlayerId] || {};
-      const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1);
+      // v199.42: in Quick Play, AI scores fields by principle progression — pass the
+      // player's principles so the field pick targets completing an unused principle.
+      const aiPrinciples = gameModeRef.current === "quickYear"
+        ? (playerPrinciplesRef.current[currentPlayerId] || [])
+        : null;
+      const fIdx = aiPickFieldForAmenity(aiPd, amenityType, year || 1, aiPrinciples);
       setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, amenityType, +1) }));
       addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]} in F${fIdx + 1}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
@@ -10571,18 +10633,19 @@ export default function Headliners() {
       }
     }
     // v189: single field per player — auto-place, no field picker step
+    // v199.42: Quick Play now uses 3 fields. Instead of placing on field 0 directly,
+    // enter the field-picker mode — player clicks a field on the board to complete the
+    // placement. handleFieldClickForPlacement handles the actual place + decrement + turn
+    // end. Classic single-field mode places on field 0 as before.
+    if (gameModeRef.current === "quickYear") {
+      setSelectedDie(idx);
+      setPickingFieldFor(dv);
+      return;
+    }
     const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
     placeAmenityCounter(dv, 0);
     setSelectedDie(null);
     setPickingFieldFor(null);
-    // v199.11: Quick Play Fame-tier scaling — just decrement the counter here;
-    // placeAmenityCounter itself handles ending the turn when the counter hits its
-    // last pick (qyPicksLeftRef <= 1 when it runs).
-    if (gameModeRef.current === "quickYear") {
-      const left = Math.max(0, qyPicksLeftRef.current - 1);
-      setQyPicksLeft(left);
-      qyPicksLeftRef.current = left;
-    }
   };
   // v166: handleChoiceSelect removed — compound faces no longer exist.
   // Called when user clicks a field on PlayerBoard while pickingFieldFor is set
@@ -15815,17 +15878,25 @@ export default function Headliners() {
                       onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
                     />
                 )}
-                {principles.map((pr, i) => <PrincipleCard
-                  key={`p-${i}`}
-                  principle={pr}
-                  amenities={currentPD?.amenities}
-                  stageCount={(currentPD?.stages || []).length}
-                  maxStages={QUICKYEAR_MAX_STAGES}
-                  amenityIcons={AMENITY_ICONS}
-                  unusedBonus={UNUSED_PRINCIPLE_BONUS}
-                  onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
-                  small
-                />)}
+                {principles.map((pr, i) => {
+                  // v199.42: in Quick Play, pass the principle's assigned field amenities
+                  // (not the aggregate across all fields). Each principle only "sees" its
+                  // own field. Classic uses the aggregate.
+                  const am = (gameModeRef.current === "quickYear" && pr.fieldIdx != null)
+                    ? ((currentPD?.fields || [])[pr.fieldIdx] || {})
+                    : (currentPD?.amenities || {});
+                  return <PrincipleCard
+                    key={`p-${i}`}
+                    principle={pr}
+                    amenities={am}
+                    stageCount={(currentPD?.stages || []).length}
+                    maxStages={QUICKYEAR_MAX_STAGES}
+                    amenityIcons={AMENITY_ICONS}
+                    unusedBonus={UNUSED_PRINCIPLE_BONUS}
+                    onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
+                    small
+                  />;
+                })}
               </div>}
             </div>;
           })()}
