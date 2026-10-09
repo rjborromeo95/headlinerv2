@@ -1458,12 +1458,52 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           </div>;
         })}
       </div>}
-      {/* v189: single unified amenity area — no fields, no councils */}
-      <div style={{ display: "flex", justifyContent: "center", maxWidth: 620, margin: "0 auto" }}>
-        {(() => {
-          const totals = am;
-          const anyAmenity = totalAmenities > 0;
-          return <div style={{
+      {/* v199.42: multi-field layout for Quick Play (pd.fields.length > 1).
+          Each field is its own clickable card. Classic single-field falls through to the
+          original aggregate "Festival Grounds" display below. */}
+      {(() => {
+        const fields = pd?.fields || [];
+        const multi = fields.length > 1;
+        if (multi) {
+          return <div style={{ display: "grid", gridTemplateColumns: `repeat(${fields.length}, 1fr)`, gap: 10, maxWidth: 720, margin: "0 auto" }}>
+            {fields.map((f, fIdx) => {
+              const fieldTotal = AMENITY_TYPES.reduce((s, t) => s + (f?.[t] || 0), 0);
+              const canClick = pickFieldMode && !fieldsDisabled && onFieldClick;
+              return <div
+                key={fIdx}
+                onClick={canClick ? () => onFieldClick(fIdx) : undefined}
+                style={{
+                  padding: compact ? 8 : 12,
+                  borderRadius: 12,
+                  background: canClick ? "rgba(167,139,250,0.14)" : "rgba(15,14,26,0.6)",
+                  border: canClick ? "2px solid #a78bfa" : "1px solid rgba(124,58,237,0.2)",
+                  cursor: canClick ? "pointer" : "default",
+                  display: "flex",
+                  flexDirection: "column",
+                  transition: "all 0.15s",
+                  boxShadow: canClick ? "0 0 10px rgba(167,139,250,0.3)" : "none",
+                }}
+              >
+                <div style={{ fontSize: 10, color: canClick ? "#c4b5fd" : "#a78bfa", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8, textAlign: "center" }}>Field {fIdx + 1}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {AMENITY_TYPES.map(t => {
+                    const c = f?.[t] || 0;
+                    return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 24 : 28 }}>
+                      <span style={{ fontSize: 11, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                      {c > 0 && renderFieldTokens({ [t]: c }, t)}
+                    </div>;
+                  })}
+                </div>
+                {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
+              </div>;
+            })}
+          </div>;
+        }
+        // Classic single-field: original aggregate display.
+        const totals = am;
+        const anyAmenity = totalAmenities > 0;
+        return <div style={{ display: "flex", justifyContent: "center", maxWidth: 620, margin: "0 auto" }}>
+          <div style={{
             padding: compact ? 10 : 14,
             borderRadius: 12,
             background: "rgba(15,14,26,0.6)",
@@ -1484,9 +1524,9 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
               })}
             </div>
             {!anyAmenity && <div style={{ fontSize: 10, color: "#475569", textAlign: "center", marginTop: 8, fontStyle: "italic" }}>no amenities yet</div>}
-          </div>;
-        })()}
-      </div>
+          </div>
+        </div>;
+      })()}
       {totalAmenities === 0 && stages.length === 0 && <div style={{ textAlign: "center", color: "#6b7280", fontSize: 12, padding: 20 }}>No stages or amenities yet</div>}
     </div>
   );
