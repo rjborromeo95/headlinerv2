@@ -169,51 +169,106 @@ const HOTLINE_AGENTS_PER_GAME = 9; // each player's private dial has 9 agents dr
 // This rewards committing hard to a genre — you only get the big payout if you've
 // invested in building that genre's stage presence throughout the game.
 const LEGENDARY_TICKETS_PER_GENRE_ARTIST = 2;
+// v199.31: legendary artist pool. Each entry defines IDENTITY (name, genre, emoji) and
+// Spring requirement (fixed per legendary). Autumn + Winter requirements are randomized
+// at game start from LEGENDARY_REQ_POOL — see assignLegendaryReqs() for the shuffle.
+// This keeps each legendary's thematic payoff genre-aligned (Spring + ticket payout) while
+// varying how you GET to Summer each game.
 const LEGENDARY_ARTIST_POOL = [
-  { id: "elvis", name: "ELVIS PRESLEY", genre: "Rock", emoji: "👑",
-    requirements: {
-      autumn: { type: "play_genre",   genre: "Rock",     count: 1, scope: "cumulative", label: "Play a Rock artist" },
-      winter: { type: "play_genre",   genre: "Rock",     count: 2, scope: "season",     label: "Play 2 Rock artists this season" },
-      spring: { type: "on_stages",    genre: "Rock",     count: 3,                       label: "Have 3 Rock artists on stages" },
-    },
-  },
-  { id: "madonna", name: "MADONNA", genre: "Pop", emoji: "🎀",
-    requirements: {
-      autumn: { type: "play_genre",   genre: "Pop",      count: 1, scope: "cumulative", label: "Play a Pop artist" },
-      winter: { type: "tempt_genre",  genre: "Pop",      count: 1, scope: "season",     label: "Tempt a Pop artist" },
-      spring: { type: "play_genre",   genre: "Pop",      count: 2, scope: "season",     label: "Play 2 Pop artists this season" },
-    },
-  },
-  { id: "tupac", name: "TUPAC", genre: "Hip Hop", emoji: "💎",
-    requirements: {
-      autumn: { type: "play_genre",   genre: "Hip Hop",  count: 1, scope: "cumulative", label: "Play a Hip Hop artist" },
-      winter: { type: "on_stages",    genre: "Hip Hop",  count: 2,                       label: "Have 2 Hip Hop artists on stages" },
-      spring: { type: "play_genre",   genre: "Hip Hop",  count: 2, scope: "season",     label: "Play 2 Hip Hop artists this season" },
-    },
-  },
-  { id: "kraftwerk", name: "KRAFTWERK", genre: "Electronic", emoji: "🤖",
-    requirements: {
-      autumn: { type: "build_amenity", amenity: "campsite", count: 1,                   label: "Build a campsite" },
-      winter: { type: "play_genre",   genre: "Electronic", count: 2, scope: "season",   label: "Play 2 Electronic artists this season" },
-      spring: { type: "on_stages",    genre: "Electronic", count: 2,                     label: "Have 2 Electronic artists on stages" },
-    },
-  },
-  { id: "james_brown", name: "JAMES BROWN", genre: "Funk", emoji: "🕺",
-    requirements: {
-      autumn: { type: "play_genre",   genre: "Funk",     count: 1, scope: "cumulative", label: "Play a Funk artist" },
-      winter: { type: "tempt_genre",  genre: "Funk",     count: 1, scope: "season",     label: "Tempt a Funk artist" },
-      spring: { type: "on_stages",    genre: "Funk",     count: 2,                       label: "Have 2 Funk artists on stages" },
-    },
-  },
-  { id: "pixies", name: "PIXIES", genre: "Indie", emoji: "🎸",
-    requirements: {
-      autumn: { type: "play_genre",   genre: "Indie",    count: 1, scope: "cumulative", label: "Play an Indie artist" },
-      winter: { type: "play_genre",   genre: "Indie",    count: 2, scope: "season",     label: "Play 2 Indie artists this season" },
-      spring: { type: "on_stages",    genre: "Indie",    count: 3,                       label: "Have 3 Indie artists on stages" },
-    },
-  },
+  { id: "elvis",       name: "ELVIS PRESLEY", genre: "Rock",       emoji: "👑",
+    spring: { type: "on_stages", genre: "Rock",       count: 3, label: "Have 3 Rock artists on stages" } },
+  { id: "madonna",     name: "MADONNA",       genre: "Pop",        emoji: "🎀",
+    spring: { type: "play_genre", genre: "Pop",       count: 2, scope: "season", label: "Play 2 Pop artists this season" } },
+  { id: "tupac",       name: "TUPAC",         genre: "Hip Hop",    emoji: "💎",
+    spring: { type: "play_genre", genre: "Hip Hop",   count: 2, scope: "season", label: "Play 2 Hip Hop artists this season" } },
+  { id: "kraftwerk",   name: "KRAFTWERK",     genre: "Electronic", emoji: "🤖",
+    spring: { type: "on_stages", genre: "Electronic", count: 2, label: "Have 2 Electronic artists on stages" } },
+  { id: "james_brown", name: "JAMES BROWN",   genre: "Funk",       emoji: "🕺",
+    spring: { type: "on_stages", genre: "Funk",       count: 2, label: "Have 2 Funk artists on stages" } },
+  { id: "pixies",      name: "PIXIES",        genre: "Indie",      emoji: "🎸",
+    spring: { type: "on_stages", genre: "Indie",      count: 3, label: "Have 3 Indie artists on stages" } },
 ];
+
+// v199.31: pool of randomizable Autumn/Winter requirements. Each game, every drawn
+// legendary rolls 2 distinct options from this pool for their first two slots.
+// The {genre} placeholder is substituted with the legendary's own genre.
+// Positional reqs (tempt_position) carry firstComeOnly: true — only the first player
+// to claim gets the token for that season, no one else.
+const LEGENDARY_REQ_POOL = [
+  { type: "microtrend_claim", count: 1, label: "Match a microtrend this season" },
+  { type: "gain_fame", count: 2, label: "Gain 2 Fame this season" },
+  { type: "tempt_genre_dynamic", count: 1, scope: "season", label: "Tempt a {genre} artist this season" },
+  { type: "tempt_position", position: 0, label: "Tempt the artist in the 1st pool position", firstComeOnly: true },
+  { type: "tempt_position", position: 1, label: "Tempt the artist in the 2nd pool position", firstComeOnly: true },
+  { type: "tempt_position", position: 2, label: "Tempt the artist in the 3rd pool position", firstComeOnly: true },
+  { type: "tempt_position", position: 3, label: "Tempt the artist in the 4th pool position", firstComeOnly: true },
+  { type: "tempt_position", position: 4, label: "Tempt the artist in the 5th pool position", firstComeOnly: true },
+];
+
+// v199.31: materialize randomized Autumn/Winter reqs for a given legendary. Picks 2 distinct
+// options from LEGENDARY_REQ_POOL and substitutes the legendary's genre where needed.
+function assignLegendaryReqs(legendary) {
+  // Shuffle a copy of the pool, pick first 2 distinct types.
+  const pool = [...LEGENDARY_REQ_POOL];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  // Prefer type diversity — don't double up on tempt_position (would mean two different
+  // position tokens, which could land cleanly but feels samey). Drop duplicate type picks.
+  const picked = [];
+  const seenTypes = new Set();
+  for (const req of pool) {
+    if (picked.length >= 2) break;
+    if (seenTypes.has(req.type)) continue;
+    seenTypes.add(req.type);
+    picked.push(req);
+  }
+  const materialize = (req) => {
+    if (req.type === "tempt_genre_dynamic") {
+      return { type: "tempt_genre", genre: legendary.genre, count: req.count, scope: req.scope, label: `Tempt a ${legendary.genre} artist this season` };
+    }
+    return { ...req };
+  };
+  return {
+    autumn: materialize(picked[0]),
+    winter: materialize(picked[1]),
+    spring: legendary.spring,
+  };
+}
 const LEGENDARY_ARTISTS_PER_GAME = 3;
+
+// v199.32: Favour cards — DUAL-USE mechanic. 2 per genre (12 total across all 6 genres),
+// shuffled into the artist deck at game start. Drawn to HAND (not auto-converted), where
+// they occupy a hand slot (count toward the 8-card limit).
+//
+// Two uses, player's choice:
+//   1. HOLD → at game end, each Favour in hand converts to +1 token for the matching
+//      Legendary artist (if that genre's Legendary was drawn this game).
+//   2. CASH IN → during any turn, play a pool artist whose genre matches the Favour.
+//      Fame tier gate STILL applies (you must be at the artist's Fame requirement),
+//      but AMENITY costs are WAIVED. Does NOT use the main turn action (free bonus
+//      play alongside normal action). Overrides existing tempts on the artist —
+//      any Hotline agents placed on that artist are cancelled (no refund, their
+//      spin is spent).
+//
+// Favours fresh at game start only — don't reshuffle from the discard pile.
+const FAVOURS_PER_GENRE = 2;
+const FAVOUR_GENRES = ["Rock", "Pop", "Hip Hop", "Electronic", "Funk", "Indie"];
+// Unique name per card instance so the deck's dedupe-by-name machinery (getInUseNames)
+// doesn't incorrectly treat two copies of the same-genre Favour as the same card and
+// block reshuffling. The suffix is internal — the UI shows the genre, not the name.
+function buildFavourCard(genre, idx) {
+  return {
+    isFavour: true,
+    genre,
+    name: `Favour: ${genre} #${idx + 1}`,
+    fame: 0,
+    tickets: 0,
+    effect: "",
+    campCost: 0, portalooCost: 0, securityCost: 0, cateringCost: 0,
+  };
+}
 
 // v199.25: Festival Principles — replaces microtrend/stage-die as the path to opening stages.
 // Each player draws 3 principles at game start (hidden). When a principle's amenity
@@ -1009,6 +1064,32 @@ function FameBreakdown({ pid, fameLog, year, children, style, currentFame }) {
 }
 
 function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable, genreMatchGlow }) {
+  // v199.32: Favour cards — solid genre color, big genre name, dual-use hint.
+  // In hand: clickable to open the free-play picker (plays a matching-genre pool artist).
+  // In pool: clickable to pick up (goes to hand). At game end: +1 token for matching
+  // Legendary (if drawn).
+  if (artist && artist.isFavour) {
+    const mobF = typeof window !== "undefined" && window.innerWidth < 768;
+    const szF = small
+      ? (mobF ? { width: 140, minHeight: 100, padding: "8px 10px" } : { width: 110, minHeight: 90, padding: "6px 8px" })
+      : (mobF ? { width: 170, minHeight: 140, padding: "10px 12px" } : { width: 150, minHeight: 130, padding: "8px 10px" });
+    const favBg = GENRE_COLORS[artist.genre] || "#fbbf24";
+    return (
+      <div onClick={disabled ? undefined : onClick} style={{
+        ...szF, borderRadius: mobF ? 12 : 10, border: "2px dashed #fff",
+        background: favBg, color: "#fff", cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.4 : 1, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center", gap: 4,
+        position: "relative", overflow: "hidden", transition: "all 0.15s", flexShrink: 0,
+        boxShadow: "0 0 14px rgba(255,255,255,0.4), 0 2px 8px rgba(0,0,0,0.3)",
+        animation: !disabled ? "affordPulse 2s ease-in-out infinite" : "none",
+      }}>
+        <div style={{ fontSize: 9, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", opacity: 0.9 }}>🎴 Favour</div>
+        <div style={{ fontSize: small ? 20 : 26, fontWeight: 900, textAlign: "center", letterSpacing: 1, textTransform: "uppercase", lineHeight: 1 }}>{artist.genre}</div>
+        <div style={{ fontSize: 8, opacity: 0.9, fontStyle: "italic", textAlign: "center", lineHeight: 1.2 }}>Play {artist.genre} free (no amenities)<br/>or hold → +1 token</div>
+      </div>
+    );
+  }
   const gs = getGenres(artist.genre);
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
   const grad = gs.length > 1 ? `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)` : undefined;
@@ -1950,6 +2031,20 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // truly starved for cards and otherwise falls to Priority 3 (build amenities) so
   // it actually unlocks the artists it already has in hand.
   const handSize = (pd.hand || []).length;
+  // v199.33: Favour-in-pool bias. If there's a Favour the AI should grab (per the
+  // scoreCardForAI logic in the pool-pick phase), boost the chance of choosing a draw
+  // action. The actual pick decision is made downstream — here we just make draw more
+  // likely to be chosen as the top-level action. Early game (autumn) = always consider,
+  // mid-late game only if hand isn't full.
+  const favourInPool = (artistPool || []).some(a => a && a.isFavour);
+  if (favourInPool && handSize < 7) {
+    if (artistPool.length > 0) {
+      // Pick the Favour's pool index (first one, if several) — the downstream scorer
+      // will pick the best Favour vs best artist anyway.
+      const favIdx = artistPool.findIndex(a => a && a.isFavour);
+      return { action: "reserve", poolIdx: favIdx };
+    }
+  }
   if (handSize < 3) {
     if (artistPool.length > 0) {
       // Pick best from pool
@@ -2463,6 +2558,11 @@ export default function Headliners() {
   const [frankiePicker, setFrankiePicker] = useState(null);
   // v199.28: Problem-Solver Parv's "play from hand on loss" picker.
   const [parvPicker, setParvPicker] = useState(null);
+  // v199.32: Favour free-play mode. When a player clicks a Favour in their hand,
+  // this holds { pid, handIdx, genre } and opens a pool picker filtered to matching
+  // artists. Picking an artist triggers playFavouredArtist (Fame waived, amenities req'd,
+  // free bonus action, overrides tempts). Null when idle.
+  const [favourPlayMode, setFavourPlayMode] = useState(null);
   const [leannePending, setLeannePending] = useState(null);
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
@@ -2685,6 +2785,12 @@ export default function Headliners() {
     // v198: Quick Play — track Fame gained for the "Most Fame gained this season"
     // metric. Positive amounts only (losses don't count as gains).
     if (amount > 0) bumpSeasonStat(pid, "fameGained", amount);
+    // v199.31: Fame gains can satisfy "Gain X Fame this season" Legendary reqs. Defer
+    // by a tick so the setPlayerData driving the Fame change has flushed before the
+    // checker reads pd.fame.
+    if (gameModeRef.current === "quickYear" && amount > 0) {
+      setTimeout(() => checkLegendaryContracts(pid), 60);
+    }
     // v197.12/19: "VIP Passes" (cat_3) — the catering leader gets +1 ticket every time
     // they GAIN Fame (positive amounts only, not losses). Bookkeeping-only, no popup
     // because this can fire many times per turn.
@@ -3716,7 +3822,7 @@ export default function Headliners() {
     const freshCounters = {};
     players.forEach(p => {
       freshCounters[p.id] = {
-        microtrends: 0, amenities: 0, campsitesBuilt: 0, plays: 0,
+        microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0,
         genrePlays: {}, genreTempts: {},
       };
     });
@@ -4063,11 +4169,14 @@ export default function Headliners() {
     legendaries.forEach(la => {
       // v199.22: multiple players can claim each season's token. Skip only if THIS player
       // has already claimed it (no self-double-dip). Other players claiming it doesn't block us.
+      // v199.31: firstComeOnly reqs (positional tempts) — if any other player has already
+      // claimed this season for this legendary, nobody else can earn it.
       const existing = (legendaryTokensRef.current[la.id] || {})[season] || [];
       if (existing.includes(pid)) return;
 
       const req = la.requirements[season];
       if (!req) return;
+      if (req.firstComeOnly && existing.length > 0) return; // another player already got it
 
       let met = false;
       switch (req.type) {
@@ -4108,7 +4217,27 @@ export default function Headliners() {
             const built = counters.campsitesBuilt || 0;
             met = built >= req.count;
           }
-          // Future-proofed: other amenity types could be added here if needed.
+          break;
+        }
+        // v199.31: new randomizable req types from LEGENDARY_REQ_POOL.
+        case "microtrend_claim": {
+          // Matching microtrends this season (bumped in seasonCounters.microtrends on claim).
+          const claimed = counters.microtrends || 0;
+          met = claimed >= req.count;
+          break;
+        }
+        case "gain_fame": {
+          // Delta from this season's start. seasonStartSnapshotRef is captured at season boundary.
+          const snapFame = (seasonStartSnapshotRef.current[pid]?.fame) ?? 0;
+          const currentFame = pd.fame != null ? pd.fame : (pd.baseFame || 0);
+          met = (currentFame - snapFame) >= req.count;
+          break;
+        }
+        case "tempt_position": {
+          // Did this player tempt an artist in the required pool position THIS SEASON?
+          // positionsTemptedBy is per-player per-season set-like array; bumped at tempt-placement time.
+          const positions = (counters.positionsTempted || []);
+          met = positions.includes(req.position);
           break;
         }
       }
@@ -4194,7 +4323,7 @@ export default function Headliners() {
     if (gameModeRef.current !== "quickYear" || !artist) return;
     const artistGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
     const next = { ...(seasonCountersRef.current || {}) };
-    const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+    const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], genrePlays: {}, genreTempts: {} };
     const nextGenreTempts = { ...(cur.genreTempts || {}) };
     artistGenres.forEach(g => { nextGenreTempts[g] = (nextGenreTempts[g] || 0) + 1; });
     next[pid] = { ...cur, genreTempts: nextGenreTempts };
@@ -4289,19 +4418,50 @@ export default function Headliners() {
     let legendaryResults = null;
     if (isGameEnd) {
       const legendaries = gameLegendaryArtistsRef.current || [];
-      const tokens = legendaryTokensRef.current || {};
       const livePD = playerDataRef.current || playerData;
+      // v199.32: convert each player's unused Favour cards into Legendary tokens at
+      // game end. A Favour converts if there's a drawn Legendary of its genre (otherwise
+      // the Favour has no end-of-game value). All conversions happen before the token
+      // tally below. Mutates legendaryTokens via setLegendaryTokens; also mutates the
+      // local tokens variable so the tally reads the post-conversion state.
+      const workingTokens = { ...(legendaryTokensRef.current || {}) };
+      const legendaryByGenre = {};
+      legendaries.forEach(la => { legendaryByGenre[la.genre] = la; });
+      let totalConverted = 0;
+      players.forEach(p => {
+        const hand = livePD[p.id]?.hand || [];
+        hand.forEach(card => {
+          if (!card || !card.isFavour) return;
+          const matchingLegendary = legendaryByGenre[card.genre];
+          if (!matchingLegendary) return; // genre's Legendary wasn't drawn → no token
+          const cur = workingTokens[matchingLegendary.id] || { autumn: [], winter: [], spring: [], favour: [] };
+          const favBucket = Array.isArray(cur.favour) ? [...cur.favour] : [];
+          favBucket.push(p.id);
+          workingTokens[matchingLegendary.id] = { ...cur, favour: favBucket };
+          totalConverted++;
+          const pName = players.find(pl => pl.id === p.id)?.festivalName || "?";
+          addLog(`🎴 ${matchingLegendary.emoji} ${matchingLegendary.name}`, `${pName}: unused ${card.genre} Favour → +1 token at game end`);
+        });
+      });
+      if (totalConverted > 0) {
+        setLegendaryTokens(workingTokens);
+        legendaryTokensRef.current = workingTokens;
+      }
+      const tokens = workingTokens;
       legendaryResults = legendaries.map(la => {
         const seasons = tokens[la.id] || {};
         // v199.22: each season's claimer entry is now an ARRAY of pids. Walk every entry
         // in each array to tally per-player tokens.
         const tokenCounts = {};
-        ["autumn", "winter", "spring"].forEach(sKey => {
+        // v199.31: include "favour" bucket alongside seasonal tokens — Favour cards drawn
+        // from the deck grant +1 token each (unlimited stacking). Players can tie or win
+        // off favours alone.
+        ["autumn", "winter", "spring", "favour"].forEach(sKey => {
           (seasons[sKey] || []).forEach(pid => {
             if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
           });
         });
-        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [] };
+        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [], favour: seasons.favour || [] };
         const maxCount = Math.max(0, ...Object.values(tokenCounts));
         if (maxCount === 0) {
           return { artist: la, winner: null, outcome: "no_tokens", tokenCounts, perSeason };
@@ -5031,6 +5191,14 @@ export default function Headliners() {
   const placeAgentOnArtist = (pid, poolIdx) => {
     const artist = artistPool[poolIdx];
     if (!artist) return false;
+    // v199.31: Favour cards can't be tempted — they're one-shot token grants, not artists
+    // to play. Pool-pick works on them (via draw2PickFromPool, where they're consumed and
+    // the token is awarded). Tempt flow would be nonsensical for a non-artist.
+    if (artist.isFavour) {
+      const pName = players.find(p => p.id === pid)?.festivalName || "?";
+      addLog(pName, `Can't tempt a Favour card — pick it from the pool to add it to your hand`);
+      return false;
+    }
     if (temptModeRef.current) {
       const pd = playerData[pid] || {};
       const tempts = (temptPlacements[pid] || []);
@@ -5065,6 +5233,21 @@ export default function Headliners() {
         };
         setTemptPlacements(prev => ({ ...prev, [pid]: [...(prev[pid] || []), basePlacement] }));
         markAgentUsed(pid);
+        // v199.31: track the pool POSITION of this tempt placement for Legendary
+        // position reqs ("Tempt the artist in the 3rd pool position"). The position is
+        // captured at placement time — pool state can shift later but what counts is
+        // where the artist was when the Hotline agent landed on them. Also runs the
+        // Legendary checker in case this placement completes a position req.
+        if (artist && !artist.isFavour) {
+          const next = { ...(seasonCountersRef.current || {}) };
+          const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {} };
+          const positions = Array.isArray(cur.positionsTempted) ? [...cur.positionsTempted] : [];
+          if (!positions.includes(poolIdx)) positions.push(poolIdx);
+          next[pid] = { ...cur, positionsTempted: positions };
+          setSeasonCounters(next);
+          seasonCountersRef.current = next;
+          checkLegendaryContracts(pid);
+        }
         setTimeout(() => recalcTickets(), 30);
         addLog("📞 Hotline", `${pName} tempted ${artist.name} via ${agent.emoji} ${agent.name}`);
         showFloatingBonus(`${agent.emoji} ${agent.name}`, "#fcd34d");
@@ -7903,6 +8086,67 @@ export default function Headliners() {
     setTimeout(() => recalcTickets(), 50);
   }
 
+  // v199.34: Favour free-play helper. Rules:
+  //   - Fame tier gate STILL applies (player must be at the artist's Fame requirement)
+  //   - Amenity costs WAIVED (the Favour pays the backstage/venue price)
+  //   - Does NOT consume the main turn action (free bonus)
+  //   - Overrides any tempts placed on the pool artist — tempt placements are cancelled,
+  //     Hotline agents are marked spent (no refund of their one tempt per season)
+  //   - Favour card is sent to the discard pile (reshuffles into deck when deck empties)
+  //   - The artist play fires normal consequences (play effects, genre tracking, etc.)
+  function playFavouredArtist(pid, favourHandIdx, poolIdx, stageIdx) {
+    const pd = (playerDataRef.current || playerData)[pid] || {};
+    const favour = (pd.hand || [])[favourHandIdx];
+    const artist = artistPool[poolIdx];
+    if (!favour || !favour.isFavour) return;
+    if (!artist || artist.isFavour) return;
+    const artistGenres = (artist.genre || "").split(",").map(g => g.trim());
+    if (!artistGenres.includes(favour.genre)) return;
+    // Fame tier gate — Favour does NOT bypass Fame.
+    if ((pd.fame || 0) < (artist.fame || 0)) {
+      const pName = players.find(p => p.id === pid)?.festivalName || "?";
+      addLog(`🎴 ${favour.genre} Favour`, `${pName}: can't play ${artist.name} — Favour doesn't bypass Fame (need 🔥 ${artist.fame}, you have ${pd.fame || 0})`);
+      return;
+    }
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    // Cancel any existing tempt placements on this artist across all players.
+    let cancelledTempts = 0;
+    setTemptPlacements(prev => {
+      const next = {};
+      Object.entries(prev).forEach(([pidKey, placements]) => {
+        const kept = (placements || []).filter(pl => {
+          if (pl.artistName === artist.name) { cancelledTempts++; return false; }
+          return true;
+        });
+        next[pidKey] = kept;
+      });
+      return next;
+    });
+    if (cancelledTempts > 0) {
+      addLog(`🎴 ${favour.genre} Favour`, `${pName} overrides ${cancelledTempts} tempt${cancelledTempts === 1 ? "" : "s"} on ${artist.name} — Hotline agents spent, no refund`);
+    }
+    // Remove the Favour from hand + remove the artist from pool, in one setPlayerData/pool pass.
+    setPlayerData(p => {
+      const cur = p[pid] || {};
+      const newHand = [...(cur.hand || [])];
+      newHand.splice(favourHandIdx, 1);
+      return { ...p, [pid]: { ...cur, hand: newHand } };
+    });
+    setArtistPool(prev => {
+      const next = [...prev];
+      next.splice(poolIdx, 1);
+      return next;
+    });
+    // v199.33: send the spent Favour to the discard pile so it can reshuffle back into
+    // the deck when the deck runs dry. Favours are a recurring resource, not one-shot.
+    setDiscardPile(prev => [...prev, favour]);
+    // Place the artist on the chosen stage. bookArtistToStage runs normal play consequences.
+    bookArtistToStage(artist, stageIdx, pid, false, false);
+    addLog(`🎴 ${favour.genre} Favour`, `${pName}: cashed Favour → played ${artist.name} free from pool (amenities waived)`);
+    showFloatingBonus(`🎴 ${artist.name}!`, "#fcd34d");
+    setFavourPlayMode(null);
+  }
+
   // ─── Book artist to stage ───
   function bookArtistToStage(artist, stageIdx, pid, viaAgent = false, viaGenreMatch = false) {
     // v169: derive viaTempt from context. Under tempt mode, viaAgent=true means the
@@ -8013,7 +8257,7 @@ export default function Headliners() {
     if (gameModeRef.current === "quickYear") {
       const artistGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
       const next = { ...(seasonCountersRef.current || {}) };
-      const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, plays: 0, genrePlays: {}, genreTempts: {} };
+      const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {} };
       const nextGenrePlays = { ...(cur.genrePlays || {}) };
       artistGenres.forEach(g => { nextGenrePlays[g] = (nextGenrePlays[g] || 0) + 1; });
       next[pid] = { ...cur, plays: (cur.plays || 0) + 1, genrePlays: nextGenrePlays };
@@ -8165,7 +8409,7 @@ export default function Headliners() {
         } }));
         addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
         showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
         // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
         bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
@@ -8213,7 +8457,7 @@ export default function Headliners() {
         } }));
         addLog("🎵 Microtrend", `${festival} claimed the forecast "${claimedTrend.genre}" microtrend (anti-lead) → +${fameGain} 🔥 Fame!`);
         setLastActionFor(pid, `claimed the ${claimedTrend.genre} forecast Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
+        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
         showFloatingBonus(`🎵 ${claimedTrend.genre} (Forecast)!`, GENRE_COLORS[claimedTrend.genre] || "#fbbf24");
         // v197.12/22: "Word of Mouth" (port_3) also fires on forecast claims.
         // Interactive pool-or-deck picker (see comment at first site).
@@ -8773,7 +9017,7 @@ export default function Headliners() {
       const freshCounters = {};
       players.forEach(p => {
         freshCounters[p.id] = {
-          microtrends: 0, amenities: 0, campsitesBuilt: 0, plays: 0,
+          microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0,
           genrePlays: {}, genreTempts: {},
         };
       });
@@ -8781,13 +9025,28 @@ export default function Headliners() {
       seasonCountersRef.current = freshCounters;
       // v199.21: draw 3 legendary artists from the pool. These are visible to all players
       // for the whole game — the public "legendary lineup" they're competing to acquire.
-      const chosenLegendaries = shuffle([...LEGENDARY_ARTIST_POOL]).slice(0, LEGENDARY_ARTISTS_PER_GAME);
+      // v199.31: for each drawn legendary, roll randomized Autumn + Winter reqs from
+      // LEGENDARY_REQ_POOL. Spring stays fixed per the legendary's identity.
+      const chosenLegendariesBase = shuffle([...LEGENDARY_ARTIST_POOL]).slice(0, LEGENDARY_ARTISTS_PER_GAME);
+      const chosenLegendaries = chosenLegendariesBase.map(la => ({
+        ...la,
+        requirements: assignLegendaryReqs(la),
+      }));
       setGameLegendaryArtists(chosenLegendaries);
       gameLegendaryArtistsRef.current = chosenLegendaries;
+      // v199.32: generate 12 Favour cards (FAVOURS_PER_GENRE × 6 genres) and shuffle
+      // them into the artist deck. Favour genres cover all 6 regardless of which 3
+      // Legendaries were drawn — Favours of undrawn-Legendary genres still have use
+      // via the free-play path (just no end-of-game token value).
+      const favours = [];
+      FAVOUR_GENRES.forEach(g => {
+        for (let i = 0; i < FAVOURS_PER_GENRE; i++) favours.push(buildFavourCard(g, i));
+      });
+      setArtistDeck(prev => shuffle([...prev, ...favours]));
       const initialTokens = {};
       // v199.22: each season's slot is now an ARRAY of pids who claimed, not a single pid.
       // Every player who meets the req earns their own token — no first-to-claim gating.
-      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: [], winter: [], spring: [] }; });
+      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: [], winter: [], spring: [], favour: [] }; });
       setLegendaryTokens(initialTokens);
       legendaryTokensRef.current = initialTokens;
       setLegendaryResolution(null);
@@ -9005,7 +9264,7 @@ export default function Headliners() {
         // v199.21: also tracks campsite builds for Legendary (Kraftwerk Autumn).
         if (gameModeRef.current === "quickYear") {
           const next = { ...(seasonCountersRef.current || {}) };
-          const curSc = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+          const curSc = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], genrePlays: {}, genreTempts: {} };
           next[pid] = {
             ...curSc,
             amenities: (curSc.amenities || 0) + 1,
@@ -9668,6 +9927,66 @@ export default function Headliners() {
           players.map(pl => [pl.id, (playerData[pl.id]?.amenities || {})])
         ),
       } : null;
+      // v199.34: AI Favour cash-in check — fires BEFORE the main decision. Free action
+      // (doesn't use the main turn action), so if a Favour is worth cashing, we fire it
+      // and reschedule aiStep. The AI then re-enters with the Favour gone from hand
+      // and proceeds to main decision (or cashes another Favour if multiple are worth it).
+      // Terminates when no more Favours meet the threshold.
+      if (gameModeRef.current === "quickYear") {
+        const legendaries = gameLegendaryArtistsRef.current || [];
+        const legendaryGenres = new Set(legendaries.map(la => la.genre));
+        const favoursInHand = (pd.hand || [])
+          .map((card, idx) => (card && card.isFavour) ? { card, idx } : null)
+          .filter(x => x);
+        if (favoursInHand.length > 0) {
+          const openStages = (pd.stageArtists || []).map((sa, i) => (sa || []).length < 3 ? i : -1).filter(i => i >= 0);
+          const candidates = [];
+          if (openStages.length > 0) {
+            favoursInHand.forEach(({ card: fav, idx: favIdx }) => {
+              const genre = fav.genre;
+              const matchingLegendary = legendaryGenres.has(genre);
+              artistPool.forEach((artist, poolIdx) => {
+                if (!artist || artist.isFavour) return;
+                const gs = (artist.genre || "").split(",").map(g => g.trim());
+                if (!gs.includes(genre)) return;
+                // Fame tier gate — Favour doesn't bypass Fame.
+                if ((pd.fame || 0) < (artist.fame || 0)) return;
+                // Score the cash-in
+                let s = (artist.fame || 0) * 2 + (artist.tickets || 0);
+                // Amenity cost savings — each amenity waived ≈ 2 value (the cost of a die pick)
+                const amenitySavings = (artist.campCost || 0) + (artist.securityCost || 0) + (artist.portalooCost || 0) + (artist.cateringCost || 0);
+                s += amenitySavings * 2;
+                // Lane commitment — AI has already played 2+ of this genre
+                const playedOfGenre = (pd.stageArtists || []).flat().filter(a => {
+                  const ags = (a.genre || "").split(",").map(g => g.trim());
+                  return ags.includes(genre);
+                }).length;
+                if (playedOfGenre >= 2) s += 4;
+                // Legendary contribution — artist of this genre adds to the ticket count
+                if (matchingLegendary) s += 3;
+                // Tempt override — stealing from opponents
+                const tempts = getPlacementsOnArtist(artist.name).filter(pl => pl.pid !== currentPlayerId);
+                if (tempts.length > 0) s += 5;
+                candidates.push({ favIdx, poolIdx, artist, s, matchingLegendary });
+              });
+            });
+          }
+          if (candidates.length > 0) {
+            candidates.sort((a, b) => b.s - a.s);
+            const best = candidates[0];
+            // Threshold: higher if holding would convert to a token (matching Legendary),
+            // lower if the Favour has no end-of-game value (no matching Legendary).
+            const threshold = best.matchingLegendary ? 15 : 6;
+            if (best.s >= threshold) {
+              const stageIdx = openStages[0]; // pick first open stage; could be smarter later
+              addLog("🤖 AI", `${currentPlayer.festivalName}: cashing ${best.artist.genre} Favour on ${best.artist.name} (score ${best.s})`);
+              playFavouredArtist(currentPlayerId, best.favIdx, best.poolIdx, stageIdx);
+              scheduleNext(500);
+              return;
+            }
+          }
+        }
+      }
       const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
@@ -9726,6 +10045,64 @@ export default function Headliners() {
         const deckDrawCount = getDeckDrawCount(pd);
         const drawn = [];
 
+        // v199.33: Favour scoring for the AI. Values Favours based on:
+        //   - Early-game aggression (grab in Autumn when they're freshest)
+        //   - Matching Legendary present (end-of-game token worth +2 per genre artist)
+        //   - Matching artists in AI's hand (future free-plays)
+        //   - 50%+ of AI's played artists match (committed-lane bonus)
+        //   - Opponents heavily playing this genre (denial opportunity)
+        const scoreCardForAI = (card) => {
+          if (!card) return 0;
+          if (card.isFavour) {
+            const genre = card.genre;
+            let s = 4; // baseline — Favours have utility even standalone
+            // 1. Early-game bias
+            const season = quickYearSeasonRef.current;
+            if (season === "autumn") s += 12;
+            else if (season === "winter") s += 6;
+            else if (season === "spring") s += 3;
+            // 2. Matching Legendary present (end-of-game token value)
+            const legendaries = gameLegendaryArtistsRef.current || [];
+            const matchingLegendary = legendaries.find(la => la.genre === genre);
+            if (matchingLegendary) s += 8;
+            // 3. Matching artists in AI's hand (future free-plays)
+            const hand = pd.hand || [];
+            const handMatches = hand.filter(h => {
+              if (!h || h.isFavour) return false;
+              const gs = (h.genre || "").split(",").map(g => g.trim());
+              return gs.includes(genre);
+            }).length;
+            s += handMatches * 3;
+            // 4. 50%+ of AI's played artists are this genre
+            const stageArtists = (pd.stageArtists || []).flat();
+            if (stageArtists.length >= 2) {
+              const matches = stageArtists.filter(a => {
+                const gs = (a.genre || "").split(",").map(g => g.trim());
+                return gs.includes(genre);
+              }).length;
+              const ratio = matches / stageArtists.length;
+              if (ratio >= 0.5) s += 10;
+              else if (ratio >= 0.3) s += 4;
+            }
+            // 5. Denial — opponents heavily investing in this genre
+            const allPD = playerDataRef.current || playerData;
+            let maxOppGenre = 0;
+            Object.entries(allPD).forEach(([pidKey, opd]) => {
+              if (parseInt(pidKey) === currentPlayerId) return;
+              const theirStageArts = (opd.stageArtists || []).flat();
+              const theirMatches = theirStageArts.filter(a => {
+                const gs = (a.genre || "").split(",").map(g => g.trim());
+                return gs.includes(genre);
+              }).length;
+              maxOppGenre = Math.max(maxOppGenre, theirMatches);
+            });
+            if (maxOppGenre >= 3) s += 8;
+            else if (maxOppGenre >= 2) s += 4;
+            return s;
+          }
+          return (card.vp || 0) + (card.tickets || 0);
+        };
+
         // Estimated value from a deck draw: draws are blind, so use average pool artist
         // value as a proxy for expected per-card value from the deck. Multiplied by N cards.
         // Slight discount (0.85x) because the AI doesn't get to pick from a deck draw.
@@ -9734,11 +10111,11 @@ export default function Headliners() {
           : 6; // fallback baseline
         const deckEV = avgArtistVal * deckDrawCount * 0.85;
 
-        // Best pool card value (guaranteed pick)
+        // Best pool card value (guaranteed pick) — now uses the Favour-aware scorer.
         const bestPool = pickable.length > 0
-          ? [...pickable].sort((a, b) => (b.vp + b.tickets) - (a.vp + a.tickets))[0]
+          ? [...pickable].sort((a, b) => scoreCardForAI(b) - scoreCardForAI(a))[0]
           : null;
-        const bestPoolVal = bestPool ? (bestPool.vp || 0) + (bestPool.tickets || 0) : 0;
+        const bestPoolVal = bestPool ? scoreCardForAI(bestPool) : 0;
 
         // AI chooses deck if EV higher AND deck has cards; otherwise pool
         if (bestPool && bestPoolVal >= deckEV) {
@@ -9900,7 +10277,7 @@ export default function Headliners() {
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]}!`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
@@ -9922,7 +10299,7 @@ export default function Headliners() {
       } }));
       addLog("🏛️ Council Incentive", `${festival} matched the forecast "${AMENITY_LABELS[amenityType]}" (anti-lead) → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} forecast Council Incentive (+${fameGain} Fame)`);
-      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); }
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
@@ -9944,7 +10321,7 @@ export default function Headliners() {
     // v199.21: also tracks campsite builds for Legendary (Kraftwerk Autumn).
     if (gameModeRef.current === "quickYear") {
       const next = { ...(seasonCountersRef.current || {}) };
-      const curSc = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, genrePlays: {}, genreTempts: {} };
+      const curSc = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], genrePlays: {}, genreTempts: {} };
       next[currentPlayerId] = {
         ...curSc,
         amenities: (curSc.amenities || 0) + 1,
@@ -10328,8 +10705,19 @@ export default function Headliners() {
     finishDraw2(drawn);
   };
   const finishDraw2 = (picks) => {
+    // v199.32: Favours now go to HAND like regular artists (no auto-token). They sit
+    // in hand until the player chooses to cash them in (free play from pool) or holds
+    // them to game end (converts to Legendary tokens for matching genre).
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
-    picks.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
+    picks.forEach(pick => {
+      if (!pick) return;
+      if (pick.isFavour) {
+        addLog(currentPlayer.festivalName, `drew a ${pick.genre} Favour → to hand`);
+        showFloatingBonus(`🎴 ${pick.genre} Favour!`, "#fcd34d");
+      } else {
+        trackGoalProgress(currentPlayerId, "artistsSigned");
+      }
+    });
     // Council reward: drawArtists councils give +N additional artists from deck
     applyDrawArtistsBonus(currentPlayerId);
     setDraw2Picks([]); setDraw2DeckCard(null);
@@ -12898,6 +13286,84 @@ export default function Headliners() {
       })()}
       {/* v199.28: Problem-Solver Parv picker — pick an affordable artist from your hand
           to play free as consolation after a contest loss. */}
+      {/* v199.32: Favour free-play picker. Two-step: (1) show matching pool artists;
+          (2) once an artist is chosen, show a stage picker filtered to stages whose
+          amenity requirements the artist can meet. Fame is waived; amenities still req'd. */}
+      {favourPlayMode && (() => {
+        const { pid, handIdx, genre, chosenArtist, chosenPoolIdx } = favourPlayMode;
+        const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        const pd = (playerDataRef.current || playerData)[pid] || {};
+        const cancel = () => { addLog(`🎴 ${genre} Favour`, `${pName}: cancelled Favour play`); setFavourPlayMode(null); };
+        // Step 2: artist chosen, now pick a stage. v199.34: amenities are waived — every
+        // open stage is valid. Only requirement is a free slot.
+        if (chosenArtist) {
+          const openStages = (pd.stageArtists || []).map((_, i) => i).filter(i => (pd.stageArtists?.[i] || []).length < 3);
+          const chooseStage = (sIdx) => {
+            playFavouredArtist(pid, handIdx, chosenPoolIdx, sIdx);
+          };
+          return (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+              <div style={{ ...card, textAlign: "center", maxWidth: 540, width: "100%" }}>
+                <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🎴 {genre} Favour → Pick Stage</h3>
+                <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>
+                  Playing <strong style={{ color: "#e2e8f0" }}>{chosenArtist.name}</strong>. Amenities waived — any stage with space works.
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(3, openStages.length || 1)}, 1fr)`, gap: 10 }}>
+                  {openStages.map(i => {
+                    const stageName = (pd.stageNames || [])[i] || `Stage ${i + 1}`;
+                    return (
+                      <button key={i} onClick={() => chooseStage(i)} style={{
+                        ...bs, padding: 10, textAlign: "center",
+                        background: "rgba(252,211,77,0.15)",
+                        border: "1px solid #fcd34d",
+                        color: "#fcd34d",
+                        cursor: "pointer",
+                      }}>
+                        <div style={{ fontWeight: 800, fontSize: 13 }}>{stageName}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {openStages.length === 0 && <div style={{ color: "#f87171", fontSize: 11, marginTop: 10 }}>No open stages — can't play here.</div>}
+                <button onClick={() => setFavourPlayMode({ ...favourPlayMode, chosenArtist: null, chosenPoolIdx: null })} style={{ ...bs, marginTop: 12, fontSize: 11, color: "#94a3b8" }}>← Back</button>
+                <button onClick={cancel} style={{ ...bs, marginTop: 12, marginLeft: 8, fontSize: 11, color: "#f87171" }}>Cancel</button>
+              </div>
+            </div>
+          );
+        }
+        // Step 1: show matching pool artists — filtered to those the player can reach
+        // (Fame tier gate still applies). Artists above the player's Fame are shown with
+        // a locked overlay so the player knows WHY they can't cash the Favour.
+        const matchingPoolArtists = artistPool.map((a, i) => ({ a, i })).filter(({ a }) => {
+          if (!a || a.isFavour) return false;
+          const gs = (a.genre || "").split(",").map(g => g.trim());
+          return gs.includes(genre);
+        });
+        const playerFame = pd.fame || 0;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 975, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ ...card, textAlign: "center", maxWidth: 680, width: "100%" }}>
+              <h3 style={{ color: "#fcd34d", margin: 0, fontSize: 20 }}>🎴 Cash {genre} Favour</h3>
+              <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 14 }}>
+                Pick a {genre} artist from the pool to play free. <strong>Fame tier still required</strong> — amenities are waived. Overrides any tempts on that artist. Doesn't use your main action.
+              </p>
+              {matchingPoolArtists.length === 0 && <div style={{ color: "#f87171", fontSize: 11, padding: 16 }}>No {genre} artists in the pool right now.</div>}
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {matchingPoolArtists.map(({ a, i }) => {
+                  const fameOk = playerFame >= (a.fame || 0);
+                  return (
+                    <div key={i} style={{ position: "relative", opacity: fameOk ? 1 : 0.45 }}>
+                      <ArtistCard artist={a} small showCost disabled={!fameOk} onClick={() => fameOk && setFavourPlayMode({ ...favourPlayMode, chosenArtist: a, chosenPoolIdx: i })} />
+                      {!fameOk && <div style={{ position: "absolute", inset: 0, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", color: "#f87171", fontSize: 10, fontWeight: 700 }}>Need 🔥 {a.fame}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={cancel} style={{ ...bs, marginTop: 14, fontSize: 11, color: "#f87171" }}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
       {parvPicker && (() => {
         const { pid, hand } = parvPicker;
         const pName = players.find(p => p.id === pid)?.festivalName || "?";
@@ -14632,6 +15098,7 @@ export default function Headliners() {
                           <div key={sKey} style={{ fontSize: 9, color: isCurrent ? "#e2e8f0" : "#64748b", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6 }}>
                             <span style={{ flex: 1 }}>
                               {QUICKYEAR_SEASON_EMOJI[sKey]} {req.label}
+                              {req.firstComeOnly && <span style={{ color: "#f87171", marginLeft: 4, fontSize: 8, fontWeight: 700 }}>FIRST ONLY</span>}
                             </span>
                             <div style={{ display: "flex", alignItems: "center", gap: 2, minHeight: 10 }}>
                               {claimerPids.length === 0
@@ -14646,6 +15113,22 @@ export default function Headliners() {
                           </div>
                         );
                       })}
+                      {/* v199.32: favour tokens row — populated at GAME END when unused
+                          Favours in hand convert to tokens for matching Legendaries.
+                          During play, this stays empty (hands are private, no visibility).
+                          Hidden until converted. */}
+                      {(tokens.favour || []).length > 0 && (
+                        <div style={{ fontSize: 9, color: "#fde68a", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6, borderTop: "1px dashed rgba(252,211,77,0.2)", marginTop: 2, paddingTop: 4 }}>
+                          <span style={{ flex: 1, fontWeight: 700 }}>🎴 Favour tokens (end-of-game)</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            {(tokens.favour || []).map((pid, j) => {
+                              const pl = players.find(p => p.id === pid);
+                              if (!pl) return null;
+                              return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(252,211,77,0.5)", boxShadow: "0 0 3px rgba(252,211,77,0.5)", display: "inline-block" }} />;
+                            })}
+                          </div>
+                        </div>
+                      )}
                       {Object.keys(tokenCounts).length > 0 && (
                         <div style={{ fontSize: 9, color: "#fde68a", marginLeft: 18, marginTop: 3, fontStyle: "italic", opacity: 0.9 }}>
                           Tokens: {Object.entries(tokenCounts).sort((a, b) => b[1] - a[1]).map(([pid, c]) => {
@@ -15173,17 +15656,31 @@ export default function Headliners() {
             const principles = (gameMode === "quickYear") ? (playerPrinciples[currentPlayerId] || []) : [];
             const totalItems = handCards.length + principles.length;
             if (totalItems === 0) return null;
+            // v199.32: break down hand into artists vs favours for the header count.
+            const artistCount = handCards.filter(c => !c.isFavour).length;
+            const favourCount = handCards.filter(c => c.isFavour).length;
+            // Favour-play is a free action — can fire even when the main action is taken.
+            // Only gated by stage availability (checked in picker).
             return <div style={{ marginTop: 8 }}>
               <button onClick={() => setShowHand(!showHand)} style={{ ...bs, padding: "4px 12px", fontSize: 11, marginBottom: 6 }}>
-                {showHand ? "Hide" : "Show"} Hand ({handCards.length} card{handCards.length === 1 ? "" : "s"}{principles.length > 0 ? ` + ${principles.length} principle${principles.length === 1 ? "" : "s"}` : ""})
+                {showHand ? "Hide" : "Show"} Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""}{principles.length > 0 ? ` + ${principles.length} principle${principles.length === 1 ? "" : "s"}` : ""})
               </button>
               {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-                {handCards.map((a, i) => <ArtistCard key={`a-${i}`} artist={a} showCost small
-                  affordable={canBookArtistAnywhere(a, currentPD)}
-                  genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                  disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
-                  onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
-                />)}
+                {handCards.map((a, i) => a.isFavour
+                  ? <ArtistCard key={`a-${i}`} artist={a} small
+                      disabled={!!favourPlayMode}
+                      onClick={() => {
+                        if (favourPlayMode) return;
+                        setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
+                      }}
+                    />
+                  : <ArtistCard key={`a-${i}`} artist={a} showCost small
+                      affordable={canBookArtistAnywhere(a, currentPD)}
+                      genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                      disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
+                      onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
+                    />
+                )}
                 {principles.map((pr, i) => <PrincipleCard
                   key={`p-${i}`}
                   principle={pr}
