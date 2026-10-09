@@ -818,6 +818,8 @@ function genreGradient(genre) {
   return `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)`;
 }
 function canAffordArtist(artist, pd, fameReduction = 0) {
+  // v199.35: Favour cards are not artists — they can't be "afforded" or played onto stages.
+  if (artist && artist.isFavour) return false;
   if (pd.fame < Math.max(0, artist.fame - fameReduction)) return false;
   const a = pd.amenities || {};
   // v199.1: Hattie Haggler flag — artist can be played with up to _hattieDiscount
@@ -851,6 +853,8 @@ function canAffordArtist(artist, pd, fameReduction = 0) {
 // artist's Fame rank.
 function canBookHeadlinerViaGenre(artist, pd, stageIdx) {
   if (!artist || !pd) return false;
+  // v199.35: Favour cards cannot be booked onto stages via any path.
+  if (artist.isFavour) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const sa = (pd.stageArtists || [])[stageIdx];
   if (!sa || sa.length !== 2) return false;
@@ -875,6 +879,11 @@ function hasGenreMatchBonusAvailable(artist, pd) {
 // check + (amenities OR genre-match).
 function canBookArtistOnStage(artist, pd, stageIdx) {
   if (!artist || !pd) return false;
+  // v199.35: Favour cards are not artists — they can never be booked onto stages
+  // directly. They're hand-held currency: cashed in via the Favour picker (which
+  // plays a MATCHING pool artist, not the Favour itself) or converted to Legendary
+  // tokens at game end.
+  if (artist.isFavour) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const sa = (pd.stageArtists || [])[stageIdx];
   if (!sa || sa.length >= 3) return false;
@@ -886,6 +895,8 @@ function canBookArtistOnStage(artist, pd, stageIdx) {
 // Used to gate pre-select UI actions.
 function canBookArtistAnywhere(artist, pd) {
   if (!artist || !pd) return false;
+  // v199.35: Favours are not bookable artists — see canBookArtistOnStage.
+  if (artist.isFavour) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
   if (openStages.length === 0) return false;
@@ -1881,6 +1892,8 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     return -1;
   };
   const bookableHand = (pd.hand || []).filter(a => {
+    // v199.35: Favour cards aren't bookable artists.
+    if (a.isFavour) return false;
     if (bookedNames.has(a.name)) return false;
     if (fame < a.fame) return false;
     const amenitiesOk = counts.campsite >= a.campCost && counts.security >= a.securityCost && counts.catering >= a.cateringCost && counts.portaloo >= a.portalooCost;
@@ -3263,12 +3276,23 @@ export default function Headliners() {
     agentContestAutoFiredRef.current = true;
     const t = setTimeout(() => {
       const currentPid = agentContest.contestantData?.find(c => c.pid === currentPlayerId)?.pid;
-      commitAgentContest(agentContest);
+      // v199.36: wrap commitAgentContest in try/catch so the modal always closes even if
+      // a dispatcher case throws. Without this, an uncaught error inside a loss-trigger
+      // agent (Dave, Mickey, Ellie, etc.) or a Legendary checker would leave the Resolving…
+      // modal on screen indefinitely because setAgentContest(null) never ran.
+      try {
+        commitAgentContest(agentContest);
+      } catch (err) {
+        addLog("⚠️ Contest", `Resolution hit an error: ${err?.message || err}. Modal force-closed; game continues.`);
+        console.error("commitAgentContest threw", err);
+      }
       setAgentContest(null);
       setTimeout(() => recalcTickets(), 50);
       // v131: after auto-resolved contests under tempt mode, check whether the current
       // player still has another pending tempt to resolve.
-      if (temptModeRef.current && currentPid != null) checkNextTempt(currentPid);
+      if (temptModeRef.current && currentPid != null) {
+        try { checkNextTempt(currentPid); } catch (err) { console.error("checkNextTempt threw", err); }
+      }
     }, 2400);
     return () => clearTimeout(t);
   }, [agentContest]);
@@ -6700,6 +6724,8 @@ export default function Headliners() {
 
   /** Check if an artist is free to play (won from goal) */
   function canAffordArtistOrFree(artist, pd, fameReduction = 0) {
+    // v199.35: Favours can never be "played" as artists.
+    if (artist && artist.isFavour) return false;
     if (artist.freePlay) return true;
     return canAffordArtist(artist, pd, fameReduction);
   }
@@ -8149,6 +8175,15 @@ export default function Headliners() {
 
   // ─── Book artist to stage ───
   function bookArtistToStage(artist, stageIdx, pid, viaAgent = false, viaGenreMatch = false) {
+    // v199.35: defence-in-depth. Favour cards must never land on a stage via this path.
+    // The affordability helpers already block them, but any caller that bypasses those
+    // checks (an AI heuristic, a dispatcher) would still crash through to here. Bail
+    // cleanly if a Favour sneaks in.
+    if (artist && artist.isFavour) {
+      const pName = players.find(p => p.id === pid)?.festivalName || "?";
+      addLog(pName, `Favour card can't be played onto a stage — cash it via the Favour picker instead`);
+      return;
+    }
     // v169: derive viaTempt from context. Under tempt mode, viaAgent=true means the
     // artist was tempted onto the stage directly.
     // v177: TEMPT effects fire ONLY when the artist is placed directly from the pool
@@ -16179,6 +16214,16 @@ export default function Headliners() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#ec4899", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Your Hand — click to book</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                   {handCards.map((a, i) => {
+                    // v199.35: Favour cards use the dedicated picker, not the book flow.
+                    if (a.isFavour) {
+                      return <ArtistCard key={i} artist={a} small
+                        disabled={!!favourPlayMode}
+                        onClick={() => {
+                          if (favourPlayMode) return;
+                          setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
+                        }}
+                      />;
+                    }
                     // v124.1 hotfix: the actionable hand card needs to allow clicks when
                     // the artist is bookable via EITHER amenities OR the genre-match headliner
                     // rule. The earlier fix only touched the other hand display; this one was
