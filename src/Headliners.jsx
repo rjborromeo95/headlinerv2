@@ -8842,7 +8842,14 @@ export default function Headliners() {
     setDraftRemaining0(newR0); setDraftRemaining5(newR5);
     setSetupDraftOptions([]); setSetupDraftSelected([]);
     // v189: councils removed entirely — always go straight from artist draft to amenity placement.
-    setSetupStep("pickAmenity");
+    // v199.41: Quick Play skips the starting-amenity pick. Players start with 0 amenities
+    // and 0 stages — the first stage opens via a Festival Principle once amenity reqs are
+    // met. Classic multi-year still goes through pickAmenity as before.
+    if (gameModeRef.current === "quickYear") {
+      setSetupStep("confirm");
+    } else {
+      setSetupStep("pickAmenity");
+    }
   };
 
   // ─── Council Draft + Assign ───
@@ -8912,6 +8919,28 @@ export default function Headliners() {
   const undoSetupPlacement = () => {
     const pid = currentSetupPlayer.id;
     if (setupStep === "confirm") {
+      // v199.41: in Quick Play there's no pickAmenity step — undo goes back to the artist
+      // draft, which means re-dealing the 6 draft options and clearing the hand/stage state.
+      if (gameModeRef.current === "quickYear") {
+        setPlayerData(p => {
+          const cur = p[pid];
+          return {
+            ...p,
+            [pid]: {
+              ...cur,
+              hand: [],
+              setupAmenity: null,
+              setupField: null,
+            }
+          };
+        });
+        // Re-deal the 6 draft options for this player from draftRemaining0.
+        setSetupDraftOptions(draftRemaining0.slice(0, 6));
+        setSetupDraftSelected([]);
+        setSetupStep("draftArtist");
+        return;
+      }
+      // Classic: undo the amenity placement, strip the starting stage, return to pickAmenity.
       setPlayerData(p => {
         const cur = p[pid];
         const t = cur.setupAmenity;
