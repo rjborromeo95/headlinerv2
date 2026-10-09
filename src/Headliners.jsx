@@ -13680,13 +13680,15 @@ export default function Headliners() {
                 </div>
               </div>
             )}
-            {/* v199.23: column layout. Each row is a player; columns show per-season deltas
-                for Fame, Tickets, and Artists played. Totals shown as smaller sublabels. */}
+            {/* v199.23: column layout. Each row is a player; columns show per-season deltas.
+                v199.40: Tickets column removed — "ticket calculation between seasons" was
+                creating noise mid-game. Players still see their live ticket total at the top
+                of the UI any time, and the final tally runs at game end. The season recap now
+                focuses on Fame (ladder progression) and Artists (stage filling) only. */}
             <div style={{ marginBottom: 14, borderRadius: 10, overflow: "hidden", border: "1px solid #2a2a4a" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", gap: 0, background: "rgba(30,27,75,0.6)", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", fontWeight: 700 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 0, background: "rgba(30,27,75,0.6)", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", fontWeight: 700 }}>
                 <div>Festival</div>
                 <div style={{ textAlign: "center", color: "#f97316" }}>🔥 Fame</div>
-                <div style={{ textAlign: "center", color: "#86efac" }}>🎟️ Tickets</div>
                 <div style={{ textAlign: "center", color: "#c4b5fd" }}>🎤 Artists</div>
               </div>
               {rows.map((r, idx) => {
@@ -13694,7 +13696,7 @@ export default function Headliners() {
                 const fameDeltaStr = r.fameDelta > 0 ? `+${r.fameDelta}` : (r.fameDelta < 0 ? `${r.fameDelta}` : "—");
                 const fameDeltaColor = r.fameDelta > 0 ? "#86efac" : (r.fameDelta < 0 ? "#f87171" : "#64748b");
                 return (
-                  <div key={r.pid} style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", gap: 0, padding: "10px", background: rowBg, borderTop: "1px solid #2a2a4a", alignItems: "center" }}>
+                  <div key={r.pid} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 0, padding: "10px", background: rowBg, borderTop: "1px solid #2a2a4a", alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, textAlign: "left" }}>
                       <span style={{ fontSize: 14, color: idx === 0 ? "#fcd34d" : "#c4b5fd", fontWeight: 800 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
                       <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{r.name}{r.isAI ? " 🤖" : ""}</span>
@@ -13702,10 +13704,6 @@ export default function Headliners() {
                     <div style={{ textAlign: "center" }}>
                       <div style={{ color: fameDeltaColor, fontWeight: 800, fontSize: 15 }}>{fameDeltaStr}</div>
                       <div style={{ color: "#64748b", fontSize: 9, marginTop: 2 }}>now: {r.fame}</div>
-                    </div>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ color: r.ticketsThisSeason > 0 ? "#86efac" : "#64748b", fontWeight: 800, fontSize: 15 }}>{r.ticketsThisSeason > 0 ? `+${r.ticketsThisSeason}` : "—"}</div>
-                      <div style={{ color: idx === 0 ? "#fcd34d" : "#64748b", fontSize: 10, marginTop: 2, fontWeight: 700 }}>total: {r.total.toLocaleString()}</div>
                     </div>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ color: r.artistsThisSeason > 0 ? "#c4b5fd" : "#64748b", fontWeight: 800, fontSize: 15 }}>{r.artistsThisSeason > 0 ? `+${r.artistsThisSeason}` : "—"}</div>
@@ -13716,7 +13714,7 @@ export default function Headliners() {
               })}
             </div>
             <div style={{ color: "#64748b", fontSize: 10, fontStyle: "italic", marginBottom: 14 }}>
-              Columns show this season's change · smaller numbers are cumulative. Ticket bonuses = 1 🎟️ per campsite + 1 🎟️ per artist on stages.
+              Columns show this season's change · smaller numbers are cumulative.
             </div>
             <button onClick={continueFromSeasonEnd} style={{ ...bp, marginTop: 4, padding: "12px 32px", fontSize: 14 }}>
               {isGameEnd ? "View Final Results →" : `Continue to ${nextSeasonLabel} →`}
