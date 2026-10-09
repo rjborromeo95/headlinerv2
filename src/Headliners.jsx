@@ -752,7 +752,13 @@ const getIdentity = (id) => ALL_IDENTITIES.find(i => i.id === id);
 
 
 function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function rollDice() { return shuffle([...DICE_OPTIONS]).slice(0, 5); }
+// v199.39: rollDice accepts an optional exclude list for mode-aware filtering.
+// Quick Play passes ["stage"] since the stage die has no function there (stages open via
+// Festival Principles). Classic passes nothing and gets the full face pool.
+function rollDice(excludeFaces = []) {
+  const pool = DICE_OPTIONS.filter(d => !excludeFaces.includes(d));
+  return shuffle([...pool]).slice(0, 5);
+}
 function diceNeedReroll(dice) { if (dice.length < 3) return true; const faces = new Set(dice); return faces.size === 1; }
 function getGenres(genre) { return genre.split(",").map(g => g.trim()); }
 
@@ -2661,6 +2667,12 @@ export default function Headliners() {
   const [qyPicksLeft, setQyPicksLeft] = useState(0);
   const qyPicksLeftRef = useRef(0);
   useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
+  // v199.39: once a pool/deck draw happens in an artist action, lock out book-from-hand
+  // for the rest of this action. A single artist action is EITHER draws OR a hand book,
+  // not both. Reset when a new artist action starts.
+  const [qyDrewThisAction, setQyDrewThisAction] = useState(false);
+  const qyDrewThisActionRef = useRef(false);
+  useEffect(() => { qyDrewThisActionRef.current = qyDrewThisAction; }, [qyDrewThisAction]);
   // v199.24: tracks whether Fame 4+ players have used their once-per-action pool refresh.
   // Reset at the start of each artist action.
   const [qyPoolRefreshUsed, setQyPoolRefreshUsed] = useState(false);
@@ -4731,7 +4743,7 @@ export default function Headliners() {
       // v198: reset pending-effect / selection state so the new player starts clean,
       // mirroring the state resets at the top of endTurn.
       setTurnAction(null); setSelectedDie(null); setActionTaken(false);
-      setDice(rollDice());
+      setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []));
       // Give the player a fresh turn-start view.
       setShowTurnStart(true);
     }
@@ -9146,7 +9158,7 @@ export default function Headliners() {
     // when all players finish turn 12. The year value stays at 1 throughout.
     const startingTurns = gameModeRef.current === "quickYear" ? QUICKYEAR_TOTAL_TURNS : schedule[1];
     const tl = {}; order.forEach(id => { tl[id] = startingTurns; }); setTurnsLeft(tl);
-    setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    setYear(1); setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : [])); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     setAgentBookedThisYear({});
     // Reset year-scoped latches
     positionalGrantedYearRef.current = 0;
@@ -10067,7 +10079,7 @@ export default function Headliners() {
           addLog("🤖 AI", `Booked ${artist.name}`);
         } else {
           addLog("🤖 AI", "Booking failed — fallback to amenity");
-          const cd2 = dice.length > 0 ? dice : rollDice();
+          const cd2 = dice.length > 0 ? dice : rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
           if (cd2.length > 0) {
             // v187: preserve Turn 1 fame-die priority even in the book-fallback path
             const isFirstTurnFB = (year === 1) && ((pd.stageArtists || []).flat().length === 0);
@@ -10193,7 +10205,7 @@ export default function Headliners() {
         scheduleNext(500); return;
       }
       // Default: pick amenity directly (skip the multi-step UI)
-      let currentDice = dice.length > 0 ? dice : rollDice();
+      let currentDice = dice.length > 0 ? dice : rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
       if (dice.length === 0 && currentDice.length > 0) {
         setDice(currentDice);
       }
@@ -10283,7 +10295,7 @@ export default function Headliners() {
       return;
     }
     setTurnAction("pickAmenity");
-    if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
+    if (dice.length === 0) { const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
     // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
     // Fame 0-1 → 1 die; Fame 2+ → 2 dice.
     if (gameModeRef.current === "quickYear") {
@@ -10567,7 +10579,7 @@ export default function Headliners() {
     setPickingFieldFor(null);
   };
   const handleRerollDice = () => {
-    const fresh = rollDice();
+    const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
     setDice(fresh);
     addLog("Dice", "Rerolled all amenity dice");
     grantCat1IfEligible(currentPlayerId, fresh);
@@ -10589,6 +10601,9 @@ export default function Headliners() {
       qyPicksLeftRef.current = maxPicks;
       setQyPoolRefreshUsed(false);
       qyPoolRefreshUsedRef.current = false;
+      // v199.39: reset the "drew this action" lock — fresh action can go either way.
+      setQyDrewThisAction(false);
+      qyDrewThisActionRef.current = false;
     }
   };
 
@@ -10646,6 +10661,13 @@ export default function Headliners() {
     setSelectedArtist({ artist, source: "pool", poolIdx: idx }); setArtistAction("pickStage");
   };
   const handleBookFromHand = (idx) => {
+    // v199.39: in Quick Play, an artist action is EITHER draws OR a hand book — not both.
+    // If a draw already happened this action, hand-book is locked out.
+    if (gameModeRef.current === "quickYear" && qyDrewThisActionRef.current) {
+      addLog(currentPlayer?.festivalName || "?", `Can't book from hand this action — you've already drawn. Finish your draws or end your turn.`);
+      showFloatingBonus("Draws already made this action", "#ef4444");
+      return;
+    }
     const artist = currentPD.hand[idx];
     // canAffordArtistOrFree handles pending-effect free bookings; widen for genre-match too.
     if (!(canAffordArtistOrFree(artist, currentPD) || canBookArtistAnywhere(artist, currentPD))) return;
@@ -10743,6 +10765,8 @@ export default function Headliners() {
       addLog(currentPlayer.festivalName, `🕵️ ${artist.name} is claimed by another agent — can't pick`);
       return;
     }
+    // v199.39: mark that a draw happened this action — locks out hand-book for remaining picks.
+    if (gameModeRef.current === "quickYear") { setQyDrewThisAction(true); qyDrewThisActionRef.current = true; }
     const newPool = [...artistPool]; newPool.splice(idx, 1);
     setArtistPool(newPool);
     const picks = [artist];
@@ -10759,6 +10783,8 @@ export default function Headliners() {
     const drawCount = gameModeRef.current === "quickYear" ? 1 : getDeckDrawCount(pd);
     const drawn = drawFromDeck(drawCount);
     if (drawn.length === 0) { addLog("Deck", "No artists left!"); return; }
+    // v199.39: mark that a draw happened this action — locks out hand-book for remaining picks.
+    if (gameModeRef.current === "quickYear") { setQyDrewThisAction(true); qyDrewThisActionRef.current = true; }
     // Drawing from deck = no undo (hidden information revealed) and no put back
     setUndoSnapshot(null);
     setDraw2Picks(drawn);
@@ -12582,7 +12608,7 @@ export default function Headliners() {
     const sorted = [...players].sort((a, b) => ((allTickets[a.id]?.[year]?.raw) || 0) - ((allTickets[b.id]?.[year]?.raw) || 0));
     const no = sorted.map(p => p.id); setTurnOrder(no); setCurrentPlayerIdx(0);
     const tl = {}; const sch = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR; no.forEach(id => { tl[id] = sch[ny]; }); setTurnsLeft(tl);
-    setDice(rollDice()); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : [])); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     // (Star Dice phase replaces old per-year event drawing)
     // Microtrends now persist across years — they get replaced as players claim them.
     // Don't reinitialize at year transition.
@@ -14053,10 +14079,10 @@ export default function Headliners() {
                 if (!canReroll) return null;
                 return <div style={{ marginBottom: 10 }}>
                   <button onClick={() => {
-                    const fresh = rollDice();
+                    const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
                     setDice(fresh);
                     addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool (was low on amenities)`);
-                    sfx.rollDice && sfx.rollDice();
+                    sfx.rollDice && sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
                     // Check if the new pool still has a matching die for this effect.
                     // If not, transition to the aborted modal instead of leaving the
                     // player in a picker with nothing to pick.
@@ -14250,10 +14276,10 @@ export default function Headliners() {
           };
           const canReroll = !pe.hasRerolled && pe.filterType;
           const handleReroll = () => {
-            const fresh = rollDice();
+            const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
             setDice(fresh);
             addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool`);
-            sfx.rollDice && sfx.rollDice();
+            sfx.rollDice && sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
             // Check if the new pool has a matching die
             const has = pe.filterType === "__anyAmenity__"
               ? fresh.some(d => d !== "fame" && d !== "stage")
@@ -15885,7 +15911,7 @@ export default function Headliners() {
                 const remaining = cap - councilDiceRefreshesUsedThisTurn;
                 if (cap <= 0 || remaining <= 0) return null;
                 return <button onClick={() => {
-                  setDice(rollDice());
+                  setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []));
                   setCouncilDiceRefreshesUsedThisTurn(n => n + 1);
                   addLog(currentPlayer.festivalName, `🎲 Refreshed amenity dice (Council reward — free, ${remaining - 1} left)`);
                   sfx.placeAmenity();
@@ -16272,12 +16298,12 @@ export default function Headliners() {
                     }
                     // v124.1 hotfix: the actionable hand card needs to allow clicks when
                     // the artist is bookable via EITHER amenities OR the genre-match headliner
-                    // rule. The earlier fix only touched the other hand display; this one was
-                    // still gating on canAffordArtistOrFree alone, greying out any headliner
-                    // whose amenity costs weren't fully met — even when a stage on the board
-                    // had two matching-genre artists ready to accept them.
-                    const canBook = canAffordArtistOrFree(a, currentPD) || canBookArtistAnywhere(a, currentPD);
-                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
+                    // rule.
+                    // v199.39: Quick Play — gray out hand cards if a draw already happened
+                    // this action (hand-book is locked out until end-of-turn).
+                    const drewLocked = gameModeRef.current === "quickYear" && qyDrewThisAction;
+                    const canBook = !drewLocked && (canAffordArtistOrFree(a, currentPD) || canBookArtistAnywhere(a, currentPD));
+                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} genreMatchGlow={!drewLocked && hasGenreMatchBonusAvailable(a, currentPD)} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
                   })}
                 </div>
               </div>}
@@ -16537,7 +16563,7 @@ export default function Headliners() {
               <button onClick={() => {
                 const results = shuffle([...DICE_OPTIONS, ...DICE_OPTIONS]).slice(0, yearEndDiceRoll.count);
                 setYearEndDiceRoll({ ...yearEndDiceRoll, results, rolled: true });
-                sfx.rollDice();
+                sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
               }} style={{ ...bp, fontSize: 18, padding: "14px 32px", animation: "pulse 1.5s infinite" }}>🎲 ROLL!</button>
             </div>}
 
