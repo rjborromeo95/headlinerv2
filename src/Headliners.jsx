@@ -11160,6 +11160,24 @@ export default function Headliners() {
         else if (roundsCompleted === 9) quickYearSeasonJustEnded = "spring";
         else if (roundsCompleted === 12) { quickYearSeasonJustEnded = "summer"; quickYearGameOver = true; }
       }
+      // v199.44: REBALANCE turnsLeft to strict round-robin. Many action handlers
+      // decrement turnsLeft individually, and race conditions / effect chains /
+      // double-fires can cause one player to burn more turns than another (symptom:
+      // player A has 2 turns left while player B has 0). This recomputes each player's
+      // turnsLeft from the authoritative global counter + their position in the turn
+      // order, so the invariant "every player gets exactly QUICKYEAR_TOTAL_TURNS turns"
+      // holds regardless of what action handlers did. Player at index 0 goes first,
+      // so if newTotal is odd (with 2 players), player 0 has taken one more turn.
+      const correctedTl = {};
+      turnOrder.forEach((pid, idx) => {
+        // How many turns has this player taken after newTotal total turns?
+        // In strict round-robin with players going in order [0, 1, 2, ...]:
+        //   player at index idx has taken floor(newTotal / nPlayers) + (idx < newTotal % nPlayers ? 1 : 0)
+        const taken = Math.floor(newTotal / nPlayers) + (idx < roundRemainder ? 1 : 0);
+        correctedTl[pid] = Math.max(0, QUICKYEAR_TOTAL_TURNS - taken);
+      });
+      setTurnsLeft(correctedTl);
+      turnsLeftRef.current = correctedTl;
     }
 
     const findNext = () => {
