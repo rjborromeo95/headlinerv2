@@ -174,66 +174,68 @@ const LEGENDARY_TICKETS_PER_GENRE_ARTIST = 2;
 // at game start from LEGENDARY_REQ_POOL — see assignLegendaryReqs() for the shuffle.
 // This keeps each legendary's thematic payoff genre-aligned (Spring + ticket payout) while
 // varying how you GET to Summer each game.
+// v199.45: Each legendary has 4 seasonal objectives, one per season (Autumn, Winter,
+// Spring, Summer). Autumn/Winter/Spring are randomized at game start from the non-genre
+// pool below (microtrends, fame, plays, draws). Summer is a SIGNATURE objective specific
+// to the legendary (defined inline here). Each objective is season-locked — a player
+// earns 1 token for that legendary if they complete the current season's objective
+// during that season. 4 earnable tokens per legendary per player; most tokens at
+// Summer close wins the legendary.
 const LEGENDARY_ARTIST_POOL = [
   { id: "elvis",       name: "ELVIS PRESLEY", genre: "Rock",       emoji: "👑",
-    spring: { type: "on_stages", genre: "Rock",       count: 3, label: "Have 3 Rock artists on stages" } },
+    summer: { type: "on_stages", genre: "Rock", count: 3, label: "Have 3 Rock artists on stages" } },
   { id: "madonna",     name: "MADONNA",       genre: "Pop",        emoji: "🎀",
-    spring: { type: "play_genre", genre: "Pop",       count: 2, scope: "season", label: "Play 2 Pop artists this season" } },
+    summer: { type: "play_genre_total", genre: "Pop", count: 3, label: "Play 3 Pop artists this game" } },
   { id: "tupac",       name: "TUPAC",         genre: "Hip Hop",    emoji: "💎",
-    spring: { type: "play_genre", genre: "Hip Hop",   count: 2, scope: "season", label: "Play 2 Hip Hop artists this season" } },
+    summer: { type: "play_genre_total", genre: "Hip Hop", count: 3, label: "Play 3 Hip Hop artists this game" } },
   { id: "kraftwerk",   name: "KRAFTWERK",     genre: "Electronic", emoji: "🤖",
-    spring: { type: "on_stages", genre: "Electronic", count: 2, label: "Have 2 Electronic artists on stages" } },
+    summer: { type: "on_stages", genre: "Electronic", count: 3, label: "Have 3 Electronic artists in your festival" } },
   { id: "james_brown", name: "JAMES BROWN",   genre: "Funk",       emoji: "🕺",
-    spring: { type: "on_stages", genre: "Funk",       count: 2, label: "Have 2 Funk artists on stages" } },
+    summer: { type: "unique_genres", count: 5, label: "Have artists spanning 5 unique genres in your festival" } },
   { id: "pixies",      name: "PIXIES",        genre: "Indie",      emoji: "🎸",
-    spring: { type: "on_stages", genre: "Indie",      count: 3, label: "Have 3 Indie artists on stages" } },
+    summer: { type: "fewer_than_stages", count: 3, label: "Have fewer than 3 stages" } },
 ];
 
-// v199.31: pool of randomizable Autumn/Winter requirements. Each game, every drawn
-// legendary rolls 2 distinct options from this pool for their first two slots.
-// The {genre} placeholder is substituted with the legendary's own genre.
-// Positional reqs (tempt_position) carry firstComeOnly: true — only the first player
-// to claim gets the token for that season, no one else.
+// v199.45: non-genre req pool for Autumn/Winter/Spring. Each game, every drawn legendary
+// rolls 3 distinct options from this pool. Scope "season" means it must happen WITHIN
+// the active season (counters reset at season boundaries). All reqs are earnable by any
+// player in that season.
 const LEGENDARY_REQ_POOL = [
   { type: "microtrend_claim", count: 1, label: "Match a microtrend this season" },
+  { type: "microtrend_claim", count: 2, label: "Match 2 microtrends this season" },
   { type: "gain_fame", count: 2, label: "Gain 2 Fame this season" },
-  { type: "tempt_genre_dynamic", count: 1, scope: "season", label: "Tempt a {genre} artist this season" },
-  { type: "tempt_position", position: 0, label: "Tempt the artist in the 1st pool position", firstComeOnly: true },
-  { type: "tempt_position", position: 1, label: "Tempt the artist in the 2nd pool position", firstComeOnly: true },
-  { type: "tempt_position", position: 2, label: "Tempt the artist in the 3rd pool position", firstComeOnly: true },
-  { type: "tempt_position", position: 3, label: "Tempt the artist in the 4th pool position", firstComeOnly: true },
-  { type: "tempt_position", position: 4, label: "Tempt the artist in the 5th pool position", firstComeOnly: true },
+  { type: "gain_fame", count: 3, label: "Gain 3 Fame this season" },
+  { type: "play_count", count: 2, label: "Play 2 artists this season" },
+  { type: "play_count", count: 3, label: "Play 3 artists this season" },
+  { type: "draw_count", count: 3, label: "Draw 3 artists this season" },
+  { type: "draw_count", count: 4, label: "Draw 4 artists this season" },
 ];
 
-// v199.31: materialize randomized Autumn/Winter reqs for a given legendary. Picks 2 distinct
-// options from LEGENDARY_REQ_POOL and substitutes the legendary's genre where needed.
+// v199.45: pick 3 distinct req types from the non-genre pool for Autumn/Winter/Spring,
+// and attach the signature Summer objective. Season-locked earning: each season, meet
+// that season's objective to earn 1 token for this legendary.
 function assignLegendaryReqs(legendary) {
-  // Shuffle a copy of the pool, pick first 2 distinct types.
   const pool = [...LEGENDARY_REQ_POOL];
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  // Prefer type diversity — don't double up on tempt_position (would mean two different
-  // position tokens, which could land cleanly but feels samey). Drop duplicate type picks.
+  // Pick 3 distinct types for the three generic seasons.
   const picked = [];
   const seenTypes = new Set();
   for (const req of pool) {
-    if (picked.length >= 2) break;
-    if (seenTypes.has(req.type)) continue;
-    seenTypes.add(req.type);
+    if (picked.length >= 3) break;
+    // Allow same type with different count (microtrend_claim x1 vs x2 are different objectives)
+    const key = `${req.type}:${req.count || req.position || 0}`;
+    if (seenTypes.has(key)) continue;
+    seenTypes.add(key);
     picked.push(req);
   }
-  const materialize = (req) => {
-    if (req.type === "tempt_genre_dynamic") {
-      return { type: "tempt_genre", genre: legendary.genre, count: req.count, scope: req.scope, label: `Tempt a ${legendary.genre} artist this season` };
-    }
-    return { ...req };
-  };
   return {
-    autumn: materialize(picked[0]),
-    winter: materialize(picked[1]),
-    spring: legendary.spring,
+    autumn: { ...picked[0] },
+    winter: { ...picked[1] },
+    spring: { ...picked[2] },
+    summer: legendary.summer,
   };
 }
 const LEGENDARY_ARTISTS_PER_GAME = 3;
@@ -288,8 +290,13 @@ const FESTIVAL_PRINCIPLES = [
   { id: "posh_toilets",    name: "Posh Toilets",      emoji: "🚽", reqs: { portaloo: 2, security: 1 }, desc: "2 portaloos + 1 security" },
   { id: "breakfast_vans",  name: "Breakfast Vans",    emoji: "🥞", reqs: { catering: 2, campsite: 1 }, desc: "2 catering vans + 1 campsite" },
 ];
-const PRINCIPLES_PER_PLAYER = 3;
-const UNUSED_PRINCIPLE_BONUS = 3; // tickets per unused completed principle at game end
+// v199.48: Festival Principles removed. Setting PRINCIPLES_PER_PLAYER to 0 means no
+// principles are dealt at game start, so all the downstream UI (principle row below
+// hand, "spend to open stage" buttons, principle bonus at game end) auto-hides. The
+// FESTIVAL_PRINCIPLES pool and PrincipleCard component are left in place for Classic
+// (or future reinstatement) but have no effect in Quick Play now.
+const PRINCIPLES_PER_PLAYER = 0;
+const UNUSED_PRINCIPLE_BONUS = 0;
 const QUICKYEAR_MAX_STAGES = 3;   // cap on stages in Quick Play (matches classic)
 
 // v199.9: season objectives. 8 to choose from; 1 unique objective drawn per season
@@ -2743,6 +2750,14 @@ export default function Headliners() {
   const [qyPicksLeft, setQyPicksLeft] = useState(0);
   const qyPicksLeftRef = useRef(0);
   useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
+  // v199.45: 2-action turn system. Each Quick Play turn, a player can take 2 actions
+  // (build / browse / buy / favour-cash). Reset to 2 at turn start, decrement after each
+  // action completes. When 0, actionTaken=true and the End Turn button appears. User
+  // can End Turn at any point to burn remaining actions (end early).
+  const [actionsLeftThisTurn, setActionsLeftThisTurn] = useState(2);
+  const actionsLeftRef = useRef(2);
+  useEffect(() => { actionsLeftRef.current = actionsLeftThisTurn; }, [actionsLeftThisTurn]);
+  const QUICKYEAR_ACTIONS_PER_TURN = 2;
   // v199.39: once a pool/deck draw happens in an artist action, lock out book-from-hand
   // for the rest of this action. A single artist action is EITHER draws OR a hand book,
   // not both. Reset when a new artist action starts.
@@ -3887,10 +3902,16 @@ export default function Headliners() {
   // v199.10: Quick Play Fame-tier action caps.
   // Fame 0-1 → 1 pick; Fame 2-3 → 2 picks; Fame 4-5 → 2 amenity picks / 3 artist picks.
   const getFameAmenityMax = (pd) => {
+    // v199.45: in Quick Play, Fame no longer scales per-action picks — every turn
+    // gives 2 actions regardless of Fame, and each action is a single pick. Fame still
+    // gates which artists you can play (fame >= artist.fame).
+    if (gameModeRef.current === "quickYear") return 1;
     const fame = pd?.fame || 0;
     return fame >= 2 ? 2 : 1;
   };
   const getFameArtistMax = (pd) => {
+    // v199.45: see getFameAmenityMax — Quick Play 2-action turns replace per-action scaling.
+    if (gameModeRef.current === "quickYear") return 1;
     const fame = pd?.fame || 0;
     // v199.24: Fame 4+ no longer gets 3 picks — the extra pick is replaced by the pool-refresh
     // ability (see qyPoolRefreshAvailable). Fame 2+ still gets 2 picks.
@@ -3918,29 +3939,31 @@ export default function Headliners() {
   // reliably when the queue head was an AI.
   const beginHotlineSpinsForSeason = () => {
     if (gameModeRef.current !== "quickYear") return;
-    const queue = players.map(p => p.id); // all players spin, in turn order
+    // v199.47: Hotline/agent mechanic removed from Quick Play. We still need the
+    // per-season counter reset (Legendary objectives depend on it), but we no longer
+    // deal agents, open the Hotline spin modal, or process a hotline queue. Keep the
+    // hotline state empty + idle so any lingering UI gates fall through to "no agent".
     setHotlineAgents({});
     hotlineAgentsRef.current = {};
     setHotlineUsed({});
     hotlineUsedRef.current = {};
     hotlineTemptFlagsRef.current = {};
     setHotlineLandedAgent(null);
-    // v199.6: reset the per-season taken set — all 9 agents are available again.
+    setHotlineSpinPhase("idle");
     setSeasonAgentsTaken(new Set());
     seasonAgentsTakenRef.current = new Set();
-    // v199.9/v199.21: reset per-season counters. Legendary-tracking fields (campsitesBuilt,
-    // genrePlays, genreTempts) all reset too so season-scoped reqs (e.g. "play 2 Rock this
-    // season") start fresh each season. v199.23: plays (total artist plays this season).
+    // v199.9/v199.21/v199.45: fresh per-season counters.
     const freshCounters = {};
     players.forEach(p => {
       freshCounters[p.id] = {
         microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0,
         genrePlays: {}, genreTempts: {},
+        draws: 0,
       };
     });
     setSeasonCounters(freshCounters);
     seasonCountersRef.current = freshCounters;
-    processHotlineQueue(queue);
+    // v199.47: processHotlineQueue intentionally NOT called — no agents to assign.
   };
   // Advance the hotline queue — if the head is an AI, auto-pick after a short delay then
   // recurse. If the head is a human, open the modal. If empty, close.
@@ -4272,7 +4295,9 @@ export default function Headliners() {
   const checkLegendaryContracts = (pid) => {
     if (gameModeRef.current !== "quickYear") return;
     const season = quickYearSeasonRef.current;
-    if (season === "summer") return; // summer is resolution only, no token awards
+    // v199.45: Summer is now an EARNABLE season too (signature objective per legendary).
+    // Previously summer was resolution-only; now the signature check fires throughout
+    // the final season so the token can be earned before resolution.
     const legendaries = gameLegendaryArtistsRef.current || [];
     if (legendaries.length === 0) return;
     const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
@@ -4292,6 +4317,39 @@ export default function Headliners() {
 
       let met = false;
       switch (req.type) {
+        // v199.45: new non-genre season-locked req types.
+        case "play_count": {
+          const plays = counters.plays || 0;
+          met = plays >= req.count;
+          break;
+        }
+        case "draw_count": {
+          const draws = counters.draws || 0;
+          met = draws >= req.count;
+          break;
+        }
+        // v199.45: Summer signature types.
+        case "play_genre_total": {
+          // Total plays of this genre across the whole game (cumulative).
+          const total = (pd.playedGenreCounts || {})[req.genre] || 0;
+          met = total >= req.count;
+          break;
+        }
+        case "unique_genres": {
+          // Count distinct genres across all artists on stages.
+          const stages = pd.stageArtists || [];
+          const seenGenres = new Set();
+          stages.forEach(stage => (stage || []).forEach(a => {
+            (a.genre || "").split(",").map(g => g.trim()).forEach(g => { if (g) seenGenres.add(g); });
+          }));
+          met = seenGenres.size >= req.count;
+          break;
+        }
+        case "fewer_than_stages": {
+          const stages = (pd.stages || []).length;
+          met = stages < req.count;
+          break;
+        }
         case "play_genre": {
           if (req.scope === "cumulative") {
             // Count artists of this genre currently on any of this player's stages.
@@ -4431,6 +4489,14 @@ export default function Headliners() {
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog(`📜 ${principle.emoji} ${principle.name}`, `${pName}: spent principle → opened "${newName}" (Stage ${stageIdx + 1})`);
     showFloatingBonus(`📜 Opened "${newName}"!`, "#86efac");
+    // v199.46: opening a stage via a principle now COSTS 1 action in Quick Play.
+    // Previously this was a free bonus action available any time — too strong because
+    // it stacked with the player's regular 2 actions. Only charge when the opening
+    // player is the current turn-taker (prevents accidental charge if some async path
+    // ever opens a stage for a non-current player).
+    if (gameModeRef.current === "quickYear" && pid === currentPlayerId) {
+      completeAction();
+    }
     return true;
   };
 
@@ -4826,7 +4892,7 @@ export default function Headliners() {
       // v198: reset pending-effect / selection state so the new player starts clean,
       // mirroring the state resets at the top of endTurn.
       setTurnAction(null); setSelectedDie(null); setActionTaken(false);
-      setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []));
+      setDice(rollDice());
       // Give the player a fresh turn-start view.
       setShowTurnStart(true);
     }
@@ -8281,6 +8347,13 @@ export default function Headliners() {
     addLog(`🎴 ${favour.genre} Favour`, `${pName}: cashed Favour → played ${artist.name} free from pool (amenities waived)`);
     showFloatingBonus(`🎴 ${artist.name}!`, "#fcd34d");
     setFavourPlayMode(null);
+    // v199.45: cashing a Favour counts as 1 action in the 2-action turn system (same as
+    // a regular artist play). Only applies when the cashing player is the current turn
+    // taker — Favours cashed as a reaction to someone else's tempt should also be a free
+    // reaction, so this is scoped to self-cash on your own turn.
+    if (gameModeRef.current === "quickYear" && pid === currentPlayerId) {
+      completeAction();
+    }
   }
 
   // ─── Book artist to stage ───
@@ -8402,12 +8475,20 @@ export default function Headliners() {
     if (gameModeRef.current === "quickYear") {
       const artistGenres = (artist.genre || "").split(",").map(g => g.trim()).filter(Boolean);
       const next = { ...(seasonCountersRef.current || {}) };
-      const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {} };
+      const cur = next[pid] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {}, draws: 0 };
       const nextGenrePlays = { ...(cur.genrePlays || {}) };
       artistGenres.forEach(g => { nextGenrePlays[g] = (nextGenrePlays[g] || 0) + 1; });
       next[pid] = { ...cur, plays: (cur.plays || 0) + 1, genrePlays: nextGenrePlays };
       setSeasonCounters(next);
       seasonCountersRef.current = next;
+      // v199.45: cumulative played-genre counts on pd for the Summer signature
+      // play_genre_total check (Madonna/Tupac "play N of genre over the whole game").
+      setPlayerData(p => {
+        const pd0 = p[pid] || {};
+        const pgc = { ...(pd0.playedGenreCounts || {}) };
+        artistGenres.forEach(g => { pgc[g] = (pgc[g] || 0) + 1; });
+        return { ...p, [pid]: { ...pd0, playedGenreCounts: pgc } };
+      });
       checkLegendaryContracts(pid);
     }
 
@@ -8785,12 +8866,11 @@ export default function Headliners() {
     // The 2 they decline (during setup) go out of the game permanently.
     const councilDeck = shuffle([...ALL_COUNCILS]);
     const data = {}; players.forEach((p, idx) => {
-      // v199.42: Quick Play uses 3 fields (one per principle slot) so Festival Principles
-      // can't all be fed by the same amenity pile. Classic keeps the single aggregate field
-      // from v189. Each field is still tracked individually in pd.fields; pd.amenities
-      // remains the aggregate sum for backward-compat with helpers that read it.
+      // v199.48: back to 1 field in Quick Play (Festival Principles removed). The 3-field
+      // split only existed to force principles to compete for separate amenity piles.
+      // With no principles, a single unified amenity area is simpler and matches Classic.
       const isQP = gameModeRef.current === "quickYear";
-      const fields = isQP ? Array.from({ length: 3 }, emptyField) : emptyFields();
+      const fields = emptyFields();
       const dealt = councilDeck.slice(idx * 5, idx * 5 + 5);
       // v199.18: Quick Play starts players at 0 Fame.
       const startingFame = isQP ? 0 : 1;
@@ -9256,7 +9336,9 @@ export default function Headliners() {
       });
       setPlayerPrinciples(initialPrinciples);
       playerPrinciplesRef.current = initialPrinciples;
-      addLog("📜 Festival Principles", `Each player holds ${PRINCIPLES_PER_PLAYER} principles. Complete one → open a new stage (max ${QUICKYEAR_MAX_STAGES}). Unused completed principles = +${UNUSED_PRINCIPLE_BONUS} 🎟️ each at game end.`);
+      if (PRINCIPLES_PER_PLAYER > 0) {
+        addLog("📜 Festival Principles", `Each player holds ${PRINCIPLES_PER_PLAYER} principles. Complete one → open a new stage (max ${QUICKYEAR_MAX_STAGES}). Unused completed principles = +${UNUSED_PRINCIPLE_BONUS} 🎟️ each at game end.`);
+      }
       players.forEach(p => {
         if (!p.isAI) {
           const list = initialPrinciples[p.id].map(pr => `${pr.emoji} ${pr.name} (${pr.desc})`).join(" · ");
@@ -9270,7 +9352,7 @@ export default function Headliners() {
       addLog("📞 Agents available", chosenPool.map(a => `${a.emoji} ${a.name}`).join(" · "));
       addLog("🎸 Legendary Lineup", `${LEGENDARY_ARTISTS_PER_GAME} legendary artists this game. Each has 3 season requirements (Autumn/Winter/Spring). Every player who meets a req earns a token for that artist. At Summer close, player with most tokens for each artist wins — ties resolve via contest die. Winners score +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per artist of the legendary's genre in their festival.`);
       chosenLegendaries.forEach(la => {
-        addLog(`${la.emoji} ${la.name}`, `${la.genre} · +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per ${la.genre} artist · Autumn: ${la.requirements.autumn.label} · Winter: ${la.requirements.winter.label} · Spring: ${la.requirements.spring.label}`);
+        addLog(`${la.emoji} ${la.name}`, `${la.genre} · +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per ${la.genre} artist · Autumn: ${la.requirements.autumn.label} · Winter: ${la.requirements.winter.label} · Spring: ${la.requirements.spring.label} · Summer: ${la.requirements.summer?.label || "—"}`);
       });
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
@@ -9284,7 +9366,7 @@ export default function Headliners() {
     // when all players finish turn 12. The year value stays at 1 throughout.
     const startingTurns = gameModeRef.current === "quickYear" ? QUICKYEAR_TOTAL_TURNS : schedule[1];
     const tl = {}; order.forEach(id => { tl[id] = startingTurns; }); setTurnsLeft(tl);
-    setYear(1); setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : [])); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    setYear(1); setDice(rollDice()); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     setAgentBookedThisYear({});
     // Reset year-scoped latches
     positionalGrantedYearRef.current = 0;
@@ -10200,12 +10282,11 @@ export default function Headliners() {
             setPlayerData(p => { const nh = [...p[currentPlayerId].hand]; nh.splice(artistIdx, 1); return { ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: nh } }; });
           }
           bookArtistToStage(artist, stageIdx, currentPlayerId);
-          setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-          setActionTaken(true);
           addLog("🤖 AI", `Booked ${artist.name}`);
+          completeAction();
         } else {
           addLog("🤖 AI", "Booking failed — fallback to amenity");
-          const cd2 = dice.length > 0 ? dice : rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+          const cd2 = dice.length > 0 ? dice : rollDice();
           if (cd2.length > 0) {
             // v187: preserve Turn 1 fame-die priority even in the book-fallback path
             const isFirstTurnFB = (year === 1) && ((pd.stageArtists || []).flat().length === 0);
@@ -10220,7 +10301,7 @@ export default function Headliners() {
               setPlayerData(p => ({ ...p, [currentPlayerId]: mutateAmenity(p[currentPlayerId], fIdx, pk.type, +1) }));
               claimAmenityMicrotrend(currentPlayerId, pk.type);
             }
-            setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+            completeAction();
           }
         }
         scheduleNext(800); return;
@@ -10305,33 +10386,50 @@ export default function Headliners() {
           : null;
         const bestPoolVal = bestPool ? scoreCardForAI(bestPool) : 0;
 
-        // AI chooses deck if EV higher AND deck has cards; otherwise pool
-        if (bestPool && bestPoolVal >= deckEV) {
-          drawn.push(bestPool);
-          setArtistPool(artistPool.filter(a => a !== bestPool));
-        } else if (artistDeck.length > 0) {
-          const deckDrawn = drawFromDeck(deckDrawCount);
-          drawn.push(...deckDrawn);
-        } else if (bestPool) {
-          // Deck empty — fall back to pool pick even if worse EV
-          drawn.push(bestPool);
-          setArtistPool(artistPool.filter(a => a !== bestPool));
+        // v199.48: in Quick Play, AI can only draw from DECK (pool is Favour-only).
+        // Classic still weighs pool-vs-deck EV.
+        if (gameModeRef.current === "quickYear") {
+          if (artistDeck.length > 0) {
+            const deckDrawn = drawFromDeck(1); // Quick Play: 1 card per browse action
+            drawn.push(...deckDrawn);
+          }
+        } else {
+          // Classic: AI chooses deck if EV higher AND deck has cards; otherwise pool
+          if (bestPool && bestPoolVal >= deckEV) {
+            drawn.push(bestPool);
+            setArtistPool(artistPool.filter(a => a !== bestPool));
+          } else if (artistDeck.length > 0) {
+            const deckDrawn = drawFromDeck(deckDrawCount);
+            drawn.push(...deckDrawn);
+          } else if (bestPool) {
+            // Deck empty — fall back to pool pick even if worse EV
+            drawn.push(bestPool);
+            setArtistPool(artistPool.filter(a => a !== bestPool));
+          }
         }
         
         if (drawn.length > 0) {
           setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...drawn] } }));
           drawn.forEach(() => trackGoalProgress(currentPlayerId, "artistsSigned"));
           addLog("🤖 AI", `Drew ${drawn.map(a => a.name).join(" + ")} (${drawn.length} artists)`);
-          // Council reward: drawArtists councils give +N additional artists from deck
+          // v199.45/v199.48: in Quick Play, bump season draws counter so Legendary
+          // draw_count objectives can fire for AI players too.
+          if (gameModeRef.current === "quickYear") {
+            const next = { ...(seasonCountersRef.current || {}) };
+            const cur = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {}, draws: 0 };
+            next[currentPlayerId] = { ...cur, draws: (cur.draws || 0) + drawn.length };
+            setSeasonCounters(next);
+            seasonCountersRef.current = next;
+            checkLegendaryContracts(currentPlayerId);
+          }
           applyDrawArtistsBonus(currentPlayerId);
         }
-        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-        setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+        completeAction();
         refillPool();
         scheduleNext(500); return;
       }
       // Default: pick amenity directly (skip the multi-step UI)
-      let currentDice = dice.length > 0 ? dice : rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+      let currentDice = dice.length > 0 ? dice : rollDice();
       if (dice.length === 0 && currentDice.length > 0) {
         setDice(currentDice);
       }
@@ -10366,8 +10464,7 @@ export default function Headliners() {
         setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[currentPlayerId].baseFame || 0) + 1) } }));
         addLog("🤖 AI", `Rolled 🔥 Fame!`);
         trackGoalProgress(currentPlayerId, "fameDieRolls");
-        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-        setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+        completeAction();
         scheduleNext(500); return;
       }
 
@@ -10376,8 +10473,7 @@ export default function Headliners() {
         const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
         grantStageProgress(currentPlayerId, "Stage die");
         addLog("🤖 AI", `Picked the 🎪 Stage die`);
-        setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-        setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+        completeAction();
         scheduleNext(500); return;
       }
 
@@ -10395,8 +10491,7 @@ export default function Headliners() {
       addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]} in F${fIdx + 1}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
       claimAmenityMicrotrend(currentPlayerId, amenityType);
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-      setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+      completeAction();
       scheduleNext(500); return;
     }
 
@@ -10426,7 +10521,7 @@ export default function Headliners() {
       return;
     }
     setTurnAction("pickAmenity");
-    if (dice.length === 0) { const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
+    if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
     // v199.10: in Quick Play, seed the per-action pick counter from current Fame tier.
     // Fame 0-1 → 1 die; Fame 2+ → 2 dice.
     if (gameModeRef.current === "quickYear") {
@@ -10559,9 +10654,8 @@ export default function Headliners() {
       // Deferred: handleDiePick's post-call logic will decrement + decide.
       return;
     }
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
-    setTurnAction(null);
-    setActionTaken(true);
+    // v199.45: use completeAction so 2-action turn system is respected.
+    completeAction();
   };
 
   const handleDiePick = (idx, dv) => {
@@ -10592,20 +10686,42 @@ export default function Headliners() {
         setTimeout(() => recalcTickets(), 50);
         return;
       }
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+      completeAction();
       return;
     }
     if (dv === "stage") {
       // v166: stage die: grant +1 stage progress. 2 progress = 1 stage-open credit.
-      // v199.25: in Quick Play, stages open via Festival Principles only — the stage die
-      // is repurposed as a bonus Fame grant so the pick stays useful.
+      // v199.45: in Quick Play, stage die opens a new stage immediately (if under the
+      // max of 3). At max, converts to +1 Fame so the pick is never wasted. Festival
+      // Principles are still the primary stage-opening path (they also give +3 tickets
+      // if unused at game end); the stage die is the "roll your way to a stage" backup.
       const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
       if (gameModeRef.current === "quickYear") {
-        logFameGain(currentPlayerId, 1, "Stage die (repurposed)");
-        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
-        addLog(currentPlayer.festivalName, `picked the 🎪 Stage die → +1 🔥 Fame (Quick Play)`);
-        showFloatingBonus("+1 🔥 Fame!", "#f97316");
-        sfx.gainFame();
+        const curStages = (playerDataRef.current?.[currentPlayerId]?.stages || playerData[currentPlayerId]?.stages || []).length;
+        if (curStages < QUICKYEAR_MAX_STAGES) {
+          const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
+          const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
+          setPlayerData(p => ({
+            ...p,
+            [currentPlayerId]: {
+              ...p[currentPlayerId],
+              stages: [...(p[currentPlayerId].stages || []), { fameRequired: 0 }],
+              stageArtists: [...(p[currentPlayerId].stageArtists || []), []],
+              stageNames: [...(p[currentPlayerId].stageNames || []), sName],
+              stageColors: [...(p[currentPlayerId].stageColors || []), sColor],
+            }
+          }));
+          addLog(currentPlayer.festivalName, `picked the 🎪 Stage die → opened new stage "${sName}"`);
+          showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
+          sfx.placeStage && sfx.placeStage();
+        } else {
+          // At max stages — fall back to +1 Fame so the pick isn't wasted.
+          logFameGain(currentPlayerId, 1, "Stage die (at max stages → Fame)");
+          setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
+          addLog(currentPlayer.festivalName, `picked the 🎪 Stage die at max stages → +1 🔥 Fame`);
+          showFloatingBonus("+1 🔥 Fame! (max stages)", "#f97316");
+          sfx.gainFame();
+        }
       } else {
         grantStageProgress(currentPlayerId, "Stage die");
         addLog(currentPlayer.festivalName, `picked the 🎪 Stage die`);
@@ -10622,7 +10738,7 @@ export default function Headliners() {
         setTimeout(() => recalcTickets(), 50);
         return;
       }
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setTimeout(() => recalcTickets(), 50);
+      completeAction();
       return;
     }
     // v197.13: Bouncer Rights (sec_1) — the security leader can substitute which amenity
@@ -10673,15 +10789,9 @@ export default function Headliners() {
       }
     }
     // v189: single field per player — auto-place, no field picker step
-    // v199.42: Quick Play now uses 3 fields. Instead of placing on field 0 directly,
-    // enter the field-picker mode — player clicks a field on the board to complete the
-    // placement. handleFieldClickForPlacement handles the actual place + decrement + turn
-    // end. Classic single-field mode places on field 0 as before.
-    if (gameModeRef.current === "quickYear") {
-      setSelectedDie(idx);
-      setPickingFieldFor(dv);
-      return;
-    }
+    // v199.48: direct placement on field 0 for both modes. The 3-field Quick Play
+    // flow was removed when Festival Principles were removed (fields served no purpose
+    // without principles tied to them). All amenities go to the single unified area.
     const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
     placeAmenityCounter(dv, 0);
     setSelectedDie(null);
@@ -10711,7 +10821,7 @@ export default function Headliners() {
     setPickingFieldFor(null);
   };
   const handleRerollDice = () => {
-    const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+    const fresh = rollDice();
     setDice(fresh);
     addLog("Dice", "Rerolled all amenity dice");
     grantCat1IfEligible(currentPlayerId, fresh);
@@ -10850,7 +10960,15 @@ export default function Headliners() {
     addLog(currentPlayer.festivalName, `picked up ${artist.name} from pool`);
     setLastActionFor(currentPlayerId, `pulled ${artist.name} from the pool`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
-    // Council reward: drawArtists councils give +N additional artists from the deck
+    // v199.45: bump season draws counter + check Legendary contracts for draw_count.
+    if (gameModeRef.current === "quickYear") {
+      const next = { ...(seasonCountersRef.current || {}) };
+      const cur = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {}, draws: 0 };
+      next[currentPlayerId] = { ...cur, draws: (cur.draws || 0) + 1 };
+      setSeasonCounters(next);
+      seasonCountersRef.current = next;
+      checkLegendaryContracts(currentPlayerId);
+    }
     applyDrawArtistsBonus(currentPlayerId);
     // v199.10: Quick Play Fame-tier scaling — if the player has more picks remaining,
     // STAY in artist mode so they can click another pool artist or draw from the deck.
@@ -10869,7 +10987,7 @@ export default function Headliners() {
         return;
       }
     }
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+    completeAction();
     setTimeout(() => recalcTickets(), 50);
   };
 
@@ -10926,9 +11044,7 @@ export default function Headliners() {
     finishDraw2(drawn);
   };
   const finishDraw2 = (picks) => {
-    // v199.32: Favours now go to HAND like regular artists (no auto-token). They sit
-    // in hand until the player chooses to cash them in (free play from pool) or holds
-    // them to game end (converts to Legendary tokens for matching genre).
+    // v199.32: Favours now go to HAND like regular artists (no auto-token).
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
     picks.forEach(pick => {
       if (!pick) return;
@@ -10939,7 +11055,16 @@ export default function Headliners() {
         trackGoalProgress(currentPlayerId, "artistsSigned");
       }
     });
-    // Council reward: drawArtists councils give +N additional artists from deck
+    // v199.45: bump the season draws counter by the number of cards actually drawn,
+    // then check Legendary contracts so the draw_count objective can fire.
+    if (gameModeRef.current === "quickYear" && picks.length > 0) {
+      const next = { ...(seasonCountersRef.current || {}) };
+      const cur = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {}, draws: 0 };
+      next[currentPlayerId] = { ...cur, draws: (cur.draws || 0) + picks.length };
+      setSeasonCounters(next);
+      seasonCountersRef.current = next;
+      checkLegendaryContracts(currentPlayerId);
+    }
     applyDrawArtistsBonus(currentPlayerId);
     setDraw2Picks([]); setDraw2DeckCard(null);
     // v199.11: Quick Play Fame-scaling — if the player has more picks remaining, keep
@@ -10955,7 +11080,7 @@ export default function Headliners() {
         return;
       }
     }
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+    completeAction();
     setTimeout(() => recalcTickets(), 50);
   };
   const handleReserveFromDeck = () => {
@@ -10972,7 +11097,13 @@ export default function Headliners() {
       setLastActionFor(currentPlayerId, `drew ${card.name} from the deck`);
       trackGoalProgress(currentPlayerId, "artistsSigned");
       applyDrawArtistsBonus(currentPlayerId);
-      // Deck draws are hidden-info reveals — no undo back-track.
+      // v199.45: bump draws counter + check Legendary contracts for draw_count objectives.
+      const next = { ...(seasonCountersRef.current || {}) };
+      const cur = next[currentPlayerId] || { microtrends: 0, amenities: 0, campsitesBuilt: 0, positionsTempted: [], plays: 0, genrePlays: {}, genreTempts: {}, draws: 0 };
+      next[currentPlayerId] = { ...cur, draws: (cur.draws || 0) + 1 };
+      setSeasonCounters(next);
+      seasonCountersRef.current = next;
+      checkLegendaryContracts(currentPlayerId);
       setUndoSnapshot(null);
       const left = qyPicksLeftRef.current - 1;
       setQyPicksLeft(left);
@@ -10985,7 +11116,7 @@ export default function Headliners() {
         setTimeout(() => recalcTickets(), 50);
         return;
       }
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+      completeAction();
       setTimeout(() => recalcTickets(), 50);
       return;
     }
@@ -11014,12 +11145,12 @@ export default function Headliners() {
       setArtistPool(prev => [...prev, other]);
       setDeckDrawnCard(null); setDeckCardRevealed(false);
       applyDrawArtistsBonus(currentPlayerId);
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+      completeAction();
     } else {
       // Only drew 1 card (deck was low) — conclude
       setDeckDrawnCard(null); setDeckCardRevealed(false);
       applyDrawArtistsBonus(currentPlayerId);
-      setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+      completeAction();
     }
     setTimeout(() => recalcTickets(), 50);
   };
@@ -11034,7 +11165,7 @@ export default function Headliners() {
     addLog(currentPlayer.festivalName, `swapped ${unchosen.name} into pool, discarded ${replaced.name}`);
     setDeckDrawnCard(null); setDeckCardRevealed(false);
     applyDrawArtistsBonus(currentPlayerId);
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+    completeAction();
   };
   const handleConfirmDeckReserve = () => {
     // Legacy fallback — single card confirm (used by effects)
@@ -11045,7 +11176,7 @@ export default function Headliners() {
     trackGoalProgress(currentPlayerId, "artistsSigned");
     setDeckDrawnCard(null); setDeckCardRevealed(false);
     applyDrawArtistsBonus(currentPlayerId);
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null);
+    completeAction();
   };
   const handleStageSelect = (stageIdx) => {
     if (!selectedArtist) return;
@@ -11096,12 +11227,49 @@ export default function Headliners() {
       showFloatingBonus("🎸 Genre Match!", "#fbbf24");
     }
     bookArtistToStage(artist, stageIdx, currentPlayerId, false, usedGenrePath);
-    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 })); setTurnAction(null); setActionTaken(true); setArtistAction(null); setSelectedArtist(null); setSelectedStageIdx(null);
+    completeAction(); setSelectedArtist(null); setSelectedStageIdx(null);
   };
 
   // ═══════════════════════════════════════════════════════════
   // END TURN / ROUND END
   // ═══════════════════════════════════════════════════════════
+  // v199.45: completeAction — call this after any single human action completes
+  // (build/browse/buy/favour). In Quick Play, decrements actionsLeftThisTurn and only
+  // ends the turn when actions hit 0. Classic (not in use currently, but preserved for
+  // future compatibility) treats each action as a full turn as before.
+  const completeAction = () => {
+    if (gameModeRef.current === "quickYear") {
+      const newActions = Math.max(0, actionsLeftRef.current - 1);
+      setActionsLeftThisTurn(newActions);
+      actionsLeftRef.current = newActions;
+      // Close any sub-menus so the player returns to the main action chooser.
+      setTurnAction(null);
+      setArtistAction(null);
+      setSelectedArtist(null);
+      setSelectedDie(null);
+      setPickingFieldFor(null);
+      setQyPicksLeft(0);
+      qyPicksLeftRef.current = 0;
+      setQyDrewThisAction(false);
+      qyDrewThisActionRef.current = false;
+      setTimeout(() => recalcTickets(), 50);
+      if (newActions <= 0) {
+        // Both actions used — mark actionTaken so End Turn button appears.
+        setActionTaken(true);
+      }
+      return;
+    }
+    // Classic: unchanged — one action = one turn.
+    setTurnsLeft(p => ({ ...p, [currentPlayerId]: p[currentPlayerId] - 1 }));
+    setTurnAction(null);
+    setArtistAction(null);
+    setSelectedArtist(null);
+    setSelectedDie(null);
+    setPickingFieldFor(null);
+    setActionTaken(true);
+    setTimeout(() => recalcTickets(), 50);
+  };
+
   const endTurn = () => {
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
@@ -11112,6 +11280,15 @@ export default function Headliners() {
     setTurnAction(null); setSelectedDie(null); setPickingFieldFor(null); setActionTaken(false); setArtistAction(null); setSelectedArtist(null); setShowHand(false); setDeckDrawnCard(null); setDeckCardRevealed(false); setViewingPlayerId(null); setCouncilRefreshesUsedThisTurn(0); setCouncilDiceRefreshesUsedThisTurn(0); setQyPicksLeft(0); qyPicksLeftRef.current = 0;
     setPendingEffect(null); setPendingEffectPid(null); setPendingDiceRoll(null);
     setPlaysThisTurn(0); // v170: reset the per-turn play counter
+    // v199.45: Quick Play uses the 2-action system. The v199.44 rebalancer corrects
+    // turnsLeft based on quickYearTurnsTaken; no manual decrement needed here.
+    // Reset actionsLeftThisTurn so the NEXT player starts with a fresh action pool.
+    if (gameModeRef.current === "quickYear") {
+      setActionsLeftThisTurn(QUICKYEAR_ACTIONS_PER_TURN);
+      actionsLeftRef.current = QUICKYEAR_ACTIONS_PER_TURN;
+      setQyDrewThisAction(false);
+      qyDrewThisActionRef.current = false;
+    }
 
     // Evaluate council objectives for current player before moving on
     evaluateCouncils(currentPlayerId);
@@ -12758,7 +12935,7 @@ export default function Headliners() {
     const sorted = [...players].sort((a, b) => ((allTickets[a.id]?.[year]?.raw) || 0) - ((allTickets[b.id]?.[year]?.raw) || 0));
     const no = sorted.map(p => p.id); setTurnOrder(no); setCurrentPlayerIdx(0);
     const tl = {}; const sch = flatTurnsModeRef.current ? TURNS_PER_YEAR_FLAT : TURNS_PER_YEAR; no.forEach(id => { tl[id] = sch[ny]; }); setTurnsLeft(tl);
-    setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : [])); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
+    setDice(rollDice()); setPhase("game"); setShowTurnStart(false); setTurnAction(null); setActionTaken(false);
     // (Star Dice phase replaces old per-year event drawing)
     // Microtrends now persist across years — they get replaced as players claim them.
     // Don't reinitialize at year transition.
@@ -14227,10 +14404,10 @@ export default function Headliners() {
                 if (!canReroll) return null;
                 return <div style={{ marginBottom: 10 }}>
                   <button onClick={() => {
-                    const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+                    const fresh = rollDice();
                     setDice(fresh);
                     addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool (was low on amenities)`);
-                    sfx.rollDice && sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+                    sfx.rollDice && sfx.rollDice();
                     // Check if the new pool still has a matching die for this effect.
                     // If not, transition to the aborted modal instead of leaving the
                     // player in a picker with nothing to pick.
@@ -14424,10 +14601,10 @@ export default function Headliners() {
           };
           const canReroll = !pe.hasRerolled && pe.filterType;
           const handleReroll = () => {
-            const fresh = rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+            const fresh = rollDice();
             setDice(fresh);
             addLog("🎲 Reroll", `${pe.artistName}: rerolled the shared dice pool`);
-            sfx.rollDice && sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+            sfx.rollDice && sfx.rollDice();
             // Check if the new pool has a matching die
             const has = pe.filterType === "__anyAmenity__"
               ? fresh.some(d => d !== "fame" && d !== "stage")
@@ -15817,7 +15994,14 @@ export default function Headliners() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: isMobile ? "12px 16px" : 16, overflow: "auto" }}>
           <div style={{ marginBottom: 10, textAlign: "center" }}>
             <h2 style={{ color: "#fbbf24", fontSize: isMobile ? 22 : 20, margin: 0 }}>{currentPlayer?.festivalName}'s Turn</h2>
-            <p style={{ color: "#8b5cf6", fontSize: isMobile ? 13 : 12, margin: "4px 0" }}>{turnsLeft[currentPlayerId]} turns remaining</p>
+            <p style={{ color: "#8b5cf6", fontSize: isMobile ? 13 : 12, margin: "4px 0" }}>
+              {turnsLeft[currentPlayerId]} turns remaining
+              {gameModeRef.current === "quickYear" && (
+                <span style={{ marginLeft: 10, color: actionsLeftThisTurn > 0 ? "#fbbf24" : "#64748b", fontWeight: 700 }}>
+                  · ⚡ {actionsLeftThisTurn}/{QUICKYEAR_ACTIONS_PER_TURN} action{actionsLeftThisTurn === 1 ? "" : "s"} left
+                </span>
+              )}
+            </p>
           </div>
 
           {/* Board + stage artists */}
@@ -15918,7 +16102,10 @@ export default function Headliners() {
             // Only gated by stage availability (checked in picker).
             return <div style={{ marginTop: 8 }}>
               <button onClick={() => setShowHand(!showHand)} style={{ ...bs, padding: "4px 12px", fontSize: 11, marginBottom: 6 }}>
-                {showHand ? "Hide" : "Show"} Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""}{principles.length > 0 ? ` + ${principles.length} principle${principles.length === 1 ? "" : "s"}` : ""})
+                {/* v199.46: Festival Principles removed from the hand. The hand is now
+                    artists + favours only. Principles are shown separately below the hand
+                    (dedicated row) so they don't clutter the artist-picking flow. */}
+                {showHand ? "Hide" : "Show"} Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
               </button>
               {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
                 {handCards.map((a, i) => a.isFavour
@@ -15936,26 +16123,32 @@ export default function Headliners() {
                       onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
                     />
                 )}
-                {principles.map((pr, i) => {
-                  // v199.42: in Quick Play, pass the principle's assigned field amenities
-                  // (not the aggregate across all fields). Each principle only "sees" its
-                  // own field. Classic uses the aggregate.
-                  const am = (gameModeRef.current === "quickYear" && pr.fieldIdx != null)
-                    ? ((currentPD?.fields || [])[pr.fieldIdx] || {})
-                    : (currentPD?.amenities || {});
-                  return <PrincipleCard
-                    key={`p-${i}`}
-                    principle={pr}
-                    amenities={am}
-                    stageCount={(currentPD?.stages || []).length}
-                    maxStages={QUICKYEAR_MAX_STAGES}
-                    amenityIcons={AMENITY_ICONS}
-                    unusedBonus={UNUSED_PRINCIPLE_BONUS}
-                    onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
-                    small
-                  />;
-                })}
               </div>}
+              {/* v199.46: Dedicated Principles row — separate from the hand so artist
+                  flow and principle-spending flow don't visually overlap. */}
+              {gameModeRef.current === "quickYear" && principles.length > 0 && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
+                  <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6, textAlign: "center" }}>📜 Festival Principles · spend to open a stage (1 action)</div>
+                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, justifyContent: "center" }}>
+                    {principles.map((pr, i) => {
+                      const am = pr.fieldIdx != null
+                        ? ((currentPD?.fields || [])[pr.fieldIdx] || {})
+                        : (currentPD?.amenities || {});
+                      return <PrincipleCard
+                        key={`p-${i}`}
+                        principle={pr}
+                        amenities={am}
+                        stageCount={(currentPD?.stages || []).length}
+                        maxStages={QUICKYEAR_MAX_STAGES}
+                        amenityIcons={AMENITY_ICONS}
+                        unusedBonus={UNUSED_PRINCIPLE_BONUS}
+                        onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
+                        small
+                      />;
+                    })}
+                  </div>
+                </div>
+              )}
             </div>;
           })()}
 
@@ -16014,13 +16207,21 @@ export default function Headliners() {
               </div>
             </div>}
 
+            {/* v199.45: Quick Play early-end — when the player has taken 1 of 2 actions
+                but hasn't started another, let them end the turn early (burns the unused
+                action). Avoids forcing a dummy second action. */}
+            {gameModeRef.current === "quickYear" && !actionTaken && !turnAction && !noTurnsLeft && actionsLeftThisTurn < QUICKYEAR_ACTIONS_PER_TURN && (
+              <div style={{ textAlign: "center", marginBottom: 10 }}>
+                <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={{ ...bd, background: "rgba(251,146,60,0.1)", border: "1px solid #fdba74", color: "#fdba74", fontSize: 12 }}>
+                  End Turn Early → (skip remaining action{actionsLeftThisTurn === 1 ? "" : "s"})
+                </button>
+              </div>
+            )}
             {!actionTaken && !turnAction && !noTurnsLeft && <div>
-              {/* v199.25: Festival Principles — show a dedicated button for each completable
-                  unused principle. Clicking spends it to open a new stage. Doesn't consume
-                  the player's main action — it's a free bonus action available any time
-                  during their turn (as long as the principle is complete + they're under
-                  the max stage cap). */}
-              {gameMode === "quickYear" && (() => {
+              {/* v199.25/v199.46: Festival Principles — dedicated button per completable
+                  principle. Spending opens a stage AND costs 1 action (v199.46). Only
+                  visible when the player still has actions remaining this turn (actionsLeft > 0). */}
+              {gameMode === "quickYear" && actionsLeftThisTurn > 0 && (() => {
                 const principles = playerPrinciples[currentPlayerId] || [];
                 const stageCount = (currentPD?.stages || []).length;
                 const available = principles.filter(pr => !pr.used && isPrincipleComplete(pr, currentPD));
@@ -16028,7 +16229,7 @@ export default function Headliners() {
                 const atCap = stageCount >= QUICKYEAR_MAX_STAGES;
                 return (
                   <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(134,239,172,0.1), rgba(96,165,250,0.08))", border: "1px solid rgba(134,239,172,0.4)" }}>
-                    <div style={{ color: "#86efac", fontSize: 10, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", textAlign: "center", marginBottom: 8 }}>📜 Completed Principles — Spend to Open a Stage</div>
+                    <div style={{ color: "#86efac", fontSize: 10, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", textAlign: "center", marginBottom: 8 }}>📜 Completed Principles — Spend (1 action) to Open a Stage</div>
                     <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                       {available.map(pr => (
                         <button key={pr.id} onClick={() => openStageViaPrinciple(currentPlayerId, pr.id)} disabled={atCap} style={{ ...bs, fontSize: 12, padding: "8px 12px", background: atCap ? "rgba(100,116,139,0.1)" : "rgba(134,239,172,0.15)", border: `1px solid ${atCap ? "#475569" : "#86efac"}`, color: atCap ? "#64748b" : "#86efac", fontWeight: 700, cursor: atCap ? "not-allowed" : "pointer" }} title={atCap ? `Max ${QUICKYEAR_MAX_STAGES} stages reached` : `Open a new stage via ${pr.name}`}>
@@ -16041,7 +16242,11 @@ export default function Headliners() {
                 );
               })()}
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                <button onClick={handlePickAmenity} style={bp}>🎲 Pick Amenity</button>
+                {/* v199.45: Quick Play labels — Build / Browse or Buy. Classic retains
+                    the original names since its 1-action-per-turn flow is different. */}
+                <button onClick={handlePickAmenity} style={bp}>
+                  {gameModeRef.current === "quickYear" ? "🏗️ Build" : "🎲 Pick Amenity"}
+                </button>
                 {hasAgent(currentPlayerId) && (() => {
                   const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
                   const label = gameMode === "quickYear" && temptMode
@@ -16049,7 +16254,9 @@ export default function Headliners() {
                     : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
-                <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>🎤 Book / Reserve Artist</button>
+                <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>
+                  {gameModeRef.current === "quickYear" ? "🎤 Browse or Buy" : "🎤 Book / Reserve Artist"}
+                </button>
 
               </div>
             </div>}
@@ -16067,7 +16274,7 @@ export default function Headliners() {
                 const remaining = cap - councilDiceRefreshesUsedThisTurn;
                 if (cap <= 0 || remaining <= 0) return null;
                 return <button onClick={() => {
-                  setDice(rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []));
+                  setDice(rollDice());
                   setCouncilDiceRefreshesUsedThisTurn(n => n + 1);
                   addLog(currentPlayer.festivalName, `🎲 Refreshed amenity dice (Council reward — free, ${remaining - 1} left)`);
                   sfx.placeAmenity();
@@ -16434,7 +16641,7 @@ export default function Headliners() {
             {!actionTaken && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "draw2") && !selectedArtist && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#ec4899", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Artist Action</p>
               <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{gameMode === "quickYear"
-                ? `Book from hand, OR take artists from pool/deck (1 card each pick). Pool/deck picks: ${qyPicksLeft} left`
+                ? `Book from hand OR draw 1 from deck. Pool is view-only — cash a 🎴 Favour of matching genre to play from pool.`
                 : `Book from hand, take 1 from pool, or draw ${getDeckDrawCount(currentPD)} from deck (${currentPD?.fame >= 4 ? "Fame 4-5" : "Fame 1-3"})`}</p>
               
               {/* Hand */}
@@ -16472,16 +16679,28 @@ export default function Headliners() {
                 </div>
               </div>}
 
-              {/* Pool + Deck row — v196: pool = 1 card, deck = 2 or 3 based on Fame */}
+              {/* Pool + Deck row.
+                  v199.48: in Quick Play, pool artists are view-only — the ONLY way to play
+                  from the pool is to cash a matching-genre Favour card from your hand.
+                  Pool cards render disabled (gray) with a "Favour only" overlay. Deck draw
+                  is the sole way to add cards to hand. Classic retains direct pool draws. */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Pool (1 card) or Deck (1 card) — pick ${qyPicksLeft} more` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Deck — browse (pool is Favour-only, 🎴)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
-                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : ""}>
-                      <ArtistCard artist={a} showCost small genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)} onClick={() => { if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i); }} />
-                      {agentsOnIt.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
+                    const isQP = gameMode === "quickYear";
+                    const disabled = isQP || claimedByOther;
+                    return <div key={i} style={{ position: "relative", opacity: isQP ? 0.55 : (claimedByOther ? 0.4 : 1), cursor: disabled ? "not-allowed" : "pointer" }} title={isQP ? "Pool artists are Favour-only in Quick Play" : (claimedByOther ? "Claimed by another agent" : "")}>
+                      <ArtistCard artist={a} showCost small genreMatchGlow={!isQP && hasGenreMatchBonusAvailable(a, currentPD)} onClick={() => {
+                        if (isQP) return; // v199.48: Favour-only in Quick Play
+                        if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i);
+                      }} />
+                      {isQP && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                        <span style={{ fontSize: 10, color: "#fcd34d", fontWeight: 700, letterSpacing: 0.5, background: "rgba(0,0,0,0.6)", padding: "2px 6px", borderRadius: 4 }}>🎴 FAVOUR ONLY</span>
+                      </div>}
+                      {agentsOnIt.length > 0 && !isQP && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                         {agentsOnIt.map(([pid], ai) => {
                           const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
                           return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
@@ -16490,7 +16709,7 @@ export default function Headliners() {
                     </div>;
                   })}
                   <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
-                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +{gameMode === "quickYear" ? 1 : getDeckDrawCount(currentPD)}</span>
+                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +1</span>
                   </button>
                 </div>
               </div>
@@ -16719,7 +16938,7 @@ export default function Headliners() {
               <button onClick={() => {
                 const results = shuffle([...DICE_OPTIONS, ...DICE_OPTIONS]).slice(0, yearEndDiceRoll.count);
                 setYearEndDiceRoll({ ...yearEndDiceRoll, results, rolled: true });
-                sfx.rollDice(gameModeRef.current === "quickYear" ? ["stage"] : []);
+                sfx.rollDice();
               }} style={{ ...bp, fontSize: 18, padding: "14px 32px", animation: "pulse 1.5s infinite" }}>🎲 ROLL!</button>
             </div>}
 
