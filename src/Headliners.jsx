@@ -191,15 +191,18 @@ const LEGENDARY_ARTIST_POOL = [
   { id: "kraftwerk",   name: "KRAFTWERK",     genre: "Electronic", emoji: "🤖",
     summer: { type: "on_stages", genre: "Electronic", count: 3, label: "Have 3 Electronic artists in your festival" } },
   { id: "james_brown", name: "JAMES BROWN",   genre: "Funk",       emoji: "🕺",
-    summer: { type: "unique_genres", count: 5, label: "Have artists spanning 5 unique genres in your festival" } },
+    summer: { type: "unique_genres", count: 5, label: "Have artists spanning more than 4 unique genres" } },
   { id: "pixies",      name: "PIXIES",        genre: "Indie",      emoji: "🎸",
-    summer: { type: "fewer_than_stages", count: 3, label: "Have fewer than 3 stages" } },
+    summer: { type: "fewer_than_stages", count: 2, label: "Have fewer than 2 stages" } },
 ];
 
-// v199.45: non-genre req pool for Autumn/Winter/Spring. Each game, every drawn legendary
-// rolls 3 distinct options from this pool. Scope "season" means it must happen WITHIN
-// the active season (counters reset at season boundaries). All reqs are earnable by any
-// player in that season.
+// v199.49: SHARED seasonal objective pool. Each season (Autumn/Winter/Spring) a single
+// objective is drawn and SHARED across all 3 legendaries — meeting it earns a token for
+// EVERY legendary. This replaces the per-legendary autumn/winter/spring reqs from v199.45.
+// Summer stays per-legendary (each has a signature objective, visible from game start).
+// Objectives are drawn FRESH at the start of each season and HIDDEN until that season
+// begins (players don't know Winter's objective during Autumn, etc.).
+// New types: amenity_total, hand_size — expanding beyond microtrend/fame/play/draw.
 const LEGENDARY_REQ_POOL = [
   { type: "microtrend_claim", count: 1, label: "Match a microtrend this season" },
   { type: "microtrend_claim", count: 2, label: "Match 2 microtrends this season" },
@@ -209,34 +212,26 @@ const LEGENDARY_REQ_POOL = [
   { type: "play_count", count: 3, label: "Play 3 artists this season" },
   { type: "draw_count", count: 3, label: "Draw 3 artists this season" },
   { type: "draw_count", count: 4, label: "Draw 4 artists this season" },
+  { type: "amenity_total", amenity: "campsite", count: 3, label: "Have 3 campsites in your festival" },
+  { type: "amenity_total", amenity: "portaloo", count: 3, label: "Have 3 portaloos in your festival" },
+  { type: "amenity_total", amenity: "security", count: 3, label: "Have 3 security units in your festival" },
+  { type: "amenity_total", amenity: "catering", count: 3, label: "Have 3 catering vans in your festival" },
+  { type: "hand_size", count: 5, label: "Hold 5 cards in your hand" },
+  { type: "hand_size", count: 6, label: "Hold 6 cards in your hand" },
 ];
 
-// v199.45: pick 3 distinct req types from the non-genre pool for Autumn/Winter/Spring,
-// and attach the signature Summer objective. Season-locked earning: each season, meet
-// that season's objective to earn 1 token for this legendary.
-function assignLegendaryReqs(legendary) {
+// v199.49: draws one shared objective for the current season from the non-genre pool.
+// Called at game start (for Autumn) and at each season boundary (for the next season).
+function drawSharedSeasonalObjective() {
   const pool = [...LEGENDARY_REQ_POOL];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  // Pick 3 distinct types for the three generic seasons.
-  const picked = [];
-  const seenTypes = new Set();
-  for (const req of pool) {
-    if (picked.length >= 3) break;
-    // Allow same type with different count (microtrend_claim x1 vs x2 are different objectives)
-    const key = `${req.type}:${req.count || req.position || 0}`;
-    if (seenTypes.has(key)) continue;
-    seenTypes.add(key);
-    picked.push(req);
-  }
-  return {
-    autumn: { ...picked[0] },
-    winter: { ...picked[1] },
-    spring: { ...picked[2] },
-    summer: legendary.summer,
-  };
+  const idx = Math.floor(Math.random() * pool.length);
+  return { ...pool[idx] };
+}
+
+// v199.49: legendaries no longer carry autumn/winter/spring reqs — those are shared and
+// drawn per-season instead. Returns just the summer signature per legendary.
+function assignLegendaryReqs(legendary) {
+  return { summer: legendary.summer };
 }
 const LEGENDARY_ARTISTS_PER_GAME = 3;
 
@@ -1649,37 +1644,49 @@ function aiPickAmenityType(pd, infraContext) {
 /** AI decides which die to pick from available dice */
 function aiPickDie(dice, pd, preferredType, wantsStageProgress, wantsFameThisTurn) {
   const wanted = preferredType || aiPickAmenityType(pd);
-  // v187: on Year 1 Turn 1 when the AI is at Fame 1 and wants to reach Fame 2,
-  // the fame die takes priority over everything else. Guarantees the AI hits Fame 2
-  // by end of turn whenever a fame die is in the roll.
+  // v199.49: new Quick-Play-friendly priority to fix "AI picks stage die repeatedly"
+  //   1. Explicit Fame bias → Fame die
+  //   2. Explicit stage bias (Classic only) → Stage die
+  //   3. Wanted amenity type (campsite/portaloo/security/catering)
+  //   4. Any other amenity (not Fame, not Stage) — amenities win over Fame/Stage fallback
+  //   5. Fame die (last useful face)
+  //   6. Stage die — ONLY if the player isn't at max stages (otherwise skip entirely)
+  //   7. Final fallback: whatever is left
+  //
+  // Previously the fallback chain was fame → stage → amenity, which meant whenever the
+  // AI's wanted amenity wasn't in the roll it would pick stage even when stages were
+  // irrelevant (or capped). Stage die is now LAST resort.
+  const atMaxStages = (pd?.stages || []).length >= 3; // QUICKYEAR_MAX_STAGES
+
   if (wantsFameThisTurn) {
     for (let i = 0; i < dice.length; i++) {
       if (dice[i] === "fame") return { idx: i, type: "fame" };
     }
   }
-  // v166: if the AI wants stage progress (1 stage, or 2 stages with a stage credit banked
-  // that's close to another), prefer a stage die when one is available.
-  if (wantsStageProgress) {
+  if (wantsStageProgress && !atMaxStages) {
     for (let i = 0; i < dice.length; i++) {
       if (dice[i] === "stage") return { idx: i, type: "stage" };
     }
   }
-  // Find a die that gives the wanted amenity type
+  // Wanted amenity face
   for (let i = 0; i < dice.length; i++) {
     if (dice[i] === wanted) return { idx: i, type: wanted };
   }
-  // Fallback: fame die is next-best (free fame is always useful)
-  for (let i = 0; i < dice.length; i++) {
-    if (dice[i] === "fame") return { idx: i, type: "fame" };
-  }
-  // Fallback: stage die if we haven't opted for it
-  for (let i = 0; i < dice.length; i++) {
-    if (dice[i] === "stage") return { idx: i, type: "stage" };
-  }
-  // Fallback: first amenity face
+  // Any amenity (not Fame, not Stage) — prefer amenities over Fame/Stage fallback
   for (let i = 0; i < dice.length; i++) {
     if (dice[i] !== "fame" && dice[i] !== "stage") return { idx: i, type: dice[i] };
   }
+  // Fame die fallback (useful even when no specific amenity needed)
+  for (let i = 0; i < dice.length; i++) {
+    if (dice[i] === "fame") return { idx: i, type: "fame" };
+  }
+  // Stage die ONLY if under max (otherwise skip and fall through to final)
+  if (!atMaxStages) {
+    for (let i = 0; i < dice.length; i++) {
+      if (dice[i] === "stage") return { idx: i, type: "stage" };
+    }
+  }
+  // Final: whatever is at index 0 (even if stage at max — have to pick something)
   return { idx: 0, type: dice[0] || "campsite" };
 }
 
@@ -2596,6 +2603,13 @@ export default function Headliners() {
   const [legendaryTokens, setLegendaryTokens] = useState({});
   const legendaryTokensRef = useRef({});
   useEffect(() => { legendaryTokensRef.current = legendaryTokens; }, [legendaryTokens]);
+  // v199.49: Shared seasonal objectives. One req per season, drawn fresh at the start
+  // of that season. Autumn is drawn at game start; Winter/Spring at their season boundaries.
+  // Summer uses each Legendary's own `summer` signature (not drawn here).
+  // Shape: { autumn: req | null, winter: req | null, spring: req | null }
+  const [seasonalObjectives, setSeasonalObjectives] = useState({ autumn: null, winter: null, spring: null });
+  const seasonalObjectivesRef = useRef({ autumn: null, winter: null, spring: null });
+  useEffect(() => { seasonalObjectivesRef.current = seasonalObjectives; }, [seasonalObjectives]);
   const [legendaryResolution, setLegendaryResolution] = useState(null);
   // v199.25: Festival Principles state.
   // playerPrinciples: { pid: [{id, name, emoji, reqs, desc, used}] } — hidden hand per player.
@@ -4295,25 +4309,24 @@ export default function Headliners() {
   const checkLegendaryContracts = (pid) => {
     if (gameModeRef.current !== "quickYear") return;
     const season = quickYearSeasonRef.current;
-    // v199.45: Summer is now an EARNABLE season too (signature objective per legendary).
-    // Previously summer was resolution-only; now the signature check fires throughout
-    // the final season so the token can be earned before resolution.
     const legendaries = gameLegendaryArtistsRef.current || [];
     if (legendaries.length === 0) return;
     const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
     const counters = seasonCountersRef.current[pid] || {};
 
     legendaries.forEach(la => {
-      // v199.22: multiple players can claim each season's token. Skip only if THIS player
-      // has already claimed it (no self-double-dip). Other players claiming it doesn't block us.
-      // v199.31: firstComeOnly reqs (positional tempts) — if any other player has already
-      // claimed this season for this legendary, nobody else can earn it.
+      // Skip if this player already claimed this legendary's token for the current season.
       const existing = (legendaryTokensRef.current[la.id] || {})[season] || [];
       if (existing.includes(pid)) return;
 
-      const req = la.requirements[season];
+      // v199.49: for Autumn/Winter/Spring, use the SHARED seasonal objective (same across
+      // all 3 legendaries — meeting it earns a token for every legendary). For Summer, use
+      // this legendary's own signature. If the shared objective hasn't been drawn yet for
+      // the current season (shouldn't happen, but defensive), skip the check.
+      const req = season === "summer"
+        ? la.requirements.summer
+        : (seasonalObjectivesRef.current || {})[season];
       if (!req) return;
-      if (req.firstComeOnly && existing.length > 0) return; // another player already got it
 
       let met = false;
       switch (req.type) {
@@ -4403,6 +4416,18 @@ export default function Headliners() {
           met = (currentFame - snapFame) >= req.count;
           break;
         }
+        // v199.49: amenity_total — have N of a specific amenity type in your festival.
+        case "amenity_total": {
+          const count = (pd.amenities || {})[req.amenity] || 0;
+          met = count >= req.count;
+          break;
+        }
+        // v199.49: hand_size — hold N cards in hand (artists + favours count).
+        case "hand_size": {
+          const size = (pd.hand || []).length;
+          met = size >= req.count;
+          break;
+        }
         case "tempt_position": {
           // Did this player tempt an artist in the required pool position THIS SEASON?
           // positionsTemptedBy is per-player per-season set-like array; bumped at tempt-placement time.
@@ -4414,8 +4439,9 @@ export default function Headliners() {
 
       if (met) {
         // v199.22: push THIS player's pid onto the season's claimer array (every player can claim).
+        // v199.49: include summer in the default struct.
         const nextTokens = { ...(legendaryTokensRef.current || {}) };
-        const curArtist = { ...(nextTokens[la.id] || { autumn: [], winter: [], spring: [] }) };
+        const curArtist = { ...(nextTokens[la.id] || { autumn: [], winter: [], spring: [], summer: [] }) };
         curArtist[season] = [...(curArtist[season] || []), pid];
         nextTokens[la.id] = curArtist;
         setLegendaryTokens(nextTokens);
@@ -4869,6 +4895,17 @@ export default function Headliners() {
       setQuickYearSeason(nextSeason);
       quickYearSeasonRef.current = nextSeason;
       addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
+      // v199.49: draw the shared seasonal objective for the new season (Winter/Spring
+      // only — Summer uses each Legendary's own signature). Hidden until drawn.
+      if (nextSeason === "winter" || nextSeason === "spring") {
+        const freshObjective = drawSharedSeasonalObjective();
+        setSeasonalObjectives(prev => {
+          const next = { ...prev, [nextSeason]: freshObjective };
+          seasonalObjectivesRef.current = next;
+          return next;
+        });
+        addLog(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]}`, `Objective: ${freshObjective.label}. Every player who achieves it this season earns 1 token for each Legendary.`);
+      }
       // v199.23: snapshot each player's fame at the moment the new season begins. The
       // season-end modal uses this as the baseline for the Fame delta column ("+/- this season").
       const snap = {};
@@ -9311,7 +9348,7 @@ export default function Headliners() {
       const initialTokens = {};
       // v199.22: each season's slot is now an ARRAY of pids who claimed, not a single pid.
       // Every player who meets the req earns their own token — no first-to-claim gating.
-      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: [], winter: [], spring: [], favour: [] }; });
+      chosenLegendaries.forEach(la => { initialTokens[la.id] = { autumn: [], winter: [], spring: [], summer: [], favour: [] }; });
       setLegendaryTokens(initialTokens);
       legendaryTokensRef.current = initialTokens;
       setLegendaryResolution(null);
@@ -9350,10 +9387,15 @@ export default function Headliners() {
       addLog("⚡ Fame", "Fame is status (hard cap 5). Climb the Fame ladder to unlock bigger artists and scale your actions.");
       addLog("📞 Hotline", `Season start: each player spins the Hotline dial. ${HOTLINE_AGENTS_PER_GAME} agents are available this game (of ${HOTLINE_AGENT_POOL.length}); each one can only be assigned to one player per season. First come first served. One tempt per agent. Re-spin for 1 Fame.`);
       addLog("📞 Agents available", chosenPool.map(a => `${a.emoji} ${a.name}`).join(" · "));
-      addLog("🎸 Legendary Lineup", `${LEGENDARY_ARTISTS_PER_GAME} legendary artists this game. Each has 3 season requirements (Autumn/Winter/Spring). Every player who meets a req earns a token for that artist. At Summer close, player with most tokens for each artist wins — ties resolve via contest die. Winners score +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per artist of the legendary's genre in their festival.`);
+      addLog("🎸 Legendary Lineup", `${LEGENDARY_ARTISTS_PER_GAME} legendary artists this game. Autumn/Winter/Spring share ONE objective per season (drawn fresh at the start of each season, hidden until then). Meeting it earns tokens for all 3 legendaries. Summer objective is unique to each legendary — visible from the start. Most tokens at Summer close wins; ties via contest die. Winners score +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per artist of the legendary's genre in your festival.`);
       chosenLegendaries.forEach(la => {
-        addLog(`${la.emoji} ${la.name}`, `${la.genre} · +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per ${la.genre} artist · Autumn: ${la.requirements.autumn.label} · Winter: ${la.requirements.winter.label} · Spring: ${la.requirements.spring.label} · Summer: ${la.requirements.summer?.label || "—"}`);
+        addLog(`${la.emoji} ${la.name}`, `${la.genre} · +${LEGENDARY_TICKETS_PER_GENRE_ARTIST} 🎟️ per ${la.genre} artist · Summer signature: ${la.requirements.summer?.label || "—"}`);
       });
+      // v199.49: draw Autumn's shared seasonal objective at game start.
+      const autumnObjective = drawSharedSeasonalObjective();
+      setSeasonalObjectives({ autumn: autumnObjective, winter: null, spring: null });
+      seasonalObjectivesRef.current = { autumn: autumnObjective, winter: null, spring: null };
+      addLog("🍂 Autumn Objective", `${autumnObjective.label}. Every player who achieves it this season earns 1 token for each Legendary.`);
       // Kick off the first Hotline spin (Autumn). Defer to the next tick so startGame's
       // other state updates settle first and the modal doesn't fight phase transitions.
       setTimeout(() => beginHotlineSpinsForSeason(), 300);
@@ -10469,10 +10511,41 @@ export default function Headliners() {
       }
 
       if (dieVal === "stage" || pick.type === "stage") {
-        // v166: AI picks the stage die → +1 stage progress. Blocking value even if maxed.
         const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
-        grantStageProgress(currentPlayerId, "Stage die");
-        addLog("🤖 AI", `Picked the 🎪 Stage die`);
+        // v199.49: in Quick Play, AI stage die OPENS a stage (parity with human path
+        // from v199.45). Previously it called grantStageProgress which is a Classic-only
+        // mechanic — in Quick Play it was a no-op, so AI picked stage die → nothing →
+        // next action, AI picked stage die again → nothing. Now the stage opens or (at
+        // max) converts to +1 Fame, matching the human behaviour.
+        if (gameModeRef.current === "quickYear") {
+          const aiPd = playerData[currentPlayerId] || {};
+          const curStages = (aiPd.stages || []).length;
+          if (curStages < QUICKYEAR_MAX_STAGES) {
+            const usedNames = aiPd.stageNames || [];
+            const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+            const sName = availNames[Math.floor(Math.random() * (availNames.length || 1))] || `Stage ${curStages + 1}`;
+            const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
+            setPlayerData(p => ({
+              ...p,
+              [currentPlayerId]: {
+                ...p[currentPlayerId],
+                stages: [...(p[currentPlayerId].stages || []), { fameRequired: 0 }],
+                stageArtists: [...(p[currentPlayerId].stageArtists || []), []],
+                stageNames: [...(p[currentPlayerId].stageNames || []), sName],
+                stageColors: [...(p[currentPlayerId].stageColors || []), sColor],
+              }
+            }));
+            addLog("🤖 AI", `Picked 🎪 Stage die → opened "${sName}"`);
+          } else {
+            // At max stages — convert to +1 Fame.
+            logFameGain(currentPlayerId, 1, "Stage die (at max → Fame)");
+            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
+            addLog("🤖 AI", `Picked 🎪 Stage die at max → +1 🔥 Fame`);
+          }
+        } else {
+          grantStageProgress(currentPlayerId, "Stage die");
+          addLog("🤖 AI", `Picked the 🎪 Stage die`);
+        }
         completeAction();
         scheduleNext(500); return;
       }
@@ -15506,11 +15579,35 @@ export default function Headliners() {
             {gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
               <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "linear-gradient(180deg, rgba(252,211,77,0.22) 0%, rgba(234,179,8,0.12) 60%, rgba(168,85,247,0.08) 100%)", border: "2px solid rgba(252,211,77,0.65)", boxShadow: "0 0 16px rgba(252,211,77,0.18), inset 0 1px 0 rgba(255,255,255,0.05)" }}>
                 <div style={{ color: "#fde68a", fontWeight: 800, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center", textShadow: "0 0 8px rgba(252,211,77,0.4)" }}>🎸 Legendary Lineup</div>
+
+                {/* v199.49: SHARED seasonal objectives band — one objective per season,
+                    same across all 3 legendaries. Autumn is drawn at game start; Winter
+                    and Spring are drawn as those seasons begin. Future seasons display
+                    as "???" until drawn. Meeting the current shared objective earns a
+                    token for EVERY legendary. */}
+                <div style={{ marginBottom: 10, padding: 7, borderRadius: 7, background: "rgba(15,14,26,0.5)", border: "1px dashed rgba(252,211,77,0.3)" }}>
+                  <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Shared Season Objectives</div>
+                  {["autumn", "winter", "spring"].map(sKey => {
+                    const obj = seasonalObjectives[sKey];
+                    const isCurrent = sKey === quickYearSeason;
+                    const isPast = QUICKYEAR_SEASONS.indexOf(sKey) < QUICKYEAR_SEASONS.indexOf(quickYearSeason);
+                    const revealed = obj != null; // drawn when its season began
+                    return (
+                      <div key={sKey} style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 6, padding: "2px 0", color: isCurrent ? "#fde68a" : (isPast ? "#64748b" : "#475569"), fontWeight: isCurrent ? 700 : 400 }}>
+                        <span>{QUICKYEAR_SEASON_EMOJI[sKey]}</span>
+                        <span style={{ flex: 1, fontStyle: revealed ? "normal" : "italic" }}>
+                          {revealed ? obj.label : "??? (hidden until this season begins)"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
                 {gameLegendaryArtists.map((la, i) => {
                   const tokens = legendaryTokens[la.id] || {};
-                  // Tally per-player tokens across all qualifying season arrays.
+                  // Tally per-player tokens across all qualifying season arrays (incl. summer).
                   const tokenCounts = {};
-                  ["autumn", "winter", "spring"].forEach(sKey => {
+                  ["autumn", "winter", "spring", "summer"].forEach(sKey => {
                     (tokens[sKey] || []).forEach(pid => { if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1; });
                   });
                   return (
@@ -15522,25 +15619,39 @@ export default function Headliners() {
                           <span style={{ color: "#94a3b8", fontSize: 9 }}>· {la.genre} · +{LEGENDARY_TICKETS_PER_GENRE_ARTIST}🎟️/{la.genre}</span>
                         </div>
                       </div>
-                      {QUICKYEAR_SEASONS.filter(s => s !== "summer").map(sKey => {
-                        const req = la.requirements[sKey];
-                        const claimerPids = tokens[sKey] || [];
-                        const isCurrent = sKey === quickYearSeason;
+                      {/* v199.49: Summer signature — unique per legendary, visible from game start. */}
+                      {la.requirements.summer && (() => {
+                        const isSummer = quickYearSeason === "summer";
+                        const summerClaimers = tokens.summer || [];
                         return (
-                          <div key={sKey} style={{ fontSize: 9, color: isCurrent ? "#e2e8f0" : "#64748b", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6 }}>
-                            <span style={{ flex: 1 }}>
-                              {QUICKYEAR_SEASON_EMOJI[sKey]} {req.label}
-                              {req.firstComeOnly && <span style={{ color: "#f87171", marginLeft: 4, fontSize: 8, fontWeight: 700 }}>FIRST ONLY</span>}
-                            </span>
+                          <div style={{ fontSize: 9, color: isSummer ? "#fde68a" : "#94a3b8", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6, fontWeight: isSummer ? 700 : 400 }}>
+                            <span style={{ flex: 1 }}>☀️ Summer: {la.requirements.summer.label}</span>
                             <div style={{ display: "flex", alignItems: "center", gap: 2, minHeight: 10 }}>
-                              {claimerPids.length === 0
-                                ? <span style={{ color: isCurrent ? "#64748b" : "#334155", fontSize: 9, fontStyle: "italic" }}>{isCurrent ? "open" : "—"}</span>
-                                : claimerPids.map((pid, j) => {
+                              {summerClaimers.length === 0
+                                ? <span style={{ color: isSummer ? "#64748b" : "#334155", fontSize: 9, fontStyle: "italic" }}>{isSummer ? "open" : "—"}</span>
+                                : summerClaimers.map((pid, j) => {
                                     const pl = players.find(p => p.id === pid);
                                     if (!pl) return null;
                                     return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(255,255,255,0.3)", boxShadow: "0 0 3px rgba(0,0,0,0.5)", display: "inline-block" }} />;
                                   })
                               }
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Shared season claimers — token count per season (shared across all legendaries). */}
+                      {["autumn", "winter", "spring"].map(sKey => {
+                        const claimerPids = tokens[sKey] || [];
+                        if (claimerPids.length === 0) return null;
+                        return (
+                          <div key={sKey} style={{ fontSize: 9, color: "#64748b", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1px 0", gap: 6 }}>
+                            <span style={{ flex: 1 }}>{QUICKYEAR_SEASON_EMOJI[sKey]} tokens</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                              {claimerPids.map((pid, j) => {
+                                const pl = players.find(p => p.id === pid);
+                                if (!pl) return null;
+                                return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(255,255,255,0.3)", boxShadow: "0 0 3px rgba(0,0,0,0.5)", display: "inline-block" }} />;
+                              })}
                             </div>
                           </div>
                         );
@@ -16680,38 +16791,45 @@ export default function Headliners() {
               </div>}
 
               {/* Pool + Deck row.
-                  v199.48: in Quick Play, pool artists are view-only — the ONLY way to play
-                  from the pool is to cash a matching-genre Favour card from your hand.
-                  Pool cards render disabled (gray) with a "Favour only" overlay. Deck draw
-                  is the sole way to add cards to hand. Classic retains direct pool draws. */}
+                  v199.49: pool click draws to hand. Favour cash still provides direct
+                  pool→stage play (free of amenities). Genre-match direct pool→stage play
+                  is also allowed when a pool artist's genre matches both artists on an
+                  open stage (shows a 🎸 "Play direct" indicator on eligible pool cards). */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Deck — browse (pool is Favour-only, 🎴)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Pool (draw 1) or Deck (draw 1) · 🎸 = genre-match play direct` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
-                    const agentsOnIt = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                     const isQP = gameMode === "quickYear";
-                    const disabled = isQP || claimedByOther;
-                    return <div key={i} style={{ position: "relative", opacity: isQP ? 0.55 : (claimedByOther ? 0.4 : 1), cursor: disabled ? "not-allowed" : "pointer" }} title={isQP ? "Pool artists are Favour-only in Quick Play" : (claimedByOther ? "Claimed by another agent" : "")}>
-                      <ArtistCard artist={a} showCost small genreMatchGlow={!isQP && hasGenreMatchBonusAvailable(a, currentPD)} onClick={() => {
-                        if (isQP) return; // v199.48: Favour-only in Quick Play
-                        if (!claimedByOther && draw2Picks.length === 0) draw2PickFromPool(i);
+                    // v199.49: genre-match direct play. If any open stage has both artists
+                    // sharing a genre with this pool artist AND the player meets Fame, show
+                    // a prompt. Clicking → opens stage picker, places direct from pool.
+                    const canDirectPlay = isQP && !claimedByOther
+                      && (currentPD?.fame || 0) >= (a.fame || 0)
+                      && (currentPD?.stageArtists || []).some((sa, si) => (sa?.length === 2) && canBookHeadlinerViaGenre(a, currentPD, si));
+                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : (canDirectPlay ? "Click: draw to hand · Shift+click: play direct via genre match" : "Click to draw to hand")}>
+                      <ArtistCard artist={a} showCost small genreMatchGlow={canDirectPlay} onClick={(e) => {
+                        if (claimedByOther || draw2Picks.length > 0) return;
+                        // v199.49: Shift+click plays directly via genre match (if available).
+                        // Normal click draws to hand.
+                        if (canDirectPlay && e?.shiftKey) {
+                          // Enter direct-play mode: open stage picker scoped to genre-match stages
+                          setSelectedArtist({ artist: a, source: "pool", poolIdx: i, directPoolPlay: true });
+                          setArtistAction("pickStage");
+                          return;
+                        }
+                        draw2PickFromPool(i);
                       }} />
-                      {isQP && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-                        <span style={{ fontSize: 10, color: "#fcd34d", fontWeight: 700, letterSpacing: 0.5, background: "rgba(0,0,0,0.6)", padding: "2px 6px", borderRadius: 4 }}>🎴 FAVOUR ONLY</span>
-                      </div>}
-                      {agentsOnIt.length > 0 && !isQP && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
-                        {agentsOnIt.map(([pid], ai) => {
-                          const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
-                          return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
-                        })}
-                      </div>}
+                      {canDirectPlay && <div style={{ position: "absolute", top: -4, left: -4, background: "#f59e0b", color: "#1e1b4b", borderRadius: 10, padding: "1px 5px", fontSize: 9, fontWeight: 800, border: "2px solid #1e1b4b" }} title="Shift+click to play direct via genre match">🎸</div>}
                     </div>;
                   })}
                   <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
                     📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +1</span>
                   </button>
                 </div>
+                {gameMode === "quickYear" && <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic", marginTop: 6, textAlign: "center" }}>
+                  Pool click = draw to hand · 🎸 Shift+click (genre match) = play direct
+                </div>}
               </div>
               
               {/* v199.24: portaloo-sacrifice-for-pool-refresh retired in Quick Play (artifact
