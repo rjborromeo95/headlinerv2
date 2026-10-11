@@ -3995,21 +3995,23 @@ export default function Headliners() {
   // unlock higher-Fame artists (since none exist above Fame 5) but can be spent via
   // the Fame spend menu (1/turn). Reads gameModeRef so it's safe to call outside render.
   const getFameCap = () => gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
-  // v199.10: Quick Play Fame-tier action caps.
-  // Fame 0-1 → 1 pick; Fame 2-3 → 2 picks; Fame 4-5 → 2 amenity picks / 3 artist picks.
+  // v199.57: Fame-tier action scaling restored for Quick Play. One action per turn, but
+  // the amount within that action scales with Fame.
+  //   Fame 0-1 → 1 amenity pick OR 2 draws
+  //   Fame 2-3 → 2 amenity picks OR 3 draws
+  //   Fame 4-5 → same as 2-3 PLUS can refresh dice / pool (free, 1/turn each; gated separately)
   const getFameAmenityMax = (pd) => {
-    // v199.45: in Quick Play, Fame no longer scales per-action picks — every turn
-    // gives 2 actions regardless of Fame, and each action is a single pick. Fame still
-    // gates which artists you can play (fame >= artist.fame).
-    if (gameModeRef.current === "quickYear") return 1;
     const fame = pd?.fame || 0;
+    if (gameModeRef.current === "quickYear") {
+      return fame >= 2 ? 2 : 1;
+    }
     return fame >= 2 ? 2 : 1;
   };
   const getFameArtistMax = (pd) => {
-    // v199.52: Quick Play — Browse action draws 2 cards regardless of Fame tier.
-    // Players can mix pool/deck freely within the 2 draws.
-    if (gameModeRef.current === "quickYear") return 2;
     const fame = pd?.fame || 0;
+    if (gameModeRef.current === "quickYear") {
+      return fame >= 2 ? 3 : 2;
+    }
     if (fame >= 2) return 2;
     return 1;
   };
@@ -4745,15 +4747,16 @@ export default function Headliners() {
         // v199.22: each season's claimer entry is now an ARRAY of pids. Walk every entry
         // in each array to tally per-player tokens.
         const tokenCounts = {};
-        // v199.31: include "favour" bucket alongside seasonal tokens — Favour cards drawn
-        // from the deck grant +1 token each (unlimited stacking). Players can tie or win
-        // off favours alone.
-        ["autumn", "winter", "spring", "favour"].forEach(sKey => {
+        // v199.31/v199.55: include summer + favour buckets alongside shared seasonal tokens.
+        // Summer tokens come from meeting the legendary's own signature objective during Summer;
+        // Favour tokens come from end-of-game Favour card conversions. Both count toward the
+        // tally that determines preliminary winners.
+        ["autumn", "winter", "spring", "summer", "favour"].forEach(sKey => {
           (seasons[sKey] || []).forEach(pid => {
             if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
           });
         });
-        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [], favour: seasons.favour || [] };
+        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [], summer: seasons.summer || [], favour: seasons.favour || [] };
         const maxCount = Math.max(0, ...Object.values(tokenCounts));
         if (maxCount === 0) {
           return { artist: la, winner: null, outcome: "no_tokens", tokenCounts, perSeason };
@@ -4785,6 +4788,91 @@ export default function Headliners() {
         const winner = topTied.length === 1 ? rolls[0].pid : topTied[Math.floor(Math.random() * topTied.length)].pid;
         const tiedOnValue = rolls.filter(r => r.value === topValue).length > 1;
         return { artist: la, winner, outcome: "contested", tokens: maxCount, tokenCounts, perSeason, rolls, rolledFace, tiedOnValue, deadlockBroken: topTied.length > 1 };
+      });
+
+      // v199.55: ONE LEGENDARY PER PLAYER. If a player is preliminary winner of multiple
+      // legendaries, they can only KEEP one. Auto-pick the one with the highest projected
+      // payout (based on their current same-genre artist count × LEGENDARY_TICKETS_PER_GENRE_ARTIST,
+      // plus the +1 for the legendary itself if landing is possible). The other legendary
+      // they forfeit goes to the next-highest-token player who also COMPLETED that legendary's
+      // Summer signature. If no such successor exists, the legendary walks away.
+      //
+      // Note: this is auto-pick (deterministic by payout). A future build could show an
+      // interactive picker modal for humans; for now the choice is maximizing-payout for
+      // both AI and humans alike.
+      const projectedPayoutFor = (r, pid) => {
+        const pd = livePD[pid] || {};
+        const sa = pd.stageArtists || [];
+        let genreCount = 0;
+        sa.forEach(stage => (stage || []).forEach(a => {
+          const genres = (a.genre || "").split(",").map(g => g.trim());
+          if (genres.includes(r.artist.genre)) genreCount++;
+        }));
+        const totalArtists = sa.reduce((n, stage) => n + (stage || []).length, 0);
+        const canLand = totalArtists < 9 && ((sa.some(s => (s || []).length < 3)) || (sa.length < QUICKYEAR_MAX_STAGES));
+        const effectiveCount = canLand ? genreCount + 1 : genreCount; // +1 for the legendary itself
+        return LEGENDARY_TICKETS_PER_GENRE_ARTIST * effectiveCount;
+      };
+      // Group preliminary winners by pid.
+      const prelimByPid = {};
+      legendaryResults.forEach(r => {
+        if (r.winner != null) {
+          (prelimByPid[r.winner] = prelimByPid[r.winner] || []).push(r);
+        }
+      });
+      const assignedPids = new Set();
+      const forfeitedResults = [];
+      Object.entries(prelimByPid).forEach(([pidStr, rs]) => {
+        const pid = parseInt(pidStr, 10);
+        if (rs.length === 1) {
+          assignedPids.add(pid);
+          return;
+        }
+        // Multiple preliminary wins — pick the highest projected payout.
+        const scored = rs.map(r => ({ r, payout: projectedPayoutFor(r, pid) }));
+        scored.sort((a, b) => b.payout - a.payout);
+        const kept = scored[0].r;
+        assignedPids.add(pid);
+        kept.autoPicked = true;
+        kept.pickedOverCount = scored.length - 1;
+        // Mark the others as forfeited and clear their winner so successor logic kicks in.
+        for (let i = 1; i < scored.length; i++) {
+          const r = scored[i].r;
+          r.originalWinner = r.winner;
+          r.winner = null; // will be reassigned below
+          r.forfeited = true;
+          forfeitedResults.push(r);
+        }
+        const pName = players.find(p => p.id === pid)?.festivalName || "?";
+        const keptPayout = scored[0].payout;
+        const forfeitedList = scored.slice(1).map(s => s.r.artist.name).join(", ");
+        addLog(`🎸 Legendary pick`, `${pName} qualified for multiple → kept ${kept.artist.name} (projected +${keptPayout} 🎟️), forfeited ${forfeitedList}`);
+      });
+      // Fill forfeited legendaries with next-eligible successors who completed the Summer sig.
+      forfeitedResults.forEach(r => {
+        const summerSigPids = (workingTokens[r.artist.id]?.summer || []); // pids who earned the Summer signature token
+        if (summerSigPids.length === 0) {
+          r.outcome = "no_summer_sig_successor";
+          return; // walks away
+        }
+        // Sort candidates by their token count for this legendary (descending), exclude already-assigned.
+        const candidates = summerSigPids
+          .filter(pid => !assignedPids.has(pid))
+          .map(pid => ({ pid, count: r.tokenCounts[pid] || 0 }))
+          .sort((a, b) => b.count - a.count);
+        if (candidates.length === 0) {
+          r.outcome = "no_summer_sig_successor";
+          return; // walks away
+        }
+        const successor = candidates[0];
+        r.winner = successor.pid;
+        r.successorPid = successor.pid;
+        r.outcome = "successor"; // new outcome marker; display updated below
+        r.tokens = successor.count;
+        assignedPids.add(successor.pid);
+        const sName = players.find(p => p.id === successor.pid)?.festivalName || "?";
+        const origName = players.find(p => p.id === r.originalWinner)?.festivalName || "?";
+        addLog(`🎸 ${r.artist.name}`, `${origName} forfeited → ${sName} inherits (Summer signature completed, ${successor.count} tokens)`);
       });
 
       // Apply: each winner gets the Legendary artist played onto a stage (auto-opens one
@@ -4873,15 +4961,26 @@ export default function Headliners() {
 
       legendaryResults.forEach(r => {
         if (r.winner == null) {
-          addLog(`${r.artist.emoji} ${r.artist.name}`, `No tokens claimed — ${r.artist.name} walks away.`);
+          if (r.outcome === "no_summer_sig_successor") {
+            // v199.55: preliminary winner forfeited; nobody completed the Summer sig to inherit.
+            const origName = players.find(p => p.id === r.originalWinner)?.festivalName || "?";
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `${origName} forfeited (took another Legendary) → no Summer-sig successor → ${r.artist.name} walks away.`);
+          } else {
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `No tokens claimed — ${r.artist.name} walks away.`);
+          }
         } else {
           const pName = players.find(p => p.id === r.winner)?.festivalName || "?";
           // v199.52: if winner's festival was full (9 artists), the Legendary effect is blocked.
           const payoutText = r.festivalFull
             ? `⚠️ festival full (9 artists) → effect BLOCKED, no payout`
             : `${r.genreCount} ${r.artist.genre} artist${r.genreCount === 1 ? "" : "s"} × ${LEGENDARY_TICKETS_PER_GENRE_ARTIST} = +${r.payout} 🎟️`;
-          if (r.outcome === "clear") {
-            addLog(`${r.artist.emoji} ${r.artist.name}`, `${pName} wins with ${r.tokens}/3 tokens → ${payoutText}`);
+          if (r.outcome === "successor") {
+            // v199.55: inherited after original winner's forfeit.
+            const origName = players.find(p => p.id === r.originalWinner)?.festivalName || "?";
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `${origName} forfeited → ${pName} inherits with ${r.tokens} tokens + Summer sig → ${payoutText}`);
+          } else if (r.outcome === "clear") {
+            const choiceNote = r.autoPicked && r.pickedOverCount > 0 ? ` (chose over ${r.pickedOverCount} other legendary${r.pickedOverCount === 1 ? "" : "s"})` : "";
+            addLog(`${r.artist.emoji} ${r.artist.name}`, `${pName} wins with ${r.tokens}/3 tokens${choiceNote} → ${payoutText}`);
           } else {
             // v199.38: tiebreak face-based display. Contest die rolled a specific resource;
             // highest count wins. Tickets only break value ties.
@@ -5038,6 +5137,39 @@ export default function Headliners() {
           return next;
         });
         addLog(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]}`, `Objective: ${freshObjective.label}. Every player who achieves it this season earns 1 token for each Legendary.`);
+      }
+      // v199.56: refresh the artist pool and microtrend at every season boundary so
+      // stale pool cards + stale microtrends don't carry over multiple seasons. Current
+      // pool goes to the discard pile; refillPool() draws a fresh 5. Microtrend is
+      // re-popped from its bag.
+      {
+        const curPool = [...artistPool];
+        if (curPool.length > 0) {
+          const curDiscard = [...discardPile];
+          setDiscardPile([...curDiscard, ...curPool]);
+          setArtistPool([]);
+          addLog("🔄 Pool refresh", `${curPool.length} artist${curPool.length === 1 ? "" : "s"} from last season sent to discard — fresh pool incoming.`);
+        }
+        // Refill happens on the next tick so the state updates land in order.
+        setTimeout(() => { refillPool([]); }, 60);
+      }
+      // Microtrend refresh — pop a fresh active (and matching forecast) from the bags.
+      // Mirrors the game-start initialization logic.
+      {
+        const curActive = microtrends[0];
+        const useAmenity = curActive ? curActive.kind === "amenity" : (Math.random() < 0.5);
+        try {
+          const newActive = useAmenity ? popAmenityFromBag() : popGenreFromBag();
+          const newForecast = useAmenity ? popAmenityFromBag(newActive) : popGenreFromBag(newActive);
+          setMicrotrends([newActive]);
+          if (useAmenity) { setNextAmenityMicrotrend(newForecast); setNextGenreMicrotrend(null); }
+          else            { setNextGenreMicrotrend(newForecast);   setNextAmenityMicrotrend(null); }
+          const describe = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
+          addLog("🎵 Microtrend refresh", `New trend: ${describe(newActive)} (next: ${describe(newForecast)})`);
+        } catch (err) {
+          // If a bag is exhausted, leave the current microtrend in place (defensive).
+          console.warn("Microtrend refresh failed, keeping previous", err);
+        }
       }
       // v199.23: snapshot each player's fame at the moment the new season begins. The
       // season-end modal uses this as the baseline for the Fame delta column ("+/- this season").
@@ -14218,15 +14350,40 @@ export default function Headliners() {
                         {r.outcome === "no_tokens" && (
                           <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No one claimed any tokens — {r.artist.name} walks away.</div>
                         )}
+                        {/* v199.55: original winner forfeited (took another Legendary) AND no
+                            player with the Summer signature was eligible to inherit. */}
+                        {r.outcome === "no_summer_sig_successor" && (() => {
+                          const origName = players.find(p => p.id === r.originalWinner)?.festivalName || "?";
+                          return <div style={{ color: "#fdba74", fontSize: 11, fontStyle: "italic" }}>
+                            🤝 {origName} forfeited (took another Legendary) · no player completed the Summer signature → {r.artist.name} walks away.
+                          </div>;
+                        })()}
                         {r.outcome === "clear" && winner && (
                           <div style={{ color: r.festivalFull ? "#fdba74" : "#86efac", fontSize: 12, fontWeight: 700 }}>
                             🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens
+                            {r.autoPicked && r.pickedOverCount > 0 && (
+                              <span style={{ color: "#94a3b8", fontSize: 10, fontWeight: 400, marginLeft: 6, fontStyle: "italic" }}>· chose this over {r.pickedOverCount} other legendary{r.pickedOverCount === 1 ? "" : "s"}</span>
+                            )}
                             {r.festivalFull
                               ? ` · ⚠️ festival full (9 artists) — effect blocked, no payout`
                               : <> · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</>
                             }
                           </div>
                         )}
+                        {/* v199.55: successor inherited after original winner forfeited */}
+                        {r.outcome === "successor" && winner && (() => {
+                          const origName = players.find(p => p.id === r.originalWinner)?.festivalName || "?";
+                          return <div style={{ color: r.festivalFull ? "#fdba74" : "#86efac", fontSize: 12, fontWeight: 700 }}>
+                            🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} inherits ({r.tokens} tokens, Summer sig complete)
+                            <div style={{ color: "#94a3b8", fontSize: 10, fontWeight: 400, fontStyle: "italic", marginTop: 2 }}>
+                              {origName} was the preliminary winner but forfeited to keep another Legendary.
+                            </div>
+                            {r.festivalFull
+                              ? <div style={{ marginTop: 2 }}>⚠️ festival full (9 artists) — effect blocked, no payout</div>
+                              : <div style={{ marginTop: 2 }}>{r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
+                            }
+                          </div>;
+                        })()}
                         {r.outcome === "contested" && winner && (() => {
                           // v199.38: face-based tiebreak display. Contest die rolled a
                           // specific resource (campsite / portaloo / security / catering /
@@ -16561,7 +16718,10 @@ export default function Headliners() {
 
             {/* Pick Amenity */}
             {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && <div style={{ textAlign: "center" }}>
-              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>Pick a die to build that amenity:</p>
+              <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>
+                Pick a die to build that amenity:
+                {gameModeRef.current === "quickYear" && qyPicksLeft > 1 && <span style={{ color: "#fbbf24", marginLeft: 6, fontWeight: 700 }}>· 🔥 {qyPicksLeft} picks left</span>}
+              </p>
               <DiceDisplay dice={dice} onPick={handleDiePick} canReroll={diceNeedReroll(dice)} onReroll={handleRerollDice} />
               {/* v199.52: Fame 4+ perk — once-per-turn free dice re-roll. */}
               {gameModeRef.current === "quickYear" && (currentPD?.fame || 0) >= 4 && (
@@ -16991,7 +17151,7 @@ export default function Headliners() {
                   v199.52: genre-match direct play removed. Pool click draws to hand only
                   (Favour cash remains the single direct pool→stage play path). */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Draw 2 — mix pool & deck (${qyPicksLeft} left)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Draw ${getFameArtistMax(currentPD)} — mix pool & deck (${qyPicksLeft} left)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
