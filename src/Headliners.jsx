@@ -14184,11 +14184,14 @@ export default function Headliners() {
         return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 970, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflowY: "auto" }}>
           <div style={{ ...card, textAlign: "center", maxWidth: 720, width: "100%", padding: 24, maxHeight: "92vh", overflowY: "auto" }}>
             <h2 style={{ color: "#fcd34d", margin: 0, fontSize: 24, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — Season Close</h2>
-            <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>
-              {isGameEnd
-                ? "Final season complete — the festival has run its course."
-                : "Season ends. Every player scores 1 🎟️ per campsite + 1 🎟️ per artist on stages."}
-            </p>
+            {/* v199.54: formula explainer removed — the recap table shows the total tickets
+                earned this season directly, so the "1 per campsite + 1 per artist" breakdown
+                is redundant. Only the game-end subtitle stays, since there's no breakdown there. */}
+            {isGameEnd && (
+              <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6, marginBottom: 18 }}>
+                Final season complete — the festival has run its course.
+              </p>
+            )}
             {/* v199.21: Legendary Lineup resolution — Summer only. Shows each legendary's
                 token outcome: clear majority winner, tiebreak dice roll, or unclaimed. */}
             {legendaryResults && legendaryResults.length > 0 && (
@@ -14261,23 +14264,21 @@ export default function Headliners() {
                 </div>
               </div>
             )}
-            {/* v199.23: column layout. Each row is a player; columns show per-season deltas.
-                v199.40: Tickets column removed — "ticket calculation between seasons" was
-                creating noise mid-game. Players still see their live ticket total at the top
-                of the UI any time, and the final tally runs at game end. The season recap now
-                focuses on Fame (ladder progression) and Artists (stage filling) only. */}
+            {/* v199.54: Tickets column back. Just the season total — no "per campsite /
+                per artist" formula. Smaller line shows cumulative total ticket count. */}
             <div style={{ marginBottom: 14, borderRadius: 10, overflow: "hidden", border: "1px solid #2a2a4a" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 0, background: "rgba(30,27,75,0.6)", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", fontWeight: 700 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 1fr", gap: 0, background: "rgba(30,27,75,0.6)", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", fontWeight: 700 }}>
                 <div>Festival</div>
                 <div style={{ textAlign: "center", color: "#f97316" }}>🔥 Fame</div>
                 <div style={{ textAlign: "center", color: "#c4b5fd" }}>🎤 Artists</div>
+                <div style={{ textAlign: "center", color: "#86efac" }}>🎟️ Tickets</div>
               </div>
               {rows.map((r, idx) => {
                 const rowBg = idx === 0 ? "linear-gradient(135deg, rgba(252,211,77,0.1), rgba(251,146,60,0.05))" : (idx % 2 === 0 ? "rgba(15,14,26,0.6)" : "rgba(20,20,36,0.5)");
                 const fameDeltaStr = r.fameDelta > 0 ? `+${r.fameDelta}` : (r.fameDelta < 0 ? `${r.fameDelta}` : "—");
                 const fameDeltaColor = r.fameDelta > 0 ? "#86efac" : (r.fameDelta < 0 ? "#f87171" : "#64748b");
                 return (
-                  <div key={r.pid} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 0, padding: "10px", background: rowBg, borderTop: "1px solid #2a2a4a", alignItems: "center" }}>
+                  <div key={r.pid} style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 1fr", gap: 0, padding: "10px", background: rowBg, borderTop: "1px solid #2a2a4a", alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, textAlign: "left" }}>
                       <span style={{ fontSize: 14, color: idx === 0 ? "#fcd34d" : "#c4b5fd", fontWeight: 800 }}>{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`}</span>
                       <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>{r.name}{r.isAI ? " 🤖" : ""}</span>
@@ -14290,12 +14291,13 @@ export default function Headliners() {
                       <div style={{ color: r.artistsThisSeason > 0 ? "#c4b5fd" : "#64748b", fontWeight: 800, fontSize: 15 }}>{r.artistsThisSeason > 0 ? `+${r.artistsThisSeason}` : "—"}</div>
                       <div style={{ color: "#64748b", fontSize: 9, marginTop: 2 }}>on stages: {r.artistsCumulative}</div>
                     </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ color: r.ticketsThisSeason > 0 ? "#86efac" : "#64748b", fontWeight: 800, fontSize: 15 }}>{r.ticketsThisSeason > 0 ? `+${r.ticketsThisSeason}` : "—"}</div>
+                      <div style={{ color: "#64748b", fontSize: 9, marginTop: 2 }}>total: {r.total.toLocaleString()}</div>
+                    </div>
                   </div>
                 );
               })}
-            </div>
-            <div style={{ color: "#64748b", fontSize: 10, fontStyle: "italic", marginBottom: 14 }}>
-              Columns show this season's change · smaller numbers are cumulative.
             </div>
             <button onClick={continueFromSeasonEnd} style={{ ...bp, marginTop: 4, padding: "12px 32px", fontSize: 14 }}>
               {isGameEnd ? "View Final Results →" : `Continue to ${nextSeasonLabel} →`}
