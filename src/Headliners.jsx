@@ -230,8 +230,16 @@ function drawSharedSeasonalObjective() {
 
 // v199.49: legendaries no longer carry autumn/winter/spring reqs — those are shared and
 // drawn per-season instead. Returns just the summer signature per legendary.
+// v199.51: added an explicit defensive stripper for games that were started on an older
+// version (v199.48 or earlier) where la.requirements still carried per-season fields.
+// Called from the sidebar render to guarantee no per-legendary season label leaks through.
 function assignLegendaryReqs(legendary) {
   return { summer: legendary.summer };
+}
+function sanitizeLegendaryRequirements(reqs) {
+  if (!reqs) return { summer: null };
+  // Explicit allow-list: ONLY summer survives.
+  return { summer: reqs.summer || null };
 }
 const LEGENDARY_ARTISTS_PER_GAME = 3;
 
@@ -860,14 +868,12 @@ function canAffordArtist(artist, pd, fameReduction = 0) {
 // but it works for any artist — "headliner" refers to the slot being filled, not the
 // artist's Fame rank.
 function canBookHeadlinerViaGenre(artist, pd, stageIdx) {
-  if (!artist || !pd) return false;
-  // v199.35: Favour cards cannot be booked onto stages via any path.
-  if (artist.isFavour) return false;
-  if ((pd.fame || 0) < (artist.fame || 0)) return false;
-  const sa = (pd.stageArtists || [])[stageIdx];
-  if (!sa || sa.length !== 2) return false;
-  const incomingGenres = new Set(getGenres(artist.genre));
-  return sa.every(a => getGenres(a.genre).some(g => incomingGenres.has(g)));
+  // v199.52: genre-match headliner rule REMOVED. Previously, placing an artist in
+  // slot 3 of a stage whose first two artists shared a genre with it waived amenity
+  // costs. User removed because it made artist plays too easy. All call sites now
+  // get false — only amenity-paid plays, Favour cash, and Legendary auto-landing
+  // remain as play paths. (Function kept to avoid refactoring every call site.)
+  return false;
 }
 
 // v199.15: broadened — this now returns true for ANY artist that could be placed on a
@@ -1943,12 +1949,32 @@ function aiScoreArtistForIdentity(artist, identity, ctx) {
   return 0;
 }
 
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx, infraContext) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx, infraContext, seasonalObjective) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
   const totalAmenities = Object.values(counts).reduce((s, v) => s + v, 0);
   const fame = pd.fame || 0;
+
+  // v199.50: TOP PRIORITY — direct pool play via genre match. If a pool artist can be
+  // played directly onto a stage where both existing artists share its genre (and the
+  // AI's Fame meets the artist's Fame requirement), that's a free play — no amenities
+  // required. Grab it before anything else.
+  if (artistPool && artistPool.length > 0) {
+    for (let i = 0; i < artistPool.length; i++) {
+      const a = artistPool[i];
+      if (!a || a.isFavour) continue;
+      if (fame < (a.fame || 0)) continue;
+      const headlinerGenres = new Set(getGenres(a.genre));
+      for (let si = 0; si < sa.length; si++) {
+        const stage = sa[si] || [];
+        if (stage.length !== 2) continue;
+        if (stage.every(x => getGenres(x.genre).some(g => headlinerGenres.has(g)))) {
+          return { action: "poolDirect", poolIdx: i, stageIdx: si };
+        }
+      }
+    }
+  }
   // v152: microtrend-awareness. When an unclaimed active microtrend exists whose genre
   // matches an artist we could play, prefer that artist. Under alt-obj default this is
   // the only way to actually claim a trend, so it's a meaningful bonus.
@@ -2242,7 +2268,52 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
     if ((counts[t] || 0) >= 3) neededForArtists[t] = (neededForArtists[t] || 0) - 20;
   });
 
-  return { action: "amenity", preferredType: Object.entries(neededForArtists).sort((a, b) => b[1] - a[1])[0]?.[0], wantsFameThisTurn };
+  // v199.50: shared seasonal objective bias. Nudges amenity preference / fame-want / action
+  // choice toward the current shared objective. The objective is already met if the AI has
+  // claimed it this season (checked downstream), so this just steers behaviour TOWARD it.
+  let objectiveWantsFame = false;
+  if (seasonalObjective) {
+    const obj = seasonalObjective;
+    if (obj.type === "amenity_total" && neededForArtists[obj.amenity] !== undefined) {
+      const have = counts[obj.amenity] || 0;
+      if (have < obj.count) {
+        // Strong boost — chasing an objective amenity is worth it.
+        neededForArtists[obj.amenity] = (neededForArtists[obj.amenity] || 0) + 15;
+      }
+    } else if (obj.type === "gain_fame") {
+      // Flag so the die-picker prioritizes Fame die when one is in the roll.
+      objectiveWantsFame = true;
+    } else if (obj.type === "microtrend_claim") {
+      // Boost the active microtrend's amenity so matching it is likelier.
+      if (activeAmenity && neededForArtists[activeAmenity] !== undefined) {
+        neededForArtists[activeAmenity] = (neededForArtists[activeAmenity] || 0) + 10;
+      }
+    } else if (obj.type === "hand_size") {
+      // Favour drawing. If hand < objective target, prefer reserve/drawDeck over amenity.
+      const handSize = (pd.hand || []).length;
+      if (handSize < obj.count) {
+        if (artistPool && artistPool.length > 0) {
+          const favIdx = artistPool.findIndex(a => a && a.isFavour);
+          if (favIdx >= 0) return { action: "reserve", poolIdx: favIdx };
+          // Pick any artist from pool (highest-tier bias handled by downstream scoring)
+          return { action: "reserve", poolIdx: 0 };
+        }
+        return { action: "drawDeck" };
+      }
+    } else if (obj.type === "draw_count") {
+      // Flat preference for draws until counter would be satisfied.
+      // Shared season counter isn't available here, but biasing toward reserve/drawDeck
+      // is a reasonable approximation — the AI will stop once objective fires downstream.
+      if ((pd.hand || []).length < 7 && artistPool && artistPool.length > 0) {
+        return { action: "reserve", poolIdx: 0 };
+      }
+    } else if (obj.type === "play_count") {
+      // Already handled by the main book-from-hand priority — if hand has playable
+      // artists, book path fires first. Nothing extra to do here.
+    }
+  }
+
+  return { action: "amenity", preferredType: Object.entries(neededForArtists).sort((a, b) => b[1] - a[1])[0]?.[0], wantsFameThisTurn: wantsFameThisTurn || objectiveWantsFame };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2771,7 +2842,9 @@ export default function Headliners() {
   const [actionsLeftThisTurn, setActionsLeftThisTurn] = useState(2);
   const actionsLeftRef = useRef(2);
   useEffect(() => { actionsLeftRef.current = actionsLeftThisTurn; }, [actionsLeftThisTurn]);
-  const QUICKYEAR_ACTIONS_PER_TURN = 2;
+  // v199.52: 1 action per turn (was 2). With 2 actions it was too easy to fill all 9
+  // stage slots. 1 action means every turn is a real decision between build/browse/buy.
+  const QUICKYEAR_ACTIONS_PER_TURN = 1;
   // v199.39: once a pool/deck draw happens in an artist action, lock out book-from-hand
   // for the rest of this action. A single artist action is EITHER draws OR a hand book,
   // not both. Reset when a new artist action starts.
@@ -2783,6 +2856,12 @@ export default function Headliners() {
   const [qyPoolRefreshUsed, setQyPoolRefreshUsed] = useState(false);
   const qyPoolRefreshUsedRef = useRef(false);
   useEffect(() => { qyPoolRefreshUsedRef.current = qyPoolRefreshUsed; }, [qyPoolRefreshUsed]);
+  // v199.52: Fame 4+ dice re-roll — once per turn, re-roll the amenity dice. Parallel to
+  // the pool refresh (also Fame 4+). Reset at endTurn (not at action start, since Quick
+  // Play is now 1 action per turn and both refreshes are turn-scoped Fame perks).
+  const [qyDiceRefreshUsed, setQyDiceRefreshUsed] = useState(false);
+  const qyDiceRefreshUsedRef = useRef(false);
+  useEffect(() => { qyDiceRefreshUsedRef.current = qyDiceRefreshUsed; }, [qyDiceRefreshUsed]);
   const [actionTaken, setActionTaken] = useState(false);
   const [undoSnapshot, setUndoSnapshot] = useState(null);
 
@@ -3924,11 +4003,10 @@ export default function Headliners() {
     return fame >= 2 ? 2 : 1;
   };
   const getFameArtistMax = (pd) => {
-    // v199.45: see getFameAmenityMax — Quick Play 2-action turns replace per-action scaling.
-    if (gameModeRef.current === "quickYear") return 1;
+    // v199.52: Quick Play — Browse action draws 2 cards regardless of Fame tier.
+    // Players can mix pool/deck freely within the 2 draws.
+    if (gameModeRef.current === "quickYear") return 2;
     const fame = pd?.fame || 0;
-    // v199.24: Fame 4+ no longer gets 3 picks — the extra pick is replaced by the pool-refresh
-    // ability (see qyPoolRefreshAvailable). Fame 2+ still gets 2 picks.
     if (fame >= 2) return 2;
     return 1;
   };
@@ -4718,6 +4796,21 @@ export default function Headliners() {
           const cur = next[r.winner];
           if (!cur) return;
           const sa = (cur.stageArtists || []).map(s => Array.isArray(s) ? [...s] : []);
+          // v199.52: FESTIVAL-FULL BLOCK — if the winner has 9 artists on stages
+          // already (3 stages × 3 slots), they can't use the Legendary effect at all.
+          // No landing, no ticket payout. Tokens still convert at +2/token via the
+          // token-to-tickets game-end bonus. Players must leave room if they want the
+          // Legendary payouts — "plan with winning them in mind".
+          const totalArtists = sa.reduce((n, stage) => n + (stage || []).length, 0);
+          if (totalArtists >= 9) {
+            r.legendaryLanded = false;
+            r.festivalFull = true;
+            r.openedNewStage = false;
+            r.genreCount = 0;
+            r.payout = 0;
+            // No state mutation for this winner — payout path is blocked.
+            return;
+          }
           let targetStage = sa.findIndex(s => s.length < 3);
           let openedNewStage = false;
           const stages = [...(cur.stages || [])];
@@ -4780,7 +4873,10 @@ export default function Headliners() {
           addLog(`${r.artist.emoji} ${r.artist.name}`, `No tokens claimed — ${r.artist.name} walks away.`);
         } else {
           const pName = players.find(p => p.id === r.winner)?.festivalName || "?";
-          const payoutText = `${r.genreCount} ${r.artist.genre} artist${r.genreCount === 1 ? "" : "s"} × ${LEGENDARY_TICKETS_PER_GENRE_ARTIST} = +${r.payout} 🎟️`;
+          // v199.52: if winner's festival was full (9 artists), the Legendary effect is blocked.
+          const payoutText = r.festivalFull
+            ? `⚠️ festival full (9 artists) → effect BLOCKED, no payout`
+            : `${r.genreCount} ${r.artist.genre} artist${r.genreCount === 1 ? "" : "s"} × ${LEGENDARY_TICKETS_PER_GENRE_ARTIST} = +${r.payout} 🎟️`;
           if (r.outcome === "clear") {
             addLog(`${r.artist.emoji} ${r.artist.name}`, `${pName} wins with ${r.tokens}/3 tokens → ${payoutText}`);
           } else {
@@ -4820,6 +4916,40 @@ export default function Headliners() {
           const pName = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
           const prList = b.principles.map(pr => `${pr.emoji} ${pr.name}`).join(", ");
           addLog(`📜 ${pName}`, `${b.count} unused completed principle${b.count === 1 ? "" : "s"} (${prList}) → +${b.bonus} 🎟️`);
+        });
+      }
+
+      // v199.52: Token-to-tickets conversion. EVERY Legendary token a player holds is
+      // worth +2 tickets at game end, regardless of whether they won the legendary. This
+      // is a consolation payout — even if you lose the actual Legendary artist, your
+      // chasing was still worth something. Counts tokens across autumn/winter/spring/
+      // summer/favour slots per legendary, per player.
+      const TOKEN_TICKET_VALUE = 2;
+      const tokenBonuses = {};
+      players.forEach(p => {
+        let tokenCount = 0;
+        const tokensByLeg = legendaryTokensRef.current || {};
+        Object.values(tokensByLeg).forEach(laTokens => {
+          ["autumn", "winter", "spring", "summer", "favour"].forEach(sKey => {
+            (laTokens[sKey] || []).forEach(pid => { if (pid === p.id) tokenCount += 1; });
+          });
+        });
+        tokenBonuses[p.id] = { count: tokenCount, bonus: tokenCount * TOKEN_TICKET_VALUE };
+      });
+      if (Object.values(tokenBonuses).some(b => b.bonus > 0)) {
+        setPlayerData(prev => {
+          const next = { ...prev };
+          Object.entries(tokenBonuses).forEach(([pid, b]) => {
+            if (!next[pid] || b.bonus === 0) return;
+            next[pid] = { ...next[pid], bonusTickets: (next[pid].bonusTickets || 0) + b.bonus };
+          });
+          playerDataRef.current = next;
+          return next;
+        });
+        Object.entries(tokenBonuses).forEach(([pid, b]) => {
+          if (b.bonus === 0) return;
+          const pName = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
+          addLog(`🎟️ ${pName}`, `${b.count} Legendary token${b.count === 1 ? "" : "s"} × ${TOKEN_TICKET_VALUE} = +${b.bonus} 🎟️ (consolation payout)`);
         });
       }
       setTimeout(() => recalcTickets(), 80);
@@ -10299,8 +10429,33 @@ export default function Headliners() {
           }
         }
       }
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext);
+      // v199.50: pass the current shared seasonal objective to the AI decision engine.
+      // Summer uses per-legendary signatures, so skip the shared objective during summer.
+      const curSeason = quickYearSeasonRef.current;
+      const sharedObjective = (gameModeRef.current === "quickYear" && curSeason !== "summer")
+        ? (seasonalObjectivesRef.current || {})[curSeason] || null
+        : null;
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext, sharedObjective);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
+
+      // v199.50: direct pool play via genre match — bypass hand, play straight onto a
+      // genre-match stage (free of amenities, Fame prereq met by aiDecideTurn's filter).
+      if (decision.action === "poolDirect") {
+        const { poolIdx, stageIdx } = decision;
+        const artist = artistPool[poolIdx];
+        if (artist) {
+          // Dupe guard — defensive, same pattern as handleStageSelect
+          let dupe = false;
+          Object.values(playerData).forEach(opd => (opd.stageArtists || []).flat().forEach(a => { if (a.name === artist.name) dupe = true; }));
+          if (!dupe) {
+            const newPool = [...artistPool]; newPool.splice(poolIdx, 1); setArtistPool(newPool);
+            bookArtistToStage(artist, stageIdx, currentPlayerId, false, true); // viaGenreMatch = true
+            addLog("🤖 AI", `🎸 Played ${artist.name} direct from pool (genre match)`);
+          }
+        }
+        completeAction();
+        scheduleNext(500); return;
+      }
 
       if (decision.action === "book") {
         const { source, artistIdx, stageIdx } = decision;
@@ -10899,6 +11054,18 @@ export default function Headliners() {
     addLog("Dice", "Rerolled all amenity dice");
     grantCat1IfEligible(currentPlayerId, fresh);
   };
+  // v199.52: Fame 4+ once-per-turn dice re-roll. Costs no action — pure Fame-tier perk.
+  const handleFameDiceRefresh = () => {
+    const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+    if ((pd.fame || 0) < 4) return;
+    if (qyDiceRefreshUsedRef.current) return;
+    const fresh = rollDice();
+    setDice(fresh);
+    setQyDiceRefreshUsed(true);
+    qyDiceRefreshUsedRef.current = true;
+    addLog(currentPlayer?.festivalName || "?", `🔥 Fame 4+ perk — refreshed amenity dice`);
+    showFloatingBonus("🎲 Dice refreshed!", "#fbbf24");
+  };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
   const handleArtistAction = () => {
     takeUndoSnapshot();
@@ -11361,6 +11528,11 @@ export default function Headliners() {
       actionsLeftRef.current = QUICKYEAR_ACTIONS_PER_TURN;
       setQyDrewThisAction(false);
       qyDrewThisActionRef.current = false;
+      // v199.52: reset Fame 4+ refreshes per turn.
+      setQyPoolRefreshUsed(false);
+      qyPoolRefreshUsedRef.current = false;
+      setQyDiceRefreshUsed(false);
+      qyDiceRefreshUsedRef.current = false;
     }
 
     // Evaluate council objectives for current player before moving on
@@ -14041,7 +14213,13 @@ export default function Headliners() {
                           <div style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>No one claimed any tokens — {r.artist.name} walks away.</div>
                         )}
                         {r.outcome === "clear" && winner && (
-                          <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700 }}>🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</div>
+                          <div style={{ color: r.festivalFull ? "#fdba74" : "#86efac", fontSize: 12, fontWeight: 700 }}>
+                            🏆 {winner.festivalName}{winner.isAI ? " 🤖" : ""} wins with {r.tokens}/3 tokens
+                            {r.festivalFull
+                              ? ` · ⚠️ festival full (9 artists) — effect blocked, no payout`
+                              : <> · {r.genreCount} {r.artist.genre} × {LEGENDARY_TICKETS_PER_GENRE_ARTIST} = <strong>+{r.payout || 0} 🎟️</strong>{r.openedNewStage ? " · new stage opened" : (r.legendaryLanded === false ? " · festival full, honorary only" : "")}</>
+                            }
+                          </div>
                         )}
                         {r.outcome === "contested" && winner && (() => {
                           // v199.38: face-based tiebreak display. Contest die rolled a
@@ -15605,6 +15783,10 @@ export default function Headliners() {
 
                 {gameLegendaryArtists.map((la, i) => {
                   const tokens = legendaryTokens[la.id] || {};
+                  // v199.51: sanitize at render time — if a game-save from an older version
+                  // leaked per-season reqs into state, strip them before using so NOTHING
+                  // from `la.requirements` other than `summer` can render.
+                  const safeReqs = sanitizeLegendaryRequirements(la.requirements);
                   // Tally per-player tokens across all qualifying season arrays (incl. summer).
                   const tokenCounts = {};
                   ["autumn", "winter", "spring", "summer"].forEach(sKey => {
@@ -15620,12 +15802,12 @@ export default function Headliners() {
                         </div>
                       </div>
                       {/* v199.49: Summer signature — unique per legendary, visible from game start. */}
-                      {la.requirements.summer && (() => {
+                      {safeReqs.summer && (() => {
                         const isSummer = quickYearSeason === "summer";
                         const summerClaimers = tokens.summer || [];
                         return (
                           <div style={{ fontSize: 9, color: isSummer ? "#fde68a" : "#94a3b8", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6, fontWeight: isSummer ? 700 : 400 }}>
-                            <span style={{ flex: 1 }}>☀️ Summer: {la.requirements.summer.label}</span>
+                            <span style={{ flex: 1 }}>☀️ Summer: {safeReqs.summer.label}</span>
                             <div style={{ display: "flex", alignItems: "center", gap: 2, minHeight: 10 }}>
                               {summerClaimers.length === 0
                                 ? <span style={{ color: isSummer ? "#64748b" : "#334155", fontSize: 9, fontStyle: "italic" }}>{isSummer ? "open" : "—"}</span>
@@ -16376,6 +16558,16 @@ export default function Headliners() {
             {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>Pick a die to build that amenity:</p>
               <DiceDisplay dice={dice} onPick={handleDiePick} canReroll={diceNeedReroll(dice)} onReroll={handleRerollDice} />
+              {/* v199.52: Fame 4+ perk — once-per-turn free dice re-roll. */}
+              {gameModeRef.current === "quickYear" && (currentPD?.fame || 0) >= 4 && (
+                <button
+                  onClick={handleFameDiceRefresh}
+                  disabled={qyDiceRefreshUsed}
+                  style={{ ...bs, fontSize: 12, marginTop: 10, background: qyDiceRefreshUsed ? "rgba(100,116,139,0.08)" : "rgba(251,191,36,0.15)", border: `1px solid ${qyDiceRefreshUsed ? "#475569" : "#fbbf24"}`, color: qyDiceRefreshUsed ? "#64748b" : "#fcd34d", cursor: qyDiceRefreshUsed ? "not-allowed" : "pointer" }}
+                >
+                  {qyDiceRefreshUsed ? "🔥 Dice refresh used this turn" : "🔥 Fame 4+ perk — Refresh dice (free, 1/turn)"}
+                </button>
+              )}
               {(() => {
                 // Council "refreshDice" charges available this turn. Stacks across multiple
                 // qualifying councils (3 possible: Secret Sauce / Quiet Camping / Urinals).
@@ -16791,45 +16983,24 @@ export default function Headliners() {
               </div>}
 
               {/* Pool + Deck row.
-                  v199.49: pool click draws to hand. Favour cash still provides direct
-                  pool→stage play (free of amenities). Genre-match direct pool→stage play
-                  is also allowed when a pool artist's genre matches both artists on an
-                  open stage (shows a 🎸 "Play direct" indicator on eligible pool cards). */}
+                  v199.52: genre-match direct play removed. Pool click draws to hand only
+                  (Favour cash remains the single direct pool→stage play path). */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Pool (draw 1) or Deck (draw 1) · 🎸 = genre-match play direct` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Draw 2 — mix pool & deck (${qyPicksLeft} left)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
                   {artistPool.map((a, i) => {
                     const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
-                    const isQP = gameMode === "quickYear";
-                    // v199.49: genre-match direct play. If any open stage has both artists
-                    // sharing a genre with this pool artist AND the player meets Fame, show
-                    // a prompt. Clicking → opens stage picker, places direct from pool.
-                    const canDirectPlay = isQP && !claimedByOther
-                      && (currentPD?.fame || 0) >= (a.fame || 0)
-                      && (currentPD?.stageArtists || []).some((sa, si) => (sa?.length === 2) && canBookHeadlinerViaGenre(a, currentPD, si));
-                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : (canDirectPlay ? "Click: draw to hand · Shift+click: play direct via genre match" : "Click to draw to hand")}>
-                      <ArtistCard artist={a} showCost small genreMatchGlow={canDirectPlay} onClick={(e) => {
+                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : "Click to draw to hand"}>
+                      <ArtistCard artist={a} showCost small onClick={() => {
                         if (claimedByOther || draw2Picks.length > 0) return;
-                        // v199.49: Shift+click plays directly via genre match (if available).
-                        // Normal click draws to hand.
-                        if (canDirectPlay && e?.shiftKey) {
-                          // Enter direct-play mode: open stage picker scoped to genre-match stages
-                          setSelectedArtist({ artist: a, source: "pool", poolIdx: i, directPoolPlay: true });
-                          setArtistAction("pickStage");
-                          return;
-                        }
                         draw2PickFromPool(i);
                       }} />
-                      {canDirectPlay && <div style={{ position: "absolute", top: -4, left: -4, background: "#f59e0b", color: "#1e1b4b", borderRadius: 10, padding: "1px 5px", fontSize: 9, fontWeight: 800, border: "2px solid #1e1b4b" }} title="Shift+click to play direct via genre match">🎸</div>}
                     </div>;
                   })}
                   <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
                     📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +1</span>
                   </button>
                 </div>
-                {gameMode === "quickYear" && <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic", marginTop: 6, textAlign: "center" }}>
-                  Pool click = draw to hand · 🎸 Shift+click (genre match) = play direct
-                </div>}
               </div>
               
               {/* v199.24: portaloo-sacrifice-for-pool-refresh retired in Quick Play (artifact
