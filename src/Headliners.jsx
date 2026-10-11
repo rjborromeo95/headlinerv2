@@ -2835,15 +2835,18 @@ export default function Headliners() {
   const [qyPicksLeft, setQyPicksLeft] = useState(0);
   const qyPicksLeftRef = useRef(0);
   useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
-  // v199.45: 2-action turn system. Each Quick Play turn, a player can take 2 actions
-  // (build / browse / buy / favour-cash). Reset to 2 at turn start, decrement after each
-  // action completes. When 0, actionTaken=true and the End Turn button appears. User
-  // can End Turn at any point to burn remaining actions (end early).
-  const [actionsLeftThisTurn, setActionsLeftThisTurn] = useState(2);
-  const actionsLeftRef = useRef(2);
+  // v199.45: N-action turn system. Each Quick Play turn, a player can take N actions
+  // (build / browse / buy / favour-cash). Reset to QUICKYEAR_ACTIONS_PER_TURN at turn
+  // start, decrement after each action completes. When 0, actionTaken=true and the End
+  // Turn button appears.
+  // v199.53 bugfix: useState initial values were still 2 from the pre-v199.52 2-action
+  // era. With QUICKYEAR_ACTIONS_PER_TURN now 1 but initial state at 2, the FIRST turn
+  // of the game let the current player take 2 actions before End Turn appeared (the
+  // decrement from 2 → 1 didn't trigger actionTaken=true). Later turns were fine because
+  // endTurn resets using the constant. Hardcoding 1 here fixes turn 1.
+  const [actionsLeftThisTurn, setActionsLeftThisTurn] = useState(1);
+  const actionsLeftRef = useRef(1);
   useEffect(() => { actionsLeftRef.current = actionsLeftThisTurn; }, [actionsLeftThisTurn]);
-  // v199.52: 1 action per turn (was 2). With 2 actions it was too easy to fill all 9
-  // stage slots. 1 action means every turn is a real decision between build/browse/buy.
   const QUICKYEAR_ACTIONS_PER_TURN = 1;
   // v199.39: once a pool/deck draw happens in an artist action, lock out book-from-hand
   // for the rest of this action. A single artist action is EITHER draws OR a hand book,
