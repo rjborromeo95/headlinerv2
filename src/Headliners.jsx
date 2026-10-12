@@ -1949,12 +1949,28 @@ function aiScoreArtistForIdentity(artist, identity, ctx) {
   return 0;
 }
 
-function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx, infraContext, seasonalObjective) {
+function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrotrends, forecastMicrotrend, trendsMode, identity, identityCtx, infraContext, seasonalObjective, quickYearSeason) {
   const sa = pd.stageArtists || [];
   const openStages = sa.filter(s => s.length < 3);
   const counts = { campsite: 0, portaloo: 0, security: 0, catering: 0, ...(pd.amenities || {}) };
   const totalAmenities = Object.values(counts).reduce((s, v) => s + v, 0);
   const fame = pd.fame || 0;
+  // v199.66: Quick Play Autumn strategy — three-phase priority system.
+  //   Phase A (Fame < 2):  rush to Fame 2 via microtrend match or Fame die.
+  //   Phase B (Fame >= 2): acquire & build toward ONE high-value (Fame 4-5) target artist.
+  //   Phase C (fallback):  if no high-value target and no microtrend route, open a stage.
+  // These phases apply ONLY in Autumn (season 1 of 4). Winter/Spring/Summer fall through
+  // to the general-purpose priority system below.
+  const isQuickPlayAutumn = quickYearSeason === "autumn";
+  const needsFameRush = isQuickPlayAutumn && fame < 2;
+  // High-value target: Fame 4+ artist. First preference is one already in hand (we can
+  // build toward it); fallback is one in the pool (we should reserve/draw it).
+  const highValueInHand = isQuickPlayAutumn && fame >= 2
+    ? (pd.hand || []).find(a => !a.isFavour && (a.fame || 0) >= 4) || null
+    : null;
+  const highValueInPool = isQuickPlayAutumn && fame >= 2 && !highValueInHand
+    ? (artistPool || []).find(a => a && !a.isFavour && (a.fame || 0) >= 4) || null
+    : null;
 
   // v199.50/v199.60: genre-match poolDirect play REMOVED. Genre matching is disabled
   // globally; the AI no longer scans the pool for free direct plays. All pool access
@@ -2155,6 +2171,15 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // action. The actual pick decision is made downstream — here we just make draw more
   // likely to be chosen as the top-level action. Early game (autumn) = always consider,
   // mid-late game only if hand isn't full.
+  // v199.66: Quick Play Autumn — if we've reached Fame 2 but don't yet have a Fame 4+
+  // artist in hand, aggressively reserve one from the pool. The ladder plan is "secure
+  // the target first, then build its amenities over Winter/Spring." Fires BEFORE the
+  // Favour reservation below because the target artist is more important than opportunistic
+  // Favour grabs during Autumn setup.
+  if (highValueInPool && handSize < 7) {
+    const idx = artistPool.indexOf(highValueInPool);
+    if (idx >= 0) return { action: "reserve", poolIdx: idx };
+  }
   const favourInPool = (artistPool || []).some(a => a && a.isFavour);
   if (favourInPool && handSize < 7) {
     if (artistPool.length > 0) {
@@ -2195,7 +2220,10 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // (a) it's the first turn AND (b) the AI is at Fame 1 with no direct route to +Fame
   // from a book action, so the amenity dice pick prioritizes fame-face over amenity-face.
   const isFirstTurn = (year === 1) && (sa.flat().length === 0);
-  const wantsFameThisTurn = isFirstTurn && fame < 2;
+  // v199.66: Extend fame-wanting to the whole Autumn in Quick Play while Fame<2.
+  // This heavily biases amenity picks toward the Fame die (via wantsFameThisTurn
+  // downstream) across the entire Autumn opener, not just the first turn.
+  const wantsFameThisTurn = (isFirstTurn && fame < 2) || needsFameRush;
 
   // PRIORITY 3: Get amenities — only consider artists we could actually book (fame-wise)
   // v172: boost amenity types needed by microtrend-matching or identity-matching artists
@@ -2219,6 +2247,16 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // these when it can afford to.
   if (activeAmenity && neededForArtists[activeAmenity] !== undefined) {
     neededForArtists[activeAmenity] += (fame < 4 ? 12 : 4);
+  }
+  // v199.66: Quick Play Autumn Phase B — if we have a Fame 4+ artist in hand, aggressively
+  // ladder up the amenities it needs. Big boost (+25 per missing amenity type) so the
+  // AI reliably spends its Autumn Build actions working toward playing the target.
+  if (highValueInHand) {
+    const t = highValueInHand;
+    if (t.campCost > counts.campsite) neededForArtists.campsite = (neededForArtists.campsite || 0) + 25;
+    if (t.securityCost > counts.security) neededForArtists.security = (neededForArtists.security || 0) + 25;
+    if (t.cateringCost > counts.catering) neededForArtists.catering = (neededForArtists.catering || 0) + 25;
+    if (t.portalooCost > counts.portaloo) neededForArtists.portaloo = (neededForArtists.portaloo || 0) + 25;
   }
   // v197.18: Infrastructure Reward bonus. Same shape as aiPickAmenityType — bias the
   // AI toward amenity types where there's a reward on offer that the AI doesn't
@@ -10632,7 +10670,7 @@ export default function Headliners() {
       const sharedObjective = (gameModeRef.current === "quickYear" && curSeason !== "summer")
         ? (seasonalObjectivesRef.current || {})[curSeason] || null
         : null;
-      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext, sharedObjective);
+      const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext, sharedObjective, gameModeRef.current === "quickYear" ? curSeason : null);
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       // v199.50: direct pool play via genre match — bypass hand, play straight onto a
@@ -10838,9 +10876,25 @@ export default function Headliners() {
       const aiPdSnap = playerData[currentPlayerId] || {};
       const aiStages = (aiPdSnap.stages || []).length;
       const aiCredits = aiPdSnap.stageOpenCredits || 0;
-      // v199.29: in Quick Play, stages open via Festival Principles (not stage dice/credits),
-      // so AI should NEVER chase stage dice there — they're repurposed as +1 Fame now.
-      const wantsStageProgress = gameModeRef.current !== "quickYear" && aiStages < 3 && aiCredits === 0;
+      // v199.29/v199.66: in Quick Play, Festival Principles are gone (v199.48) — stage dice
+      // DO open stages again. AI chases stage dice when:
+      //   - Classic: stages < 3 and no credits (original rule)
+      //   - Quick Play Autumn Phase C: Fame >= 2, no high-value target available in hand or
+      //     pool, AND stages < 3. This is the "no path to a big artist, invest in stage
+      //     capacity instead" fallback the user described.
+      const classicWantsStage = gameModeRef.current !== "quickYear" && aiStages < 3 && aiCredits === 0;
+      const quickAutumnPd = playerData[currentPlayerId] || {};
+      const quickAutumnFame = quickAutumnPd.fame || 0;
+      const curSeasonForAI = quickYearSeasonRef.current;
+      const quickAutumnHasHighValueInHand = (quickAutumnPd.hand || []).some(a => a && !a.isFavour && (a.fame || 0) >= 4);
+      const quickAutumnHasHighValueInPool = (artistPool || []).some(a => a && !a.isFavour && (a.fame || 0) >= 4);
+      const quickPlayAutumnWantsStage = gameModeRef.current === "quickYear"
+        && curSeasonForAI === "autumn"
+        && quickAutumnFame >= 2
+        && !quickAutumnHasHighValueInHand
+        && !quickAutumnHasHighValueInPool
+        && aiStages < 3;
+      const wantsStageProgress = classicWantsStage || quickPlayAutumnWantsStage;
       // v199.29: aggressive Fame bias in Quick Play. The AI should climb the Fame ladder
       // to unlock Fame tiers (2+ = 2 picks per action, 4+ = pool refresh). Previously
       // wantsFameThisTurn was only true on turn 1 at Fame 0-1. Now any time Fame < 4 in
