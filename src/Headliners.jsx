@@ -1956,25 +1956,9 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   const totalAmenities = Object.values(counts).reduce((s, v) => s + v, 0);
   const fame = pd.fame || 0;
 
-  // v199.50: TOP PRIORITY — direct pool play via genre match. If a pool artist can be
-  // played directly onto a stage where both existing artists share its genre (and the
-  // AI's Fame meets the artist's Fame requirement), that's a free play — no amenities
-  // required. Grab it before anything else.
-  if (artistPool && artistPool.length > 0) {
-    for (let i = 0; i < artistPool.length; i++) {
-      const a = artistPool[i];
-      if (!a || a.isFavour) continue;
-      if (fame < (a.fame || 0)) continue;
-      const headlinerGenres = new Set(getGenres(a.genre));
-      for (let si = 0; si < sa.length; si++) {
-        const stage = sa[si] || [];
-        if (stage.length !== 2) continue;
-        if (stage.every(x => getGenres(x.genre).some(g => headlinerGenres.has(g)))) {
-          return { action: "poolDirect", poolIdx: i, stageIdx: si };
-        }
-      }
-    }
-  }
+  // v199.50/v199.60: genre-match poolDirect play REMOVED. Genre matching is disabled
+  // globally; the AI no longer scans the pool for free direct plays. All pool access
+  // is now via Favour cash OR draw-to-hand → play with amenities.
   // v152: microtrend-awareness. When an unclaimed active microtrend exists whose genre
   // matches an artist we could play, prefer that artist. Under alt-obj default this is
   // the only way to actually claim a trend, so it's a meaningful bonus.
@@ -2674,6 +2658,13 @@ export default function Headliners() {
   const [legendaryTokens, setLegendaryTokens] = useState({});
   const legendaryTokensRef = useRef({});
   useEffect(() => { legendaryTokensRef.current = legendaryTokens; }, [legendaryTokens]);
+  // v199.60: shared seasonal tokens are PER-PLAYER, not per-legendary. Each player earns
+  // at most 1 token per season (3 total across autumn/winter/spring), plus up to 3 Summer
+  // signature tokens (one per legendary). Max per player = 6 tokens × 2 tickets = 12 tickets.
+  // Shape: { pid: { autumn: bool, winter: bool, spring: bool } }
+  const [sharedSeasonalTokens, setSharedSeasonalTokens] = useState({});
+  const sharedSeasonalTokensRef = useRef({});
+  useEffect(() => { sharedSeasonalTokensRef.current = sharedSeasonalTokens; }, [sharedSeasonalTokens]);
   // v199.49: Shared seasonal objectives. One req per season, drawn fresh at the start
   // of that season. Autumn is drawn at game start; Winter/Spring at their season boundaries.
   // Summer uses each Legendary's own `summer` signature (not drawn here).
@@ -4389,30 +4380,13 @@ export default function Headliners() {
   //
   // The checker reads live state via refs — it's safe to call synchronously after a mutation
   // because we also mutate the ref alongside setState at each trigger site.
-  const checkLegendaryContracts = (pid) => {
-    if (gameModeRef.current !== "quickYear") return;
-    const season = quickYearSeasonRef.current;
-    const legendaries = gameLegendaryArtistsRef.current || [];
-    if (legendaries.length === 0) return;
-    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
-    const counters = seasonCountersRef.current[pid] || {};
-
-    legendaries.forEach(la => {
-      // Skip if this player already claimed this legendary's token for the current season.
-      const existing = (legendaryTokensRef.current[la.id] || {})[season] || [];
-      if (existing.includes(pid)) return;
-
-      // v199.49: for Autumn/Winter/Spring, use the SHARED seasonal objective (same across
-      // all 3 legendaries — meeting it earns a token for every legendary). For Summer, use
-      // this legendary's own signature. If the shared objective hasn't been drawn yet for
-      // the current season (shouldn't happen, but defensive), skip the check.
-      const req = season === "summer"
-        ? la.requirements.summer
-        : (seasonalObjectivesRef.current || {})[season];
-      if (!req) return;
-
-      let met = false;
-      switch (req.type) {
+  // v199.60 helper: evaluate whether a single req is met for a given player. Pure
+  // function of player data + seasonal counters. Centralised so shared-objective and
+  // per-legendary summer-sig checks share the same evaluation logic.
+  const evaluateReq = (req, pd, counters, pid) => {
+    if (!req) return false;
+    let met = false;
+    switch (req.type) {
         // v199.45: new non-genre season-locked req types.
         case "play_count": {
           const plays = counters.plays || 0;
@@ -4520,20 +4494,54 @@ export default function Headliners() {
         }
       }
 
-      if (met) {
-        // v199.22: push THIS player's pid onto the season's claimer array (every player can claim).
-        // v199.49: include summer in the default struct.
+    return met;
+  };
+
+  // v199.60: checkLegendaryContracts rebuilt — shared seasonal objectives award ONE
+  // token per player (not one per legendary). Summer signatures still award per-legendary.
+  //   Autumn/Winter/Spring → check once per player, award to sharedSeasonalTokens[pid][season]
+  //   Summer              → check per-legendary, award to legendaryTokens[la.id].summer
+  // Max player tokens = 3 (shared) + 3 (summer, one per legendary) = 6 → 12 tickets at 2 each.
+  const checkLegendaryContracts = (pid) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const season = quickYearSeasonRef.current;
+    const legendaries = gameLegendaryArtistsRef.current || [];
+    if (legendaries.length === 0) return;
+    const pd = playerDataRef.current?.[pid] || playerData[pid] || {};
+    const counters = seasonCountersRef.current[pid] || {};
+
+    if (season === "summer") {
+      // Per-legendary Summer signature check.
+      legendaries.forEach(la => {
+        const existing = (legendaryTokensRef.current[la.id] || {}).summer || [];
+        if (existing.includes(pid)) return;
+        const req = la.requirements && la.requirements.summer;
+        if (!evaluateReq(req, pd, counters, pid)) return;
         const nextTokens = { ...(legendaryTokensRef.current || {}) };
-        const curArtist = { ...(nextTokens[la.id] || { autumn: [], winter: [], spring: [], summer: [] }) };
-        curArtist[season] = [...(curArtist[season] || []), pid];
+        const curArtist = { ...(nextTokens[la.id] || { summer: [] }) };
+        curArtist.summer = [...(curArtist.summer || []), pid];
         nextTokens[la.id] = curArtist;
         setLegendaryTokens(nextTokens);
         legendaryTokensRef.current = nextTokens;
         const pName = players.find(p => p.id === pid)?.festivalName || "?";
-        addLog(`${la.emoji} ${la.name}`, `${pName} earned ${QUICKYEAR_SEASON_LABELS[season]} contract token (${req.label})`);
-        showFloatingBonus(`${la.emoji} +1 token!`, "#fcd34d");
-      }
-    });
+        addLog(`${la.emoji} ${la.name}`, `${pName} earned Summer signature token (${req.label})`);
+        showFloatingBonus(`${la.emoji} +1 Summer token!`, "#fcd34d");
+      });
+      return;
+    }
+
+    // Shared seasonal objective (Autumn/Winter/Spring) — one token per player per season.
+    const alreadyEarned = (sharedSeasonalTokensRef.current[pid] || {})[season];
+    if (alreadyEarned) return;
+    const sharedReq = (seasonalObjectivesRef.current || {})[season];
+    if (!evaluateReq(sharedReq, pd, counters, pid)) return;
+    const nextShared = { ...(sharedSeasonalTokensRef.current || {}) };
+    nextShared[pid] = { ...(nextShared[pid] || {}), [season]: true };
+    setSharedSeasonalTokens(nextShared);
+    sharedSeasonalTokensRef.current = nextShared;
+    const pName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("🎯 Shared Objective", `${pName} earned ${QUICKYEAR_SEASON_LABELS[season]} token (${sharedReq.label}) → +1 token`);
+    showFloatingBonus(`🎯 +1 shared token!`, "#fcd34d");
   };
 
   // v199.25: Festival Principle helpers.
@@ -4649,33 +4657,20 @@ export default function Headliners() {
       // openers — anything booked to a stage this game that's still there.
       const stages = pd.stageArtists || [];
       const artistCount = stages.reduce((sum, s) => sum + (Array.isArray(s) ? s.length : 0), 0);
-      const seasonBonus = campsiteCount + artistCount;
+      // v199.60: per-season base income (1/campsite + 1/artist) REMOVED. Scoring now
+      // comes only from Legendary payouts (×2 per matching-genre artist for winners)
+      // and token conversions (×2 per shared/summer token). Season close is a status
+      // breakpoint, not a scoring moment.
       return {
         pid: p.id,
         name: p.festivalName,
         isAI: p.isAI,
         campsites: campsiteCount,
         artists: artistCount,
-        bonus: seasonBonus,
+        bonus: 0,
       };
     });
-
-    // Apply the ticket bonus by adding to each player's bonusTickets (feeds into
-    // computeTicketsForPlayer → pd.tickets → the final leaderboard total).
-    setPlayerData(prev => {
-      const next = { ...prev };
-      seasonScores.forEach(s => {
-        if (!next[s.pid]) return;
-        next[s.pid] = { ...next[s.pid], bonusTickets: (next[s.pid].bonusTickets || 0) + s.bonus };
-      });
-      return next;
-    });
-    seasonScores.forEach(s => {
-      if (s.bonus > 0) {
-        logTicketGain(s.pid, s.bonus, `${QUICKYEAR_SEASON_LABELS[season]} end: ${s.campsites} campsite${s.campsites === 1 ? "" : "s"} + ${s.artists} artist${s.artists === 1 ? "" : "s"}`);
-      }
-      addLog(`${QUICKYEAR_SEASON_EMOJI[season]} ${s.name}`, `+${s.bonus} 🎟️ tickets (${s.campsites} campsite${s.campsites === 1 ? "" : "s"} + ${s.artists} artist${s.artists === 1 ? "" : "s"})`);
-    });
+    // No bonus to apply — the per-season income path is zeroed out.
 
     setTimeout(() => recalcTickets(), 50);
 
@@ -4713,50 +4708,22 @@ export default function Headliners() {
     if (isGameEnd) {
       const legendaries = gameLegendaryArtistsRef.current || [];
       const livePD = playerDataRef.current || playerData;
-      // v199.32: convert each player's unused Favour cards into Legendary tokens at
-      // game end. A Favour converts if there's a drawn Legendary of its genre (otherwise
-      // the Favour has no end-of-game value). All conversions happen before the token
-      // tally below. Mutates legendaryTokens via setLegendaryTokens; also mutates the
-      // local tokens variable so the tally reads the post-conversion state.
-      const workingTokens = { ...(legendaryTokensRef.current || {}) };
-      const legendaryByGenre = {};
-      legendaries.forEach(la => { legendaryByGenre[la.genre] = la; });
-      let totalConverted = 0;
-      players.forEach(p => {
-        const hand = livePD[p.id]?.hand || [];
-        hand.forEach(card => {
-          if (!card || !card.isFavour) return;
-          const matchingLegendary = legendaryByGenre[card.genre];
-          if (!matchingLegendary) return; // genre's Legendary wasn't drawn → no token
-          const cur = workingTokens[matchingLegendary.id] || { autumn: [], winter: [], spring: [], favour: [] };
-          const favBucket = Array.isArray(cur.favour) ? [...cur.favour] : [];
-          favBucket.push(p.id);
-          workingTokens[matchingLegendary.id] = { ...cur, favour: favBucket };
-          totalConverted++;
-          const pName = players.find(pl => pl.id === p.id)?.festivalName || "?";
-          addLog(`🎴 ${matchingLegendary.emoji} ${matchingLegendary.name}`, `${pName}: unused ${card.genre} Favour → +1 token at game end`);
-        });
-      });
-      if (totalConverted > 0) {
-        setLegendaryTokens(workingTokens);
-        legendaryTokensRef.current = workingTokens;
-      }
-      const tokens = workingTokens;
+      // v199.60: Favour → Legendary token conversion REMOVED. Favours exist only to
+      // play from the pool (discard a matching-genre Favour to play a pool artist for
+      // free, Fame still required). Unspent Favours at game end have no secondary value.
+      const tokens = legendaryTokensRef.current || {};
       legendaryResults = legendaries.map(la => {
         const seasons = tokens[la.id] || {};
-        // v199.22: each season's claimer entry is now an ARRAY of pids. Walk every entry
-        // in each array to tally per-player tokens.
+        // v199.60: ONLY Summer signature tokens count for determining who wins each
+        // Legendary. Shared seasonal tokens (autumn/winter/spring) are now per-player
+        // (sharedSeasonalTokens state), not per-legendary — they still convert to tickets
+        // at game end but have no bearing on Legendary ownership. Favours no longer
+        // convert to Legendary tokens at all (Favours exist solely to play from pool).
         const tokenCounts = {};
-        // v199.31/v199.55: include summer + favour buckets alongside shared seasonal tokens.
-        // Summer tokens come from meeting the legendary's own signature objective during Summer;
-        // Favour tokens come from end-of-game Favour card conversions. Both count toward the
-        // tally that determines preliminary winners.
-        ["autumn", "winter", "spring", "summer", "favour"].forEach(sKey => {
-          (seasons[sKey] || []).forEach(pid => {
-            if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
-          });
+        (seasons.summer || []).forEach(pid => {
+          if (pid != null) tokenCounts[pid] = (tokenCounts[pid] || 0) + 1;
         });
-        const perSeason = { autumn: seasons.autumn || [], winter: seasons.winter || [], spring: seasons.spring || [], summer: seasons.summer || [], favour: seasons.favour || [] };
+        const perSeason = { autumn: [], winter: [], spring: [], summer: seasons.summer || [], favour: [] };
         const maxCount = Math.max(0, ...Object.values(tokenCounts));
         if (maxCount === 0) {
           return { artist: la, winner: null, outcome: "no_tokens", tokenCounts, perSeason };
@@ -4960,6 +4927,10 @@ export default function Headliners() {
       });
 
       legendaryResults.forEach(r => {
+        // v199.59: log Legendary payouts to ticketsLog so the breakdown tooltip can show them.
+        if (r.winner != null && !r.festivalFull && r.payout > 0) {
+          logTicketGain(r.winner, r.payout, `🎸 ${r.artist.name} (${r.genreCount} ${r.artist.genre} × ${LEGENDARY_TICKETS_PER_GENRE_ARTIST})`);
+        }
         if (r.winner == null) {
           if (r.outcome === "no_summer_sig_successor") {
             // v199.55: preliminary winner forfeited; nobody completed the Summer sig to inherit.
@@ -5021,20 +4992,24 @@ export default function Headliners() {
         });
       }
 
-      // v199.52: Token-to-tickets conversion. EVERY Legendary token a player holds is
-      // worth +2 tickets at game end, regardless of whether they won the legendary. This
-      // is a consolation payout — even if you lose the actual Legendary artist, your
-      // chasing was still worth something. Counts tokens across autumn/winter/spring/
-      // summer/favour slots per legendary, per player.
+      // v199.52/v199.60: Token-to-tickets conversion. Each player holds at most:
+      //   - 3 shared seasonal tokens (one per Autumn/Winter/Spring, from sharedSeasonalTokens)
+      //   - 3 Summer signature tokens (one per Legendary, from legendaryTokens[la.id].summer)
+      // = 6 max × 2 tickets = 12 tickets max consolation payout.
+      // Favour tokens are NO LONGER counted (removed v199.60). Autumn/Winter/Spring slots
+      // in legendaryTokens are also no longer populated (shared objective doesn't award
+      // per-legendary) — this bonus reads sharedSeasonalTokens for the three shared ones.
       const TOKEN_TICKET_VALUE = 2;
       const tokenBonuses = {};
       players.forEach(p => {
         let tokenCount = 0;
+        // Shared seasonal tokens (max 3 per player).
+        const myShared = (sharedSeasonalTokensRef.current || {})[p.id] || {};
+        ["autumn", "winter", "spring"].forEach(sKey => { if (myShared[sKey]) tokenCount += 1; });
+        // Summer signature tokens (max 1 per legendary per player).
         const tokensByLeg = legendaryTokensRef.current || {};
         Object.values(tokensByLeg).forEach(laTokens => {
-          ["autumn", "winter", "spring", "summer", "favour"].forEach(sKey => {
-            (laTokens[sKey] || []).forEach(pid => { if (pid === p.id) tokenCount += 1; });
-          });
+          (laTokens.summer || []).forEach(pid => { if (pid === p.id) tokenCount += 1; });
         });
         tokenBonuses[p.id] = { count: tokenCount, bonus: tokenCount * TOKEN_TICKET_VALUE };
       });
@@ -5052,6 +5027,8 @@ export default function Headliners() {
           if (b.bonus === 0) return;
           const pName = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
           addLog(`🎟️ ${pName}`, `${b.count} Legendary token${b.count === 1 ? "" : "s"} × ${TOKEN_TICKET_VALUE} = +${b.bonus} 🎟️ (consolation payout)`);
+          // v199.59: also log to ticketsLog so breakdown tooltip can show them.
+          logTicketGain(parseInt(pid, 10), b.bonus, `🎟️ Legendary tokens (${b.count} × ${TOKEN_TICKET_VALUE})`);
         });
       }
       setTimeout(() => recalcTickets(), 80);
@@ -10877,10 +10854,10 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => {
-    // v199.37: defence-in-depth. If we're already mid-action with picks remaining,
-    // bail — do not reset qyPicksLeft. This prevents any state path that pops the
-    // player back to the main menu mid-pick from granting them bonus picks on re-entry.
-    if (turnAction === "pickAmenity" && gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+    // v199.37/v199.58: defence-in-depth. If ANY picks remain from a prior in-progress
+    // action, bail — do NOT reset qyPicksLeft. Prevents the "take 1, cancel, re-click
+    // for fresh picks" bug (symmetric to the handleArtistAction fix).
+    if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
       return;
     }
     setTurnAction("pickAmenity");
@@ -11159,6 +11136,17 @@ export default function Headliners() {
     placeAmenityCounter(dv, 0);
     setSelectedDie(null);
     setPickingFieldFor(null);
+    // v199.59 BUG FIX: this path (the main amenity die handler) was missing the
+    // qyPicksLeft decrement that lives in the sec_1 branch and in handleFieldClickForPlacement.
+    // placeAmenityCounter returns early when qyPicksLeft > 1 (expecting the caller to
+    // decrement + continue). Without the decrement here, Fame 2+ players could pick
+    // amenity dice indefinitely — qyPicksLeft stayed at 2 forever, placeAmenityCounter
+    // kept returning early, nothing ever ended the action.
+    if (gameModeRef.current === "quickYear") {
+      const left = Math.max(0, qyPicksLeftRef.current - 1);
+      setQyPicksLeft(left);
+      qyPicksLeftRef.current = left;
+    }
   };
   // v166: handleChoiceSelect removed — compound faces no longer exist.
   // Called when user clicks a field on PlayerBoard while pickingFieldFor is set
@@ -11203,6 +11191,14 @@ export default function Headliners() {
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
   const handleArtistAction = () => {
+    // v199.58: bail if ANY picks remaining from a prior in-progress action (regardless
+    // of turnAction state). Prevents the "take 1, cancel, re-click Browse for fresh
+    // picks" bug. Covers both the still-in-artist path AND the cleared-turnAction path
+    // (defence in depth — if some other code clears turnAction without resetting
+    // qyPicksLeft, this still blocks re-entry).
+    if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+      return;
+    }
     takeUndoSnapshot();
     setTurnAction("artist");
     setArtistAction(null);
@@ -15926,18 +15922,29 @@ export default function Headliners() {
                     as "???" until drawn. Meeting the current shared objective earns a
                     token for EVERY legendary. */}
                 <div style={{ marginBottom: 10, padding: 7, borderRadius: 7, background: "rgba(15,14,26,0.5)", border: "1px dashed rgba(252,211,77,0.3)" }}>
-                  <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Shared Season Objectives</div>
+                  <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Shared Season Objectives · +1 token/player (+2 🎟️ each)</div>
                   {["autumn", "winter", "spring"].map(sKey => {
                     const obj = seasonalObjectives[sKey];
                     const isCurrent = sKey === quickYearSeason;
                     const isPast = QUICKYEAR_SEASONS.indexOf(sKey) < QUICKYEAR_SEASONS.indexOf(quickYearSeason);
                     const revealed = obj != null; // drawn when its season began
+                    // v199.60: shared claimers live in sharedSeasonalTokens[pid][season].
+                    const claimers = Object.entries(sharedSeasonalTokens || {})
+                      .filter(([, bySeason]) => bySeason && bySeason[sKey])
+                      .map(([pid]) => parseInt(pid, 10));
                     return (
                       <div key={sKey} style={{ fontSize: 9, display: "flex", alignItems: "center", gap: 6, padding: "2px 0", color: isCurrent ? "#fde68a" : (isPast ? "#64748b" : "#475569"), fontWeight: isCurrent ? 700 : 400 }}>
                         <span>{QUICKYEAR_SEASON_EMOJI[sKey]}</span>
                         <span style={{ flex: 1, fontStyle: revealed ? "normal" : "italic" }}>
                           {revealed ? obj.label : "??? (hidden until this season begins)"}
                         </span>
+                        <div style={{ display: "flex", gap: 2, minHeight: 10 }}>
+                          {claimers.map((pid, j) => {
+                            const pl = players.find(p => p.id === pid);
+                            if (!pl) return null;
+                            return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 9, height: 9, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(255,255,255,0.3)", display: "inline-block" }} />;
+                          })}
+                        </div>
                       </div>
                     );
                   })}
@@ -15983,52 +15990,15 @@ export default function Headliners() {
                           </div>
                         );
                       })()}
-                      {/* Shared season claimers — token count per season (shared across all legendaries). */}
-                      {["autumn", "winter", "spring"].map(sKey => {
-                        const claimerPids = tokens[sKey] || [];
-                        if (claimerPids.length === 0) return null;
-                        return (
-                          <div key={sKey} style={{ fontSize: 9, color: "#64748b", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1px 0", gap: 6 }}>
-                            <span style={{ flex: 1 }}>{QUICKYEAR_SEASON_EMOJI[sKey]} tokens</span>
-                            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                              {claimerPids.map((pid, j) => {
-                                const pl = players.find(p => p.id === pid);
-                                if (!pl) return null;
-                                return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(255,255,255,0.3)", boxShadow: "0 0 3px rgba(0,0,0,0.5)", display: "inline-block" }} />;
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {/* v199.32: favour tokens row — populated at GAME END when unused
-                          Favours in hand convert to tokens for matching Legendaries.
-                          During play, this stays empty (hands are private, no visibility).
-                          Hidden until converted. */}
-                      {(tokens.favour || []).length > 0 && (
-                        <div style={{ fontSize: 9, color: "#fde68a", marginLeft: 18, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", gap: 6, borderTop: "1px dashed rgba(252,211,77,0.2)", marginTop: 2, paddingTop: 4 }}>
-                          <span style={{ flex: 1, fontWeight: 700 }}>🎴 Favour tokens (end-of-game)</span>
-                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                            {(tokens.favour || []).map((pid, j) => {
-                              const pl = players.find(p => p.id === pid);
-                              if (!pl) return null;
-                              return <span key={j} title={pl.festivalName + (pl.isAI ? " 🤖" : "")} style={{ width: 10, height: 10, borderRadius: "50%", background: pl.color || "#60a5fa", border: "1px solid rgba(252,211,77,0.5)", boxShadow: "0 0 3px rgba(252,211,77,0.5)", display: "inline-block" }} />;
-                            })}
-                          </div>
-                        </div>
-                      )}
-                      {Object.keys(tokenCounts).length > 0 && (
-                        <div style={{ fontSize: 9, color: "#fde68a", marginLeft: 18, marginTop: 3, fontStyle: "italic", opacity: 0.9 }}>
-                          Tokens: {Object.entries(tokenCounts).sort((a, b) => b[1] - a[1]).map(([pid, c]) => {
-                            const n = players.find(p => p.id === parseInt(pid, 10))?.festivalName || "?";
-                            return `${n.slice(0, 8)}: ${c}`;
-                          }).join(" · ")}
-                        </div>
-                      )}
+                      {/* v199.60: per-leg shared-season claimer rows removed. Shared tokens
+                          now live in sharedSeasonalTokens (per-player, not per-legendary) and
+                          appear in the Shared Season Objectives band above. Favour tokens
+                          removed entirely (Favours don't feed Legendaries anymore). */}
                     </div>
                   );
                 })}
                 <div style={{ fontSize: 9, color: "#fde68a", fontStyle: "italic", marginTop: 7, textAlign: "center", opacity: 0.75 }}>
-                  Summer close: majority tokens wins. Ties → contest die (modifier: tickets).
+                  Summer close: Summer sig tokens decide winner. Ties → contest die.
                 </div>
               </div>
             )}
@@ -16748,7 +16718,15 @@ export default function Headliners() {
                   sfx.placeAmenity();
                 }} style={{ ...bs, fontSize: 12, marginTop: 10, background: "rgba(34,197,94,0.15)", border: "1px solid #22c55e", color: "#86efac" }}>🎲 Refresh Dice (Council, free — {remaining} left)</button>;
               })()}
-              <div><button onClick={() => setTurnAction(null)} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button></div>
+              <div><button onClick={() => {
+                // v199.58: if picks were consumed, call completeAction (ends action,
+                // decrements actionsLeftThisTurn, resets qyPicksLeft to 0). If no picks
+                // taken, true no-op cancel (action not consumed).
+                const maxForAmen = getFameAmenityMax(playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {});
+                const picksConsumed = gameModeRef.current === "quickYear" && qyPicksLeftRef.current < maxForAmen;
+                if (picksConsumed) completeAction();
+                else setTurnAction(null);
+              }} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button></div>
             </div>}
 
             {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor != null && <div style={{ textAlign: "center", padding: 14, borderRadius: 12, background: "rgba(167,139,250,0.12)", border: "1px solid #a78bfa", marginBottom: 12 }}>
@@ -17204,8 +17182,20 @@ export default function Headliners() {
               })()}
               {objectivesToggle}{popupObjectivesPanel}
               <div><button onClick={() => {
+                // v199.58: if picks have been consumed this action, call completeAction so
+                // qyPicksLeft resets to 0 and actionsLeftThisTurn decrements — otherwise
+                // the player could re-click Browse to reset qyPicksLeft back to max and
+                // get bonus picks. If no picks taken yet, cancel is a true no-op (action
+                // not consumed, action menu re-appears).
                 draw2Picks.forEach(a => setArtistPool(prev => [...prev, a]));
-                setDraw2Picks([]); setDraw2DeckCard(null); setTurnAction(null); setArtistAction(null);
+                setDraw2Picks([]); setDraw2DeckCard(null);
+                const maxForArtist = getFameArtistMax(playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {});
+                const picksConsumed = gameModeRef.current === "quickYear" && qyPicksLeftRef.current < maxForArtist;
+                if (picksConsumed) {
+                  completeAction();
+                } else {
+                  setTurnAction(null); setArtistAction(null);
+                }
               }} style={{ ...bs, marginTop: 8, fontSize: 12 }}>← Cancel</button></div>
             </div>}
 
@@ -18087,7 +18077,23 @@ export default function Headliners() {
                       <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                         <span style={{ color: "#f97316", fontWeight: 700, fontSize: 12 }}>🔥 {finalFame}</span>
                         <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 12 }}>🎤 {totalArtists}</span>
-                        <span style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: 800, fontSize: 20 }}>🎟️ {finalTickets.toLocaleString()}</span>
+                        {/* v199.59: hover tooltip showing where every ticket came from.
+                            Groups ticketsLog by source and sums amounts. Lets players see
+                            exactly how the final total was reached — base season income,
+                            Legendary payouts, token conversions, infra rewards, etc. */}
+                        {(() => {
+                          const log = (ticketsLog && ticketsLog[row.player.id]) || [];
+                          const grouped = {};
+                          log.forEach(e => { grouped[e.source] = (grouped[e.source] || 0) + e.amount; });
+                          const entries = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
+                          const sumFromLog = entries.reduce((s, [, v]) => s + v, 0);
+                          const unaccounted = finalTickets - sumFromLog;
+                          return <span style={{ position: "relative", display: "inline-block" }} className="ticketTotalHover">
+                            <span style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: 800, fontSize: 20, cursor: entries.length > 0 ? "help" : "default", borderBottom: entries.length > 0 ? "1px dashed rgba(251,191,36,0.5)" : "none" }} title={entries.length === 0 ? "" : entries.map(([src, amt]) => `${amt > 0 ? "+" : ""}${amt}  ${src}`).join("\n") + (unaccounted !== 0 ? `\n${unaccounted > 0 ? "+" : ""}${unaccounted}  (other / rounding)` : "")}>
+                              🎟️ {finalTickets.toLocaleString()}
+                            </span>
+                          </span>;
+                        })()}
                       </div>
                     </div>
                     {/* Per-season breakdown row */}
