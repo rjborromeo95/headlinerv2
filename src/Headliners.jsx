@@ -16721,11 +16721,21 @@ export default function Headliners() {
               <div><button onClick={() => {
                 // v199.58: if picks were consumed, call completeAction (ends action,
                 // decrements actionsLeftThisTurn, resets qyPicksLeft to 0). If no picks
-                // taken, true no-op cancel (action not consumed).
+                // taken, cancel is a true no-op — action menu re-appears and user picks again.
+                // v199.61 bugfix: even on no-pick cancel, we MUST reset qyPicksLeft to 0.
+                // handlePickAmenity/handleArtistAction sets qyPicksLeft = max on action start.
+                // The v199.58 strong guard refuses re-entry while qyPicksLeft > 0, so leaving
+                // it at max would permanently block re-clicking either action button this turn.
                 const maxForAmen = getFameAmenityMax(playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {});
                 const picksConsumed = gameModeRef.current === "quickYear" && qyPicksLeftRef.current < maxForAmen;
-                if (picksConsumed) completeAction();
-                else setTurnAction(null);
+                if (picksConsumed) {
+                  completeAction();
+                } else {
+                  setTurnAction(null);
+                  // Reset qyPicksLeft so the action menu's buttons are clickable again.
+                  setQyPicksLeft(0);
+                  qyPicksLeftRef.current = 0;
+                }
               }} style={{ ...bs, marginTop: 12, fontSize: 12 }}>← Cancel</button></div>
             </div>}
 
@@ -17195,6 +17205,11 @@ export default function Headliners() {
                   completeAction();
                 } else {
                   setTurnAction(null); setArtistAction(null);
+                  // v199.61 bugfix: reset qyPicksLeft to 0 so the main action buttons
+                  // are re-clickable. The strong v199.58 guard blocks re-entry while
+                  // qyPicksLeft > 0, which otherwise strands the player.
+                  setQyPicksLeft(0);
+                  qyPicksLeftRef.current = 0;
                 }
               }} style={{ ...bs, marginTop: 8, fontSize: 12 }}>← Cancel</button></div>
             </div>}
