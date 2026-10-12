@@ -5094,10 +5094,91 @@ export default function Headliners() {
           starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: 0,
         };
       });
+      // v199.65: apply artist Year End: effects at Quick Play game end. These were
+      // Classic-only (beginYearEndEffectsPhase ran as part of Special Guest → Year End →
+      // Year Advance). Quick Play went straight from Summer close to gameOver, so cards
+      // like Foo Fighters ("+2 per 3 amenities"), Coldplay ("+1 per 12 tickets"), Kendrick
+      // Lamar ("+2 per security"), and generic "sell N tickets" never fired. Apply them
+      // here before the final leaderboard computation.
+      const yeBonusByPid = {};
+      players.forEach(p => {
+        const pd = currentPD[p.id];
+        if (!pd) return;
+        let total = 0;
+        const am = pd.amenities || {};
+        (pd.stageArtists || []).forEach(sa => (sa || []).forEach(a => {
+          const rawEff = a.effect || "";
+          const eff = rawEff.toLowerCase();
+          if (!eff.includes("year end")) return;
+          if (eff.includes("for every 12 tickets before year end")) {
+            // Coldplay: uses pre-bonus ticket count. Approximate with current pd.tickets
+            // (we'll recompute final tickets right after this).
+            const currentTix = pd.tickets || 0;
+            const bonus = Math.floor(currentTix / 12);
+            if (bonus > 0) {
+              total += bonus;
+              addLog("🎸 Year End", `${p.festivalName}: ${a.name} → ${currentTix} tickets / 12 = +${bonus} 🎟️`);
+            }
+          } else if (eff.includes("for every 3 amenities you own")) {
+            // Foo Fighters
+            const totalAmen = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+            const bonus = Math.floor(totalAmen / 3) * 2;
+            if (bonus > 0) {
+              total += bonus;
+              addLog("🎸 Year End", `${p.festivalName}: ${a.name} → ${totalAmen} amenities / 3 × 2 = +${bonus} 🎟️`);
+            }
+          } else if (eff.includes("for each security you own")) {
+            // Kendrick Lamar
+            const sec = am.security || 0;
+            const bonus = sec * 2;
+            if (bonus > 0) {
+              total += bonus;
+              addLog("🎸 Year End", `${p.festivalName}: ${a.name} → ${sec} security × 2 = +${bonus} 🎟️`);
+            }
+          } else {
+            // Generic "Year End: Sell N tickets" / "Year End: -N tickets"
+            const sellMatch = rawEff.match(/Year End:.*[Ss]ell\s+(\d+)\s+tickets?/i);
+            if (sellMatch) {
+              const bonus = parseInt(sellMatch[1], 10);
+              total += bonus;
+              addLog("🎸 Year End", `${p.festivalName}: ${a.name} → +${bonus} 🎟️`);
+            }
+          }
+          // Log to ticketsLog so the game-over hover breakdown includes year-end bonuses.
+          if (total > 0) {
+            // (Deferred: logTicketGain called once per card below so individual lines
+            // show up rather than one lump.)
+          }
+        }));
+        if (total !== 0) {
+          yeBonusByPid[p.id] = total;
+          logTicketGain(p.id, total, `🎸 Year-End artist effects`);
+        }
+      });
+
       // Commit both pieces of state separately. Keep playerDataRef in sync for any
       // downstream read that happens before React flushes the setState.
-      playerDataRef.current = { ...currentPD, ...fresh };
-      setPlayerData(prev => ({ ...prev, ...fresh }));
+      // v199.65: fold year-end bonuses into the fresh pd before the final leaderboard
+      // computation (same pattern as the Summer season bonus above).
+      const freshWithYE = {};
+      players.forEach(p => {
+        const pd = currentPD[p.id];
+        if (!pd) return;
+        const seasonBonus = bonusByPid[p.id] || 0;
+        const yeBonus = yeBonusByPid[p.id] || 0;
+        const pdWithBoth = { ...pd, bonusTickets: (pd.bonusTickets || 0) + seasonBonus + yeBonus };
+        freshWithYE[p.id] = computeTicketsForPlayer(pdWithBoth, 1, p.id);
+        if (nextAllTickets[p.id]) {
+          nextAllTickets[p.id][1] = {
+            raw: freshWithYE[p.id].tickets || 0,
+            fame: freshWithYE[p.id].fame || 0,
+            fameVP: 0, ticketVP: 0, artistVP: 0, councilVP: 0, effectVP: 0,
+            starDiceVP: 0, preYearVP: 0, totalYearVP: 0, yearEndDelta: yeBonus,
+          };
+        }
+      });
+      playerDataRef.current = { ...currentPD, ...freshWithYE };
+      setPlayerData(prev => ({ ...prev, ...freshWithYE }));
       setAllTickets(nextAllTickets);
       setTimeout(() => { setPhase("gameOver"); addLogH("Game Over — Festival Complete!", "round"); }, 150);
       return;
