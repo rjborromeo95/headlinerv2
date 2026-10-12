@@ -2621,6 +2621,10 @@ export default function Headliners() {
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
   // nPlayers * 3, 6, 9 — season boundary. nPlayers * 12 — game end.
   const [quickYearTurnsTaken, setQuickYearTurnsTaken] = useState(0);
+  // v199.64: ref mirror for synchronous read inside endTurn's defensive game-end guard.
+  // The ref stays strictly in sync with the state via the useEffect below.
+  const quickYearTurnsTakenRef = useRef(0);
+  useEffect(() => { quickYearTurnsTakenRef.current = quickYearTurnsTaken; }, [quickYearTurnsTaken]);
   // Season-end scoring modal state. Null when idle; { season, seasonScores, isGameEnd, nextPlayerIdx } when open.
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
   // v199.9: season objectives re-introduced. 1 per season, drawn at game start from
@@ -10854,11 +10858,15 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => {
-    // v199.37/v199.58: defence-in-depth. If ANY picks remain from a prior in-progress
-    // action, bail — do NOT reset qyPicksLeft. Prevents the "take 1, cancel, re-click
-    // for fresh picks" bug (symmetric to the handleArtistAction fix).
-    if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+    // v199.37/v199.58/v199.62: block re-entry if actively mid-Build with picks remaining.
+    // Null turnAction with lingering qyPicksLeft is stale state — auto-reset defensively
+    // rather than refusing the click (fixes the "buttons don't respond" bug).
+    if (turnAction === "pickAmenity" && gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
       return;
+    }
+    if (gameModeRef.current === "quickYear" && turnAction === null && qyPicksLeftRef.current > 0) {
+      setQyPicksLeft(0);
+      qyPicksLeftRef.current = 0;
     }
     setTurnAction("pickAmenity");
     if (dice.length === 0) { const fresh = rollDice(); setDice(fresh); grantCat1IfEligible(currentPlayerId, fresh); }
@@ -11191,13 +11199,19 @@ export default function Headliners() {
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
   const handleArtistAction = () => {
-    // v199.58: bail if ANY picks remaining from a prior in-progress action (regardless
-    // of turnAction state). Prevents the "take 1, cancel, re-click Browse for fresh
-    // picks" bug. Covers both the still-in-artist path AND the cleared-turnAction path
-    // (defence in depth — if some other code clears turnAction without resetting
-    // qyPicksLeft, this still blocks re-entry).
-    if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+    // v199.58: block re-entry if currently mid-artist-action with picks remaining.
+    // v199.62: narrowed from "any qyPicksLeft > 0" to "turnAction is still artist AND
+    // picks > 0". A null turnAction with lingering qyPicksLeft is stale state from
+    // some path that cleared turnAction without resetting the counter — defensively
+    // auto-reset instead of silently refusing the click (that was the "buttons don't
+    // respond" bug).
+    if (turnAction === "artist" && gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
       return;
+    }
+    if (gameModeRef.current === "quickYear" && turnAction === null && qyPicksLeftRef.current > 0) {
+      // Stale state — reset so the action can start cleanly.
+      setQyPicksLeft(0);
+      qyPicksLeftRef.current = 0;
     }
     takeUndoSnapshot();
     setTurnAction("artist");
@@ -11258,6 +11272,25 @@ export default function Headliners() {
     setPendingEffect(null);
     setPendingEffectPid(null);
     setPendingPortalooRefresh(0);
+    // v199.62: reset all Quick Play per-action state. Previously undo cleared turnAction
+    // but left qyPicksLeft at the pre-undo value (e.g. mid-action it would be max-N or
+    // just max). The v199.58 strong guards on handleArtistAction/handlePickAmenity then
+    // refused re-entry while qyPicksLeft > 0, stranding the player on a visible main
+    // menu with unresponsive Build / Browse buttons. Reset everything to pre-action.
+    if (gameModeRef.current === "quickYear") {
+      setQyPicksLeft(0);
+      qyPicksLeftRef.current = 0;
+      setActionsLeftThisTurn(QUICKYEAR_ACTIONS_PER_TURN);
+      actionsLeftRef.current = QUICKYEAR_ACTIONS_PER_TURN;
+      setQyDrewThisAction(false);
+      qyDrewThisActionRef.current = false;
+      setQyPoolRefreshUsed(false);
+      qyPoolRefreshUsedRef.current = false;
+      setQyDiceRefreshUsed(false);
+      qyDiceRefreshUsedRef.current = false;
+      setSelectedDie(null);
+      setPickingFieldFor(null);
+    }
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName, "↩️ Undid last action");
     setTimeout(() => recalcTickets(), 50);
@@ -11642,6 +11675,17 @@ export default function Headliners() {
   };
 
   const endTurn = () => {
+    // v199.64: defensive guard — if the game has already ended (all players have taken
+    // all their turns, counted via quickYearTurnsTaken), do not fire endTurn again.
+    // Prevents a double-endTurn from incrementing the counter past the end and triggering
+    // "game over" before a player's final turn was played. Covers the race where an AI's
+    // scheduleNext fires twice before React commits the first increment.
+    if (gameModeRef.current === "quickYear") {
+      const maxTotal = (players.length || 1) * QUICKYEAR_TOTAL_TURNS;
+      if (quickYearTurnsTakenRef && quickYearTurnsTakenRef.current >= maxTotal) {
+        return;
+      }
+    }
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
     // v190: freeze current turn actions as the "last turn" record for this player, then
@@ -11700,18 +11744,24 @@ export default function Headliners() {
     let quickYearGameOver = false;
     let quickYearSeasonJustEnded = null;
     if (gameModeRef.current === "quickYear") {
-      const newTotal = quickYearTurnsTaken + 1;
+      // v199.64: use the ref (synchronous, immune to React stale closures) + updater
+      // function so concurrent endTurn calls can't both read the same stale value and
+      // both resolve to the same N+1.
+      const prevTotal = quickYearTurnsTakenRef.current || 0;
+      const newTotal = prevTotal + 1;
+      quickYearTurnsTakenRef.current = newTotal;
       setQuickYearTurnsTaken(newTotal);
       const nPlayers = players.length || 1;
       const roundsCompleted = Math.floor(newTotal / nPlayers);
       const roundRemainder = newTotal % nPlayers;
-      // Season boundary / game end fires only when we've completed a full round
-      // (all players have taken the same number of turns). Keyed by rounds-completed.
+      // Season boundary fires only when we've completed a full round. Game end check
+      // widened from === 12 to >= 12 so any overshoot still triggers the Summer flow
+      // (the "ni < 0" fallback below is a secondary safety net).
       if (roundRemainder === 0) {
         if (roundsCompleted === 3) quickYearSeasonJustEnded = "autumn";
         else if (roundsCompleted === 6) quickYearSeasonJustEnded = "winter";
         else if (roundsCompleted === 9) quickYearSeasonJustEnded = "spring";
-        else if (roundsCompleted === 12) { quickYearSeasonJustEnded = "summer"; quickYearGameOver = true; }
+        else if (roundsCompleted >= 12) { quickYearSeasonJustEnded = "summer"; quickYearGameOver = true; }
       }
       // v199.44: REBALANCE turnsLeft to strict round-robin. Many action handlers
       // decrement turnsLeft individually, and race conditions / effect chains /
@@ -11750,13 +11800,38 @@ export default function Headliners() {
     }
 
     if (ni < 0) {
-      // v199.24 bugfix: in Quick Play, going straight to gameOver here skipped the Summer
-      // season-end modal AND the Legendary resolution. Players reported "turn 12 → game over
-      // with no legendary verdict." The clean game-end detection above (roundsCompleted === 12
-      // + remainder === 0) can miss when a player takes an extra action via Fame-spend or
-      // when turn counts get offset by any mechanic. Route through runQuickYearSeasonEnd
-      // instead so the full Summer flow fires regardless.
+      // v199.24: in Quick Play, go through runQuickYearSeasonEnd so the Summer flow fires
+      // (legendary resolution, modal, scoring).
+      // v199.64: verify we're actually at game end. If someone has turns remaining but
+      // findNext still returns -1, that's a desync — don't fire game over prematurely.
+      // Instead, find ANY player with turns remaining and advance to them (safety net
+      // for the "doesn't let final turn be played" bug).
       if (gameModeRef.current === "quickYear") {
+        const nPlayers = players.length || 1;
+        const maxTotal = nPlayers * QUICKYEAR_TOTAL_TURNS;
+        const atRealEnd = (quickYearTurnsTakenRef.current || 0) >= maxTotal;
+        if (atRealEnd) {
+          runQuickYearSeasonEnd("summer", true, -1);
+          return;
+        }
+        // Not at real end — the rebalancer should have left SOMEONE with turnsLeft > 0.
+        // Find them manually (safety net) and advance.
+        const tl = turnsLeftRef.current || {};
+        for (let i = 0; i < turnOrder.length; i++) {
+          if ((tl[turnOrder[i]] || 0) > 0) {
+            addLog("⚠️ Turn Recovery", `findNext returned -1 but ${players.find(p => p.id === turnOrder[i])?.festivalName} still has turns — advancing manually to prevent premature game end.`);
+            setCurrentPlayerIdx(i);
+            const np = players.find(p => p.id === turnOrder[i]);
+            addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
+            refillPool();
+            if (np?.isAI) {
+              aiProcessing.current = false;
+            }
+            return;
+          }
+        }
+        // Truly nobody has turns and we're not at max — unusual, log and end game.
+        addLog("⚠️ End Game", "No player has turns remaining before expected end — forcing Summer close.");
         runQuickYearSeasonEnd("summer", true, -1);
         return;
       }
@@ -18092,19 +18167,45 @@ export default function Headliners() {
                       <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                         <span style={{ color: "#f97316", fontWeight: 700, fontSize: 12 }}>🔥 {finalFame}</span>
                         <span style={{ color: "#c4b5fd", fontWeight: 700, fontSize: 12 }}>🎤 {totalArtists}</span>
-                        {/* v199.59: hover tooltip showing where every ticket came from.
-                            Groups ticketsLog by source and sums amounts. Lets players see
-                            exactly how the final total was reached — base season income,
-                            Legendary payouts, token conversions, infra rewards, etc. */}
+                        {/* v199.59/v199.63: hover tooltip breaking down every ticket.
+                            Separate structural sources (amenity bases, artist card values,
+                            council bonuses) from logged events (Legendary payouts, token
+                            conversions, artist effects). Any genuine mystery remainder shows
+                            as "unexplained" — if that line is non-zero and non-trivial, there's
+                            an untracked source worth investigating. */}
                         {(() => {
+                          const pd = playerData[row.player.id] || {};
+                          const am = pd.amenities || {};
+                          // Structural components (computed from state, not logged).
+                          const campsiteCount = am.campsite || 0;
+                          const campsiteValue = 2 + (hasInfraReward(row.player.id, "camp_1") ? 1 : 0);
+                          const campsiteTickets = campsiteCount * campsiteValue;
+                          const cateringTickets = hasInfraReward(row.player.id, "cat_2") ? (am.catering || 0) * 2 : 0;
+                          let artistBaseTickets = 0;
+                          let artistBaseVP = 0;
+                          (pd.stageArtists || []).forEach(sa => sa.forEach(a => {
+                            artistBaseTickets += (a.tickets || 0);
+                            artistBaseVP += (a.vp || 0);
+                          }));
+                          // Logged event sources (Legendary payouts, token conversions, etc.)
                           const log = (ticketsLog && ticketsLog[row.player.id]) || [];
                           const grouped = {};
                           log.forEach(e => { grouped[e.source] = (grouped[e.source] || 0) + e.amount; });
-                          const entries = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
-                          const sumFromLog = entries.reduce((s, [, v]) => s + v, 0);
-                          const unaccounted = finalTickets - sumFromLog;
+                          // Build structural lines first, then logged event lines, then remainder.
+                          const structural = [];
+                          if (campsiteTickets > 0) structural.push([`⛺ Campsites (${campsiteCount} × ${campsiteValue})`, campsiteTickets]);
+                          if (cateringTickets > 0) structural.push([`🍔 Catering infra reward (${am.catering || 0} × 2)`, cateringTickets]);
+                          if (artistBaseTickets > 0) structural.push([`🎤 Artists' card values`, artistBaseTickets]);
+                          if (artistBaseVP > 0) structural.push([`✨ Artists' VP`, artistBaseVP]);
+                          const loggedEntries = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
+                          const sumFromStructural = structural.reduce((s, [, v]) => s + v, 0);
+                          const sumFromLog = loggedEntries.reduce((s, [, v]) => s + v, 0);
+                          const remainder = finalTickets - sumFromStructural - sumFromLog;
+                          const allEntries = [...structural, ...loggedEntries];
+                          if (remainder !== 0) allEntries.push([`❓ Unexplained (bonus tickets / rounding)`, remainder]);
+                          const totalTooltipLines = allEntries.length;
                           return <span style={{ position: "relative", display: "inline-block" }} className="ticketTotalHover">
-                            <span style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: 800, fontSize: 20, cursor: entries.length > 0 ? "help" : "default", borderBottom: entries.length > 0 ? "1px dashed rgba(251,191,36,0.5)" : "none" }} title={entries.length === 0 ? "" : entries.map(([src, amt]) => `${amt > 0 ? "+" : ""}${amt}  ${src}`).join("\n") + (unaccounted !== 0 ? `\n${unaccounted > 0 ? "+" : ""}${unaccounted}  (other / rounding)` : "")}>
+                            <span style={{ color: idx === 0 ? "#fbbf24" : "#60a5fa", fontWeight: 800, fontSize: 20, cursor: totalTooltipLines > 0 ? "help" : "default", borderBottom: totalTooltipLines > 0 ? "1px dashed rgba(251,191,36,0.5)" : "none" }} title={totalTooltipLines === 0 ? "" : allEntries.map(([src, amt]) => `${amt > 0 ? "+" : ""}${amt}  ${src}`).join("\n")}>
                               🎟️ {finalTickets.toLocaleString()}
                             </span>
                           </span>;
