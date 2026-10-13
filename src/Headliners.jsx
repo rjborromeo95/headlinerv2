@@ -2171,6 +2171,76 @@ function aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, activeMicrot
   // action. The actual pick decision is made downstream — here we just make draw more
   // likely to be chosen as the top-level action. Early game (autumn) = always consider,
   // mid-late game only if hand isn't full.
+  // v199.67: Phase A — Fame<2 in Autumn microtrend chase. HARD override of the normal
+  // priority flow because the previous logic was falling into `handSize<3 → blind pool
+  // reserve` and SKIPPING microtrend completion opportunities. User-requested priority
+  // ladder at Fame<2:
+  //   1. Complete active microtrend (genre or amenity) if any route exists
+  //   2. Pick Fame die from amenity dice if available
+  //   3. Open a stage (via stage die) if stages < 3
+  //   4. Draw highest-Fame artist from pool to work toward
+  // This block short-circuits before Favour reserve / handSize<3 fallbacks because those
+  // branches don't consider microtrend state.
+  if (needsFameRush) {
+    // 1a. Amenity microtrend — Build with that amenity as top preference. Even if the
+    //     die face isn't in the current roll, downstream Fame-die bias means we gain
+    //     Fame indirectly, and if the amenity face IS available we complete the trend.
+    if (activeAmenity) {
+      return { action: "amenity", preferredType: activeAmenity, wantsFameThisTurn: true };
+    }
+    // 1b. Genre microtrend — look for a matching artist in hand or pool.
+    if (activeGenre) {
+      const matchInHand = (pd.hand || []).find(a => a && !a.isFavour && (a.genre || "").split(",").map(g => g.trim()).includes(activeGenre));
+      if (matchInHand) {
+        // In hand — either Fame-locked or amenity-locked. The matching artist is in
+        // Priority 1's bookableHand already if everything is OK, which means we'd never
+        // reach here. So we're missing something. If Fame-locked, bias Fame die; if
+        // amenity-locked, bias the needed amenity. In both cases: Build.
+        if (fame < (matchInHand.fame || 0)) {
+          return { action: "amenity", preferredType: null, wantsFameThisTurn: true };
+        }
+        // Amenity-locked — figure out the biggest shortfall and target it.
+        const needed = {};
+        if (matchInHand.campCost > counts.campsite) needed.campsite = matchInHand.campCost - counts.campsite;
+        if (matchInHand.securityCost > counts.security) needed.security = matchInHand.securityCost - counts.security;
+        if (matchInHand.cateringCost > counts.catering) needed.catering = matchInHand.cateringCost - counts.catering;
+        if (matchInHand.portalooCost > counts.portaloo) needed.portaloo = matchInHand.portalooCost - counts.portaloo;
+        const top = Object.entries(needed).sort((a, b) => b[1] - a[1])[0];
+        if (top) {
+          return { action: "amenity", preferredType: top[0], wantsFameThisTurn: true };
+        }
+      } else if (artistPool && artistPool.length > 0) {
+        // Not in hand → Browse to find one. Prefer the pool slot whose genre matches.
+        const matchInPool = artistPool.findIndex(a => a && !a.isFavour && (a.genre || "").split(",").map(g => g.trim()).includes(activeGenre));
+        if (matchInPool >= 0) return { action: "reserve", poolIdx: matchInPool };
+      }
+    }
+    // 2. No microtrend route viable — but a Fame die is in the current roll. Build it.
+    const hasFameDie = Array.isArray(dice) && dice.some(d => d === "fame");
+    if (hasFameDie) {
+      return { action: "amenity", preferredType: null, wantsFameThisTurn: true };
+    }
+    // 3. No Fame die either — if a stage die is in the roll and stages < 3, open one.
+    const hasStageDie = Array.isArray(dice) && dice.some(d => d === "stage");
+    const myStages = (pd.stages || []).length;
+    if (hasStageDie && myStages < 3) {
+      // v199.67: signal stage priority to the caller via wantsStageDie flag.
+      // The caller OR-combines this with its own wantsStageProgress calc.
+      return { action: "amenity", preferredType: null, wantsFameThisTurn: false, wantsStageDie: true };
+    }
+    // 4. No Fame or Stage die either — Browse to find the highest-Fame artist in the
+    //    pool, which we'll later work toward playing.
+    if (artistPool && artistPool.length > 0) {
+      const sorted = artistPool
+        .map((a, i) => ({ a, i, score: a && !a.isFavour ? (a.fame || 0) * 10 + (a.tickets || 0) : -1 }))
+        .filter(x => x.score >= 0)
+        .sort((a, b) => b.score - a.score);
+      if (sorted.length > 0) return { action: "reserve", poolIdx: sorted[0].i };
+    }
+    // 4b. Pool empty — draw from deck.
+    return { action: "drawDeck" };
+  }
+
   // v199.66: Quick Play Autumn — if we've reached Fame 2 but don't yet have a Fame 4+
   // artist in hand, aggressively reserve one from the pool. The ladder plan is "secure
   // the target first, then build its amenities over Winter/Spring." Fires BEFORE the
@@ -10894,7 +10964,9 @@ export default function Headliners() {
         && !quickAutumnHasHighValueInHand
         && !quickAutumnHasHighValueInPool
         && aiStages < 3;
-      const wantsStageProgress = classicWantsStage || quickPlayAutumnWantsStage;
+      // v199.67: Phase A fallback also wants stage die when Fame<2, no microtrend route,
+      // no Fame die in dice. aiDecideTurn signals this via decision.wantsStageDie.
+      const wantsStageProgress = classicWantsStage || quickPlayAutumnWantsStage || !!decision.wantsStageDie;
       // v199.29: aggressive Fame bias in Quick Play. The AI should climb the Fame ladder
       // to unlock Fame tiers (2+ = 2 picks per action, 4+ = pool refresh). Previously
       // wantsFameThisTurn was only true on turn 1 at Fame 0-1. Now any time Fame < 4 in
