@@ -16980,11 +16980,22 @@ export default function Headliners() {
             if (totalItems === 0) return null;
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
-            return <div style={{ marginTop: "auto", paddingTop: 10, position: "relative", order: 10 }}>
-              {/* v199.75: order:10 + marginTop:auto push the hand drawer to the visual bottom
-                  of the main-area flex column, below the action bar — without needing to
-                  physically restructure the JSX. The expanded content still absolute-positions
-                  itself ABOVE this tab button via bottom:calc(100% + 10px). */}
+            return <div style={{
+              marginTop: 10,
+              position: "sticky",
+              bottom: 0,
+              zIndex: 15,
+              // v199.77: switched from flex ordering (order:10 + marginTop:auto) to
+              // position:sticky. The tab button now sticks to the bottom of the main-area
+              // scroll container when its natural position would scroll out of view.
+              // Semi-opaque background so content scrolling behind it reads cleanly rather
+              // than bleeding through the sticky tab.
+              background: "linear-gradient(0deg, rgba(15,14,26,0.98), rgba(15,14,26,0.9) 70%, rgba(15,14,26,0) 100%)",
+              paddingTop: 6,
+            }}>
+              {/* v199.77: position:sticky keeps the tab visible at the bottom of the viewport
+                  while scrolling. Expanded content still absolute-positions above the tab via
+                  bottom:calc(100% + 10px) so it opens upward from the sticky anchor. */}
               {showHand && (
                 <div style={{
                   position: "absolute",
