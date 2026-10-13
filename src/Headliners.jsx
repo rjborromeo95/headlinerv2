@@ -11484,6 +11484,25 @@ export default function Headliners() {
     }
   };
 
+  // v199.75: split "Browse or Buy" into two actions. Both still route through
+  // handleArtistAction for state setup, then flip drawer visibility to match intent.
+  //   Buy    → close pool, open hand (play from hand)
+  //   Browse → open pool, close hand (draw from deck or pool), set artistAction="draw2"
+  const handleBuyAction = () => {
+    handleArtistAction();
+    setPoolDrawerOpen(false);
+    setShowHand(true);
+  };
+  const handleBrowseAction = () => {
+    handleArtistAction();
+    // Set draw2 state so the pool drawer enters Browse mode (deck + pool cards clickable).
+    setArtistAction("draw2");
+    setDraw2Picks([]);
+    setDraw2DeckCard(null);
+    setPoolDrawerOpen(true);
+    setShowHand(false);
+  };
+
   /** Take a full undo snapshot of all mutable game state */
   const takeUndoSnapshot = () => {
     setUndoSnapshot({
@@ -13832,7 +13851,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } }`}</style>;
+  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -16749,7 +16768,6 @@ export default function Headliners() {
                 }}
                 title={poolDrawerOpen ? "Click to collapse pool" : "Click to expand pool"}
               >
-                <span style={{ fontSize: 16 }}>{inBrowseMode ? "🎤" : "📚"}</span>
                 {inBrowseMode ? "Browsing — click deck or pool card" : `Artist Pool (${artistPool.length})`}
                 <span style={{ fontSize: 12, opacity: 0.7 }}>{poolDrawerOpen ? "▲" : "▼"}</span>
               </button>
@@ -16763,6 +16781,7 @@ export default function Headliners() {
                   border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.3)" : "rgba(124,58,237,0.25)"}`,
                   boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
                   backdropFilter: "blur(4px)",
+                  animation: "slideDownIn 0.18s ease-out",
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length})</div>
@@ -16903,9 +16922,11 @@ export default function Headliners() {
             if (totalItems === 0) return null;
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
-            return <div style={{ marginTop: 10, position: "relative" }}>
-              {/* v199.73: expanded hand content positioned ABOVE the tab button (opens upward)
-                  using absolute positioning, so it overlays rather than pushes layout. */}
+            return <div style={{ marginTop: "auto", paddingTop: 10, position: "relative", order: 10 }}>
+              {/* v199.75: order:10 + marginTop:auto push the hand drawer to the visual bottom
+                  of the main-area flex column, below the action bar — without needing to
+                  physically restructure the JSX. The expanded content still absolute-positions
+                  itself ABOVE this tab button via bottom:calc(100% + 10px). */}
               {showHand && (
                 <div style={{
                   position: "absolute",
@@ -16916,6 +16937,7 @@ export default function Headliners() {
                   border: "1px solid rgba(236,72,153,0.25)",
                   boxShadow: "0 -10px 30px rgba(0,0,0,0.5)",
                   backdropFilter: "blur(4px)",
+                  animation: "slideUpIn 0.18s ease-out",
                 }}>
                   <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
                     {handCards.map((a, i) => a.isFavour
@@ -16975,7 +16997,6 @@ export default function Headliners() {
                 }}
                 title={showHand ? "Click to collapse hand" : "Click to expand hand"}
               >
-                <span style={{ fontSize: 16 }}>✋</span>
                 Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
                 <span style={{ fontSize: 12, opacity: 0.7 }}>{showHand ? "▼" : "▲"}</span>
               </button>
@@ -17072,11 +17093,25 @@ export default function Headliners() {
                 );
               })()}
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                {/* v199.45: Quick Play labels — Build / Browse or Buy. Classic retains
-                    the original names since its 1-action-per-turn flow is different. */}
+                {/* v199.75: three distinct action buttons — Build / Buy / Browse.
+                    Buy opens the hand drawer (play from hand).
+                    Browse opens the pool drawer with deck+pool clickable (draw to hand).
+                    Classic multi-year still shows the legacy "Book / Reserve Artist" label. */}
                 <button onClick={handlePickAmenity} style={bp}>
                   {gameModeRef.current === "quickYear" ? "🏗️ Build" : "🎲 Pick Amenity"}
                 </button>
+                {gameModeRef.current === "quickYear" ? <>
+                  <button onClick={handleBuyAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(190,24,93,0.3))", border: "1px solid #ec4899", color: "#fbcfe8", fontWeight: 700 }}>
+                    💳 Buy
+                  </button>
+                  <button onClick={handleBrowseAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.3))", border: "1px solid #22c55e", color: "#bbf7d0", fontWeight: 700 }}>
+                    🎤 Browse
+                  </button>
+                </> : (
+                  <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>
+                    🎤 Book / Reserve Artist
+                  </button>
+                )}
                 {hasAgent(currentPlayerId) && (() => {
                   const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
                   const label = gameMode === "quickYear" && temptMode
@@ -17084,10 +17119,6 @@ export default function Headliners() {
                     : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
                   return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
                 })()}
-                <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>
-                  {gameModeRef.current === "quickYear" ? "🎤 Browse or Buy" : "🎤 Book / Reserve Artist"}
-                </button>
-
               </div>
             </div>}
 
@@ -17497,56 +17528,27 @@ export default function Headliners() {
 
             {/* Agent indicators on pool artists */}
 
-            {/* Artist Action */}
-            {/* Unified Artist Action Panel */}
+            {/* Artist Action — v199.75: hand duplicate removed (hand is shown via the drawer
+                at the bottom of the main area). This panel now shows only mode-specific
+                instructions and the reveal strip. */}
             {!actionTaken && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "draw2") && !selectedArtist && <div style={{ textAlign: "center" }}>
-              <p style={{ color: "#ec4899", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Artist Action</p>
-              <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{gameMode === "quickYear"
-                ? `Book from hand OR draw 1 from deck. Pool is view-only — cash a 🎴 Favour of matching genre to play from pool.`
-                : `Book from hand, take 1 from pool, or draw ${getDeckDrawCount(currentPD)} from deck (${currentPD?.fame >= 4 ? "Fame 4-5" : "Fame 1-3"})`}</p>
-              
-              {/* Hand */}
-              {handCards.length > 0 && <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#ec4899", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Your Hand — click to book</div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                  {handCards.map((a, i) => {
-                    // v199.35: Favour cards use the dedicated picker, not the book flow.
-                    if (a.isFavour) {
-                      return <ArtistCard key={i} artist={a} small
-                        disabled={!!favourPlayMode}
-                        onClick={() => {
-                          if (favourPlayMode) return;
-                          setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
-                        }}
-                      />;
-                    }
-                    // v124.1 hotfix: the actionable hand card needs to allow clicks when
-                    // the artist is bookable via EITHER amenities OR the genre-match headliner
-                    // rule.
-                    // v199.39: Quick Play — gray out hand cards if a draw already happened
-                    // this action (hand-book is locked out until end-of-turn).
-                    const drewLocked = gameModeRef.current === "quickYear" && qyDrewThisAction;
-                    const canBook = !drewLocked && (canAffordArtistOrFree(a, currentPD) || canBookArtistAnywhere(a, currentPD));
-                    return <ArtistCard key={i} artist={a} showCost small affordable={canBook} genreMatchGlow={!drewLocked && hasGenreMatchBonusAvailable(a, currentPD)} disabled={!canBook} onClick={() => handleBookFromHand(i)} />;
-                  })}
-                </div>
-              </div>}
+              {artistAction === "draw2" ? (
+                <>
+                  <p style={{ color: "#86efac", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Browse</p>
+                  <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Click a pool card or the deck in the <strong style={{ color: "#86efac" }}>Artist Pool</strong> drawer above to draw.</p>
+                </>
+              ) : (
+                <>
+                  <p style={{ color: "#fbcfe8", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>💳 Buy</p>
+                  <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Click a card in <strong style={{ color: "#fbcfe8" }}>Your Hand</strong> below to book it to a stage.</p>
+                </>
+              )}
               
               {/* Reveal strip — briefly shows what was drawn before finishDraw2 clears it */}
               {draw2Picks.length > 0 && <div style={{ marginBottom: 12, padding: 8, borderRadius: 10, background: "rgba(34,197,94,0.1)", border: "1px solid #22c55e40" }}>
                 <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>Drew {draw2Picks.length} artist{draw2Picks.length === 1 ? "" : "s"}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
                   {draw2Picks.map((a, i) => <ArtistCard key={i} artist={a} showCost small />)}
-                </div>
-              </div>}
-
-              {/* v199.74: duplicate Pool+Deck row removed. Browse now happens via the pool
-                  drawer at the top of the main area (deck slot + pool cards are clickable
-                  when artistAction === "draw2"). This panel keeps only the hand + reveal
-                  strip, which are hand-specific. */}
-              {draw2Picks.length === 0 && <div style={{ marginBottom: 8, padding: 10, borderRadius: 8, background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.3)", textAlign: "center" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#86efac", letterSpacing: 0.5 }}>
-                  🎤 Click a pool card or the deck in the <strong>Artist Pool</strong> drawer above to draw
                 </div>
               </div>}
               
