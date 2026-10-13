@@ -1095,12 +1095,11 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   // Legendary (if drawn).
   if (artist && artist.isFavour) {
     const mobF = typeof window !== "undefined" && window.innerWidth < 768;
-    // v199.72: taller card-shaped proportions (~1:1.4, standard playing card ratio).
-    // Previous: 110×90 / 140×100 / 150×130 / 170×140 were nearly square. New dimensions
-    // give proper card feel and more room for name + cost + effect text.
+    // v199.73: card-shaped but less tall. Ratio ~1:1.2 instead of 1:1.4. Still clearly
+    // "card" rather than "square" but doesn't dominate vertical space.
     const szF = small
-      ? (mobF ? { width: 130, minHeight: 185, padding: "10px 10px" } : { width: 110, minHeight: 155, padding: "8px 8px" })
-      : (mobF ? { width: 165, minHeight: 230, padding: "12px 12px" } : { width: 150, minHeight: 210, padding: "10px 10px" });
+      ? (mobF ? { width: 130, minHeight: 155, padding: "10px 10px" } : { width: 110, minHeight: 130, padding: "8px 8px" })
+      : (mobF ? { width: 165, minHeight: 195, padding: "12px 12px" } : { width: 150, minHeight: 175, padding: "10px 10px" });
     const favBg = GENRE_COLORS[artist.genre] || "#fbbf24";
     return (
       <div onClick={disabled ? undefined : onClick} style={{
@@ -1122,11 +1121,10 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
   const grad = gs.length > 1 ? `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)` : undefined;
   const mob = typeof window !== 'undefined' && window.innerWidth < 768;
-  // v199.72: taller card-shaped proportions (~1:1.4 ratio). Matches Favour card
-  // dimensions above so the two card types align in grids / rows.
+  // v199.73: card-shaped but less tall. Ratio ~1:1.2. Matches Favour card dimensions.
   const sz = small
-    ? (mob ? { width: 130, minHeight: 185, padding: "10px 10px", fontSize: 12 } : { width: 110, minHeight: 155, padding: "8px 8px", fontSize: 10 })
-    : (mob ? { width: 165, minHeight: 230, padding: "12px 12px", fontSize: 13 } : { width: 150, minHeight: 210, padding: "10px 10px", fontSize: 11 });
+    ? (mob ? { width: 130, minHeight: 155, padding: "10px 10px", fontSize: 12 } : { width: 110, minHeight: 130, padding: "8px 8px", fontSize: 10 })
+    : (mob ? { width: 165, minHeight: 195, padding: "12px 12px", fontSize: 13 } : { width: 150, minHeight: 175, padding: "10px 10px", fontSize: 11 });
   const fs = mob ? { name: small?12:14, meta: small?10:11, cost: 11, effect: small?9:10 } : { name: small?10:12, meta: small?8:9, cost: 10, effect: small?7:8 };
   // v126+: genre-match glow. When a headliner-eligible artist has a genreMatchEffect AND
   // there's a stage in the player's festival with 2 matching-genre artists ready to accept
@@ -11663,6 +11661,9 @@ export default function Headliners() {
     setDraw2Picks([]);
     setDraw2DeckCard(null);
     setArtistAction("draw2");
+    // v199.73: auto-open the pool drawer so the player sees deck + pool cards immediately
+    // as their Browse interface. Deck slot and pool cards are click-targets in this mode.
+    setPoolDrawerOpen(true);
   };
   const draw2PickFromPool = (idx) => {
     const artist = artistPool[idx];
@@ -16771,88 +16772,125 @@ export default function Headliners() {
 
         {/* Main area */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: isMobile ? "12px 16px" : 16, overflow: "auto" }}>
-          {/* v199.72: Pool Drawer — collapsible at top of main area. Default open.
-              Shows deck slot (left) + pool cards. Click the header bar to toggle. */}
-          <div style={{ marginBottom: 10 }}>
-            <button
-              onClick={() => setPoolDrawerOpen(!poolDrawerOpen)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                padding: "10px 16px", borderRadius: 10, border: "1px solid rgba(124,58,237,0.3)",
-                background: "linear-gradient(180deg, rgba(76,29,149,0.4), rgba(76,29,149,0.15))",
-                color: "#e9d5ff", fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
-                textTransform: "uppercase",
-              }}
-              title={poolDrawerOpen ? "Click to collapse pool" : "Click to expand pool"}
-            >
-              <span style={{ fontSize: 16 }}>📚</span>
-              Artist Pool ({artistPool.length})
-              <span style={{ fontSize: 12, opacity: 0.7 }}>{poolDrawerOpen ? "▲" : "▼"}</span>
-            </button>
-            {poolDrawerOpen && (
-              <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.4)", border: "1px solid rgba(124,58,237,0.15)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length})</div>
-                  {/* v197.13: Quick Turnaround (port_1) — free pool refresh once per turn */}
-                  {(() => {
-                    if (!hasInfraReward(currentPlayerId, "port_1")) return null;
-                    const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
-                    const used = infraRewardUsageRef.current[usageKey];
-                    return <button onClick={() => {
-                      if (used) return;
-                      infraRewardUsageRef.current[usageKey] = true;
-                      refreshPool();
-                      addLog("🏗️ Reward", `${currentPlayer.festivalName}: refreshed pool via Quick Turnaround (Most Portaloos)`);
-                    }} disabled={used} style={{
-                      ...bs, fontSize: 11, padding: "6px 12px",
-                      opacity: used ? 0.4 : 1,
-                      cursor: used ? "not-allowed" : "pointer",
-                      background: used ? "#2a2a4a" : "rgba(251,146,60,0.2)",
-                      border: used ? "1px solid #334155" : "1px solid rgba(251,146,60,0.5)",
-                      color: used ? "#94a3b8" : "#fb923c",
-                    }} title={used ? "Already used this turn" : "Refresh the artist pool for free (once per turn)"}>
-                      🔄 {used ? "Used" : "Refresh Pool"}
-                    </button>;
-                  })()}
-                </div>
-                <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
-                  {/* Deck slot visual — grey card to the left of pool, representing the artist deck. */}
-                  <div style={{
-                    minWidth: isMobile ? 100 : 85,
-                    width: isMobile ? 100 : 85,
-                    minHeight: isMobile ? 185 : 155,
-                    borderRadius: 10,
-                    background: "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
-                    border: "1px dashed rgba(148,163,184,0.3)",
-                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                    gap: 4, flexShrink: 0, color: "#94a3b8",
-                  }}>
-                    <div style={{ fontSize: 24, opacity: 0.5 }}>🎴</div>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                    <div style={{ fontSize: 14, fontWeight: 900, color: "#c4b5fd" }}>{artistDeck.length}</div>
+          {/* v199.72/v199.73: Pool Drawer — collapsible at top of main area. Default open.
+              Shows deck slot (left) + pool cards. Click the header bar to toggle.
+              v199.73: when open, content is absolute-positioned so it overlays the center
+              without pushing it down. z-index keeps it above the Starlight Arena beneath.
+              v199.73: when in Browse mode (artistAction === "draw2"), deck slot and pool
+              cards are clickable — this IS the Browse UI now. */}
+          {(() => {
+            const inBrowseMode = turnAction === "artist" && artistAction === "draw2" && !actionTaken;
+            const canBrowsePool = inBrowseMode && draw2Picks.length === 0;
+            const canBrowseDeck = inBrowseMode && draw2Picks.length === 0 && artistDeck.length > 0;
+            return <div style={{ marginBottom: 10, position: "relative" }}>
+              <button
+                onClick={() => setPoolDrawerOpen(!poolDrawerOpen)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  padding: "10px 16px", borderRadius: 10,
+                  border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.6)" : "rgba(124,58,237,0.3)"}`,
+                  background: inBrowseMode
+                    ? "linear-gradient(180deg, rgba(21,128,61,0.5), rgba(21,128,61,0.2))"
+                    : "linear-gradient(180deg, rgba(76,29,149,0.4), rgba(76,29,149,0.15))",
+                  color: inBrowseMode ? "#bbf7d0" : "#e9d5ff",
+                  fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
+                  textTransform: "uppercase",
+                  boxShadow: inBrowseMode ? "0 0 12px rgba(34,197,94,0.35)" : "none",
+                }}
+                title={poolDrawerOpen ? "Click to collapse pool" : "Click to expand pool"}
+              >
+                <span style={{ fontSize: 16 }}>{inBrowseMode ? "🎤" : "📚"}</span>
+                {inBrowseMode ? "Browsing — click deck or pool card" : `Artist Pool (${artistPool.length})`}
+                <span style={{ fontSize: 12, opacity: 0.7 }}>{poolDrawerOpen ? "▲" : "▼"}</span>
+              </button>
+              {poolDrawerOpen && (
+                <div style={{
+                  position: "absolute",
+                  top: "calc(100% + 10px)", left: 0, right: 0,
+                  zIndex: 20,
+                  padding: 12, borderRadius: 10,
+                  background: "rgba(15,14,26,0.96)",
+                  border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.3)" : "rgba(124,58,237,0.25)"}`,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                  backdropFilter: "blur(4px)",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length})</div>
+                    {(() => {
+                      if (!hasInfraReward(currentPlayerId, "port_1")) return null;
+                      const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
+                      const used = infraRewardUsageRef.current[usageKey];
+                      return <button onClick={() => {
+                        if (used) return;
+                        infraRewardUsageRef.current[usageKey] = true;
+                        refreshPool();
+                        addLog("🏗️ Reward", `${currentPlayer.festivalName}: refreshed pool via Quick Turnaround (Most Portaloos)`);
+                      }} disabled={used} style={{
+                        ...bs, fontSize: 11, padding: "6px 12px",
+                        opacity: used ? 0.4 : 1,
+                        cursor: used ? "not-allowed" : "pointer",
+                        background: used ? "#2a2a4a" : "rgba(251,146,60,0.2)",
+                        border: used ? "1px solid #334155" : "1px solid rgba(251,146,60,0.5)",
+                        color: used ? "#94a3b8" : "#fb923c",
+                      }} title={used ? "Already used this turn" : "Refresh the artist pool for free (once per turn)"}>
+                        🔄 {used ? "Used" : "Refresh Pool"}
+                      </button>;
+                    })()}
                   </div>
-                  {artistPool.map((a, i) => {
-                    const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
-                    return <div key={i} style={{ position: "relative" }}>
-                      <ArtistCard artist={a} showCost small
-                        affordable={canBookArtistAnywhere(a, currentPD)}
-                        genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                        disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
-                        onClick={() => { if (artistAction === null && !actionTaken) {} }}
-                      />
-                      {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
-                        {agentsOnThis.map(([pid, p], ai) => {
-                          const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
-                          return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
-                        })}
-                      </div>}
-                    </div>;
-                  })}
-                  {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
+                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
+                    {/* Deck slot — click to draw when in Browse mode. */}
+                    <div
+                      onClick={() => { if (canBrowseDeck) draw2PickFromDeck(); }}
+                      style={{
+                        minWidth: isMobile ? 100 : 85,
+                        width: isMobile ? 100 : 85,
+                        minHeight: isMobile ? 155 : 130,
+                        borderRadius: 10,
+                        background: canBrowseDeck
+                          ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
+                          : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
+                        border: canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        gap: 4, flexShrink: 0,
+                        color: canBrowseDeck ? "#bbf7d0" : "#94a3b8",
+                        cursor: canBrowseDeck ? "pointer" : "default",
+                        boxShadow: canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
+                        animation: canBrowseDeck ? "affordPulse 2s ease-in-out infinite" : "none",
+                      }}
+                      title={canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
+                    >
+                      <div style={{ fontSize: 24, opacity: canBrowseDeck ? 1 : 0.5 }}>🎴</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
+                      <div style={{ fontSize: 14, fontWeight: 900, color: canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                      {canBrowseDeck && <div style={{ fontSize: 9, color: "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                    </div>
+                    {artistPool.map((a, i) => {
+                      const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
+                      const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
+                      const browseClickable = canBrowsePool && !claimedByOther;
+                      return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
+                        <ArtistCard artist={a} showCost small
+                          affordable={browseClickable ? true : canBookArtistAnywhere(a, currentPD)}
+                          genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                          disabled={!browseClickable && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
+                          onClick={browseClickable
+                            ? () => draw2PickFromPool(i)
+                            : () => { if (artistAction === null && !actionTaken) {} }}
+                        />
+                        {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
+                          {agentsOnThis.map(([pid, p], ai) => {
+                            const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
+                            return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
+                          })}
+                        </div>}
+                      </div>;
+                    })}
+                    {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>;
+          })()}
           <div style={{ marginBottom: 10, textAlign: "center" }}>
             <h2 style={{ color: "#fbbf24", fontSize: isMobile ? 22 : 20, margin: 0 }}>{currentPlayer?.festivalName}'s Turn</h2>
             <p style={{ color: "#8b5cf6", fontSize: isMobile ? 13 : 12, margin: "4px 0" }}>
@@ -16915,24 +16953,20 @@ export default function Headliners() {
             if (totalItems === 0) return null;
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
-            return <div style={{ marginTop: 10 }}>
-              <button
-                onClick={() => setShowHand(!showHand)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                  padding: "10px 16px", borderRadius: 10, border: "1px solid rgba(236,72,153,0.3)",
-                  background: "linear-gradient(0deg, rgba(131,24,67,0.4), rgba(131,24,67,0.15))",
-                  color: "#fbcfe8", fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
-                  textTransform: "uppercase",
-                }}
-                title={showHand ? "Click to collapse hand" : "Click to expand hand"}
-              >
-                <span style={{ fontSize: 16 }}>✋</span>
-                Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
-                <span style={{ fontSize: 12, opacity: 0.7 }}>{showHand ? "▼" : "▲"}</span>
-              </button>
+            return <div style={{ marginTop: 10, position: "relative" }}>
+              {/* v199.73: expanded hand content positioned ABOVE the tab button (opens upward)
+                  using absolute positioning, so it overlays rather than pushes layout. */}
               {showHand && (
-                <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.4)", border: "1px solid rgba(236,72,153,0.15)" }}>
+                <div style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 10px)", left: 0, right: 0,
+                  zIndex: 20,
+                  padding: 12, borderRadius: 10,
+                  background: "rgba(15,14,26,0.96)",
+                  border: "1px solid rgba(236,72,153,0.25)",
+                  boxShadow: "0 -10px 30px rgba(0,0,0,0.5)",
+                  backdropFilter: "blur(4px)",
+                }}>
                   <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
                     {handCards.map((a, i) => a.isFavour
                       ? <ArtistCard key={`a-${i}`} artist={a} small
@@ -16977,6 +17011,24 @@ export default function Headliners() {
                   )}
                 </div>
               )}
+              {/* v199.73: hand toggle button — stays in flow at the bottom of main area.
+                  When clicked, the expanded content appears ABOVE this button via absolute
+                  positioning (see the showHand block earlier). */}
+              <button
+                onClick={() => setShowHand(!showHand)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  padding: "10px 16px", borderRadius: 10, border: "1px solid rgba(236,72,153,0.3)",
+                  background: "linear-gradient(0deg, rgba(131,24,67,0.4), rgba(131,24,67,0.15))",
+                  color: "#fbcfe8", fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+                title={showHand ? "Click to collapse hand" : "Click to expand hand"}
+              >
+                <span style={{ fontSize: 16 }}>✋</span>
+                Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
+                <span style={{ fontSize: 12, opacity: 0.7 }}>{showHand ? "▼" : "▲"}</span>
+              </button>
             </div>;
           })()}
 
