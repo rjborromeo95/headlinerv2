@@ -513,6 +513,61 @@ const ALL_OBJECTIVES = [
 
 const FAME_VP = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
 
+// ═══════════════════════════════════════════════════════════════════
+// v199.95: FAME CARDS SYSTEM (Quick Play only)
+// Each Fame card has a trigger (when it fires) and an effect (what it does).
+// Players draw one when they gain Fame (via microtrend claim or Fame die), choosing
+// 1 of 3 drawn from the deck. Max 5 cards per player (hard cap at the fame cap).
+// Categories: you_may (manual), after_build / after_browse / after_book (auto on action),
+// reactive (fire at next turn start if opp did X), season_start (one-shot per season),
+// game_end (ticket scoring at final tally).
+// ═══════════════════════════════════════════════════════════════════
+const FAME_CARDS = [
+  // YOU MAY — manual activation, 0 action cost
+  { id: "FM_REFRESH_POOL",     name: "Refresh Pool",             category: "you_may",      trigger: "any_time",   effect: "refresh_pool",                             copies: 4, desc: "On your turn (any time): refresh the artist pool." },
+  { id: "FM_REFRESH_DIE",      name: "Refresh Die",              category: "you_may",      trigger: "any_time",   effect: "refresh_die",                              copies: 4, desc: "On your turn (any time): refresh the amenity die." },
+  // AFTER BUILD
+  { id: "FM_BUILD_AMENITY",    name: "After Build +1 Amenity",   category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",                   copies: 2, desc: "After you take the Build action: gain another amenity from the die." },
+  { id: "FM_BUILD_DRAW2",      name: "After Build Draw 2",       category: "after_build",  trigger: "after_build", effect: "draw_2_artists",                          copies: 4, desc: "After you take the Build action: draw 2 artists." },
+  // AFTER BROWSE
+  { id: "FM_BROWSE_AMENITY",   name: "After Browse +1 Amenity",  category: "after_browse", trigger: "after_browse", effect: "gain_amenity_from_die",                  copies: 2, desc: "After you take the Browse action: gain an amenity from the die." },
+  { id: "FM_BROWSE_DRAW2",     name: "After Browse Draw 2",      category: "after_browse", trigger: "after_browse", effect: "draw_2_artists",                         copies: 4, desc: "After you take the Browse action: draw 2 artists." },
+  // AFTER BOOK (Buy Artist)
+  { id: "FM_BOOK_DRAW_GENRE",  name: "After Book Draw Genre",    category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",                copies: 4, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
+  { id: "FM_BOOK_PLACE_AM",    name: "After Book +1 Amenity",    category: "after_book",   trigger: "after_book",  effect: "place_amenity_from_die",                  copies: 2, desc: "After you book an artist: place an amenity from the amenity die." },
+  // WHEN ANOTHER PLAYER (reactive, fires at your next turn start)
+  { id: "FM_REACT_BUILD",      name: "Opp Build → Copy Amenity", category: "reactive",     trigger: "opp_build",   effect: "gain_copy_amenity",                       copies: 2, desc: "When another player builds an amenity, gain a copy of that amenity." },
+  { id: "FM_REACT_BOOK",       name: "Opp Book → Draw 2",        category: "reactive",     trigger: "opp_book",    effect: "draw_2_from_pool",                        copies: 2, desc: "When another player books an artist, draw 2 artists from the pool." },
+  { id: "FM_REACT_BROWSE",     name: "Opp Browse → Draw 1",      category: "reactive",     trigger: "opp_browse",  effect: "draw_1_from_pool",                        copies: 2, desc: "When another player browses the pool, draw an artist from the pool." },
+  // ON SEASON START — one-shot per season
+  { id: "FM_SS_DISCARD_1",     name: "Season: Discard, Gain",    category: "season_start", trigger: "season_start", effect: "ss_discard_1_gain_missing_cost",         copies: 1, desc: "Season start: discard an artist. Gain 1 amenity in that artist's cost you are missing." },
+  { id: "FM_SS_DISCARD_2",     name: "Season: Discard 2, Place", category: "season_start", trigger: "season_start", effect: "ss_discard_2_place_any",                 copies: 1, desc: "Season start: discard 2 artists. Place an amenity of your choice." },
+  { id: "FM_SS_DISCARD_AM",    name: "Season: Amen 2, Draw 3",   category: "season_start", trigger: "season_start", effect: "ss_discard_2_amenities_draw_3",          copies: 1, desc: "Season start: discard 2 amenities. Draw 3 artists." },
+  { id: "FM_SS_NEW_STAGE",     name: "Season: Open Stage",       category: "season_start", trigger: "season_start", effect: "ss_open_stage",                          copies: 1, desc: "Season start: open a new stage (max 3 total)." },
+  { id: "FM_SS_CYCLE",         name: "Season: Discard N, Draw N",category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",                    copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
+  { id: "FM_SS_RECLAIM",       name: "Season: Reclaim 2",        category: "season_start", trigger: "season_start", effect: "ss_draw_2_from_discard",                 copies: 1, desc: "Season start: draw 2 artists from the discard." },
+  { id: "FM_SS_PLAY_FREE",     name: "Season: Free Play",        category: "season_start", trigger: "season_start", effect: "ss_play_free_artist",                    copies: 1, desc: "Season start: play an artist (that you can afford) on an empty stage." },
+  // GAME END — ticket scoring
+  { id: "FM_END_10",           name: "End +10 Tickets",          category: "game_end",     trigger: "game_end",    effect: "end_10",                                  copies: 2, desc: "Game end: sell 10 tickets." },
+  { id: "FM_END_CAT",          name: "End +2/Catering",          category: "game_end",     trigger: "game_end",    effect: "end_per_catering",                        copies: 2, desc: "Game end: sell 2 tickets per catering van." },
+  { id: "FM_END_SEC",          name: "End +2/Security",          category: "game_end",     trigger: "game_end",    effect: "end_per_security",                        copies: 2, desc: "Game end: sell 2 tickets per security." },
+  { id: "FM_END_PORT",         name: "End +2/Portaloo",          category: "game_end",     trigger: "game_end",    effect: "end_per_portaloo",                        copies: 2, desc: "Game end: sell 2 tickets per portaloo." },
+  { id: "FM_END_STAGE",        name: "End +3/Stage",             category: "game_end",     trigger: "game_end",    effect: "end_per_stage",                           copies: 2, desc: "Game end: sell 3 tickets per stage." },
+  { id: "FM_END_HEAD",         name: "End +2/Headliner",         category: "game_end",     trigger: "game_end",    effect: "end_per_headliner",                       copies: 2, desc: "Game end: sell 2 tickets per headliner you have played." },
+  { id: "FM_END_FAME",         name: "End +2/Fame",              category: "game_end",     trigger: "game_end",    effect: "end_per_fame",                            copies: 2, desc: "Game end: sell 2 tickets per Fame you have." },
+  { id: "FM_END_PAIR_CS",      name: "End +3/Cat+Sec pair",      category: "game_end",     trigger: "game_end",    effect: "end_pair_cat_sec",                        copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and security." },
+  { id: "FM_END_PAIR_SP",      name: "End +3/Sec+Port pair",     category: "game_end",     trigger: "game_end",    effect: "end_pair_sec_port",                       copies: 1, desc: "Game end: sell 3 tickets for every pair of security and portaloos." },
+  { id: "FM_END_PAIR_CP",      name: "End +3/Cat+Port pair",     category: "game_end",     trigger: "game_end",    effect: "end_pair_cat_port",                       copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
+];
+// Expand to deck instances (each unique × copies).
+function buildFameDeck() {
+  const deck = [];
+  FAME_CARDS.forEach(c => { for (let i = 0; i < c.copies; i++) deck.push({ ...c, instanceId: `${c.id}#${i}` }); });
+  // Fisher-Yates shuffle
+  for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+  return deck;
+}
+
 const LINEUP_GENRE_DECK = ["Pop","Pop","Pop","Rock","Rock","Rock","Hip Hop","Hip Hop","Hip Hop","Electronic","Electronic","Electronic","Indie","Indie","Indie","Funk","Funk","Funk"];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3145,6 +3200,16 @@ export default function Headliners() {
         addLog("🏗️ Reward", `${festName}: +${amount} 🎟️ from VIP Passes (Most Catering) — ${source}`);
       }, 0);
     }
+    // v199.95: Quick Play — each unit of positive Fame gained triggers a Fame card draw
+    // (pick 1 of 3). Defer by one tick so this runs after the fame-number increment
+    // commits, preventing race conditions.
+    if (gameModeRef.current === "quickYear" && amount > 0) {
+      setTimeout(() => {
+        for (let i = 0; i < amount; i++) {
+          drawFameCardsForPlayer(pid, source);
+        }
+      }, 80);
+    }
     // Popup queue only for POSITIVE human-facing gains. Losses and AI-side changes
     // are silent (no popup) but still recorded in the ledger above.
     if (amount <= 0) return;
@@ -3154,6 +3219,127 @@ export default function Headliners() {
   };
   // Convenience wrapper for negative fame — same ledger, no popup.
   const logFameLoss = (pid, amount, source, yearOverride) => logFameGain(pid, -Math.abs(amount), source, yearOverride);
+
+  // v199.95: Fame card draw helpers. drawFameCardsForPlayer pulls top 3 from the deck
+  // and opens the pick-1-of-3 modal. pickFameCard commits the choice to the player and
+  // sends the other 2 to the discard pile. Humans see the modal; AI will be auto-picked
+  // in a later phase (v199.98). For now, if an AI gains Fame we auto-pick a random one.
+  const drawFameCardsForPlayer = (pid, source) => {
+    if (gameModeRef.current !== "quickYear") return;
+    // Hard cap at 5 cards per player — mirrors the Fame cap.
+    const current = (playerFameCardsRef.current[pid] || []);
+    if (current.length >= 5) {
+      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (5/5). ${source || "Fame gain"} skipped.`);
+      return;
+    }
+    const player = players.find(pl => pl.id === pid);
+    // Draw top 3 from deck. If the deck is low, reshuffle discard into it.
+    setFameDeck(prev => {
+      let deck = [...prev];
+      if (deck.length < 3) {
+        // Reshuffle discard back in.
+        const disc = fameDiscardPile;
+        if (disc.length > 0) {
+          deck = [...deck, ...disc];
+          for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+          setFameDiscardPile([]);
+          addLog("🔥 Fame", "Fame deck reshuffled.");
+        }
+      }
+      if (deck.length === 0) {
+        addLog("🔥 Fame", `${player?.festivalName || "?"}: Fame deck is exhausted. Draw skipped.`);
+        return prev;
+      }
+      const take = Math.min(3, deck.length);
+      const choices = deck.slice(0, take);
+      const remaining = deck.slice(take);
+      // Open the modal (human) or auto-pick (AI).
+      if (player && player.isAI) {
+        // AI heuristic placeholder for v199.95: pick a random card. Smarter in v199.98.
+        const pickIdx = Math.floor(Math.random() * choices.length);
+        const picked = choices[pickIdx];
+        const discards = choices.filter((_, i) => i !== pickIdx);
+        setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+        setFameDiscardPile(d => [...d, ...discards]);
+        addLog("🔥 Fame", `${player.festivalName}: drew Fame card "${picked.name}" (auto-pick).`);
+      } else {
+        setFameDrawModal({ pid, choices });
+      }
+      return remaining;
+    });
+  };
+  const pickFameCard = (pid, cardIdx) => {
+    if (!fameDrawModal || fameDrawModal.pid !== pid) return;
+    const picked = fameDrawModal.choices[cardIdx];
+    const discards = fameDrawModal.choices.filter((_, i) => i !== cardIdx);
+    setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+    setFameDiscardPile(d => [...d, ...discards]);
+    setFameDrawModal(null);
+    addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame card "${picked.name}".`);
+  };
+  // v199.95: Fame card effect dispatcher. Only the simplest effects (artist draws) are
+  // wired in this build; amenity-die, YOU MAY, reactive, season_start, and game_end
+  // effects defer to later phases with a TODO log entry.
+  const fireFameCardEffect = (pid, card, ctx) => {
+    const player = players.find(pl => pl.id === pid);
+    const festName = player?.festivalName || "?";
+    switch (card.effect) {
+      case "draw_2_artists": {
+        // Draw 2 artists from the deck into the player's hand.
+        setArtistDeck(deck => {
+          if (deck.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty, no draws.`);
+            return deck;
+          }
+          const take = Math.min(2, deck.length);
+          const drawn = deck.slice(0, take);
+          const remaining = deck.slice(take);
+          setPlayerData(pd => {
+            const curHand = pd[pid]?.hand || [];
+            return { ...pd, [pid]: { ...pd[pid], hand: [...curHand, ...drawn] } };
+          });
+          addLog("🔥 Fame", `${festName}: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")}.`);
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: +${take} artist${take === 1 ? "" : "s"}`, "#c084fc");
+          return remaining;
+        });
+        break;
+      }
+      case "draw_keep_if_genre_match": {
+        // Draw 1 artist. Keep if any genre matches the just-booked artist's genres; else discard.
+        const bookedArtist = ctx?.bookedArtist;
+        if (!bookedArtist) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no booked artist context, skipped.`);
+          return;
+        }
+        const bookedGenres = Array.isArray(bookedArtist.genre) ? bookedArtist.genre : [bookedArtist.genre].filter(Boolean);
+        setArtistDeck(deck => {
+          if (deck.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty.`);
+            return deck;
+          }
+          const drawn = deck[0];
+          const remaining = deck.slice(1);
+          const drawnGenres = Array.isArray(drawn.genre) ? drawn.genre : [drawn.genre].filter(Boolean);
+          const matches = drawnGenres.some(g => bookedGenres.includes(g));
+          if (matches) {
+            setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
+            addLog("🔥 Fame", `${festName}: "${card.name}" → kept ${drawn.name} (genre match with ${bookedArtist.name}).`);
+            if (!player?.isAI) showFloatingBonus(`🔥 Kept ${drawn.name} (genre match)`, "#c084fc");
+          } else {
+            setDiscardPile(dp => [...dp, drawn]);
+            addLog("🔥 Fame", `${festName}: "${card.name}" → drew ${drawn.name}, no genre match, discarded.`);
+          }
+          return remaining;
+        });
+        break;
+      }
+      default: {
+        // Not yet wired — log a TODO for the next phase.
+        addLog("🔥 Fame", `${festName}: "${card.name}" effect "${card.effect}" not yet implemented (deferred to v199.96+).`);
+        break;
+      }
+    }
+  };
 
   // v155/v166: stage-open credits. Progress toward the next stage comes from:
   //   (a) claiming a microtrend (any kind — active, forecast, amenity)
@@ -3749,6 +3935,15 @@ export default function Headliners() {
   // + Actions panel + deck info + supporting panels. "objectives" hides those and surfaces
   // the Legendary Lineup panel instead. Toggle button sits under the microtrend banner.
   const [sidebarView, setSidebarView] = useState("default");
+  // v199.95: Fame card system state. fameDeck is the shuffled draw pile, fameDiscardPile
+  // holds discards (unused when a player picks 1 of 3), playerFameCards maps pid → [cards]
+  // (max 5 per player). fameDrawModal is the "pick 1 of 3" modal state: { pid, choices: [3] }.
+  const [fameDeck, setFameDeck] = useState([]);
+  const [fameDiscardPile, setFameDiscardPile] = useState([]);
+  const [playerFameCards, setPlayerFameCards] = useState({});
+  const [fameDrawModal, setFameDrawModal] = useState(null);
+  const playerFameCardsRef = useRef({});
+  useEffect(() => { playerFameCardsRef.current = playerFameCards; }, [playerFameCards]);
   const [showYearAnnouncement, setShowYearAnnouncement] = useState(false);
 
   const [viewingPlayerId, setViewingPlayerId] = useState(null);
@@ -4151,23 +4346,31 @@ export default function Headliners() {
   //   Fame 4-5 → same as 2-3 PLUS can refresh dice / pool (free, 1/turn each; gated separately)
   const getFameAmenityMax = (pd) => {
     const fame = pd?.fame || 0;
+    // v199.95: Quick Play — Fame-tier amenity scaling REMOVED. All players get 1 amenity
+    // per Build action; the +1 is now a Fame CARD effect ("After Build: gain another
+    // amenity from the die") rather than an automatic tier perk. Classic multi-year
+    // keeps the old 2+ scaling.
     if (gameModeRef.current === "quickYear") {
-      return fame >= 2 ? 2 : 1;
+      return 1;
     }
     return fame >= 2 ? 2 : 1;
   };
   const getFameArtistMax = (pd) => {
     const fame = pd?.fame || 0;
+    // v199.95: Quick Play — Fame-tier artist-draw scaling REMOVED. All players draw 2
+    // artists per Browse action; the +1 is now a Fame CARD effect ("After Browse: draw
+    // 2 artists"). Classic multi-year keeps the old 2+ scaling.
     if (gameModeRef.current === "quickYear") {
-      return fame >= 2 ? 3 : 2;
+      return 2;
     }
     if (fame >= 2) return 2;
     return 1;
   };
-  // v199.24: Fame 4+ unlocks a "refresh the artist pool" action during artist picks.
-  // Refresh keeps artists that have been "approached" (an agent placed on them via tempt);
-  // all other pool artists are swapped for fresh deck draws. Usable once per artist action.
-  const canUsePoolRefresh = (pd) => (pd?.fame || 0) >= 4;
+  // v199.24/v199.95: Fame 4+ pool refresh REMOVED in Quick Play — now a Fame CARD effect
+  // ("Refresh the artist pool at any time"). Classic multi-year is unaffected (never had
+  // this perk anyway — it was Quick-Play-only). Function kept returning false to avoid
+  // breaking downstream references; call sites gated on gameMode will skip the perk UI.
+  const canUsePoolRefresh = (pd) => false;
 
   // v199.4: season-stat tracking removed with the objective pool. These functions used to
   // accumulate per-season metric counters for drawn objectives; season scoring is now a flat
@@ -9755,6 +9958,20 @@ export default function Headliners() {
     const pool = fullDeck.splice(0, 5);
     setArtistDeck(fullDeck); setArtistPool(pool); setDiscardPile([]);
 
+    // v199.95: initialize the Fame card deck for Quick Play. Build the full deck of all
+    // card instances (unique × copies), shuffle, and clear per-player Fame card arrays.
+    // Classic multi-year uses the old Fame-number system; no Fame deck is built there.
+    if (gameModeRef.current === "quickYear") {
+      const deck = buildFameDeck();
+      setFameDeck(deck);
+      setFameDiscardPile([]);
+      const emptyFameCards = {};
+      players.forEach(p => { emptyFameCards[p.id] = []; });
+      setPlayerFameCards(emptyFameCards);
+      playerFameCardsRef.current = emptyFameCards;
+      addLog("🔥 Fame Cards", `Fame card deck built — ${deck.length} cards. Complete a microtrend or roll a Fame die to draw 3 and pick 1.`);
+    }
+
     // v197.12: Roll infrastructure rewards if the mode is enabled. One reward variant
     // per amenity type is chosen randomly from that type's 3 options — this determines
     // what benefits are on offer for the rest of the game. Broadcast to log so players
@@ -12036,6 +12253,12 @@ export default function Headliners() {
   // future compatibility) treats each action as a full turn as before.
   const completeAction = () => {
     if (gameModeRef.current === "quickYear") {
+      // v199.95: capture which action JUST completed so we can fire the matching
+      // after-action Fame card triggers before state resets wipe this info.
+      const _wasBuild = turnAction === "pickAmenity";
+      const _wasBook = turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && selectedArtist;
+      const _wasBrowse = turnAction === "artist" && artistAction === "draw2";
+      const _bookedArtist = _wasBook ? selectedArtist?.artist : null;
       const newActions = Math.max(0, actionsLeftRef.current - 1);
       setActionsLeftThisTurn(newActions);
       actionsLeftRef.current = newActions;
@@ -12050,6 +12273,18 @@ export default function Headliners() {
       setQyDrewThisAction(false);
       qyDrewThisActionRef.current = false;
       setTimeout(() => recalcTickets(), 50);
+      // v199.95: fire the matching after-action Fame card triggers for the current player.
+      // Deferred so action state resets commit first.
+      const trigPid = currentPlayerId;
+      setTimeout(() => {
+        const cards = (playerFameCardsRef.current[trigPid] || []);
+        if (cards.length === 0) return;
+        const triggerType = _wasBuild ? "after_build" : _wasBook ? "after_book" : _wasBrowse ? "after_browse" : null;
+        if (!triggerType) return;
+        cards.filter(c => c.trigger === triggerType).forEach(c => {
+          fireFameCardEffect(trigPid, c, { bookedArtist: _bookedArtist });
+        });
+      }, 120);
       if (newActions <= 0) {
         // Both actions used — mark actionTaken so End Turn button appears.
         setActionTaken(true);
@@ -16491,66 +16726,65 @@ export default function Headliners() {
                 animation: "slideRightIn 0.18s ease-out",
                 gap: 10,
               }}>
-                <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray</div>
-                {/* v199.82: Fame tray extends into main area with 340px fixed width — stars
-                    at 32px, benefit badges at 10px, generous padding. */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, alignItems: "end" }}>
-                  {[1,2,3,4,5].map(i => {
-                    const filled = i <= fame;
-                    const isTierStart = i === 2 || i === 4;
-                    const tierReached = isTierStart && fame >= i;
-                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                      {/* Tier benefit indicator ABOVE the star */}
-                      {i === 2 && <div style={{
-                        fontSize: 10, lineHeight: 1.25,
-                        color: tierReached ? "#86efac" : "#64748b",
-                        fontWeight: 700,
-                        textAlign: "center",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.4,
-                        padding: "6px 4px",
-                        borderRadius: 8,
-                        background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
-                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
-                        minHeight: 48,
-                        display: "flex", flexDirection: "column", justifyContent: "center",
-                        width: "100%",
-                      }} title={tierReached ? "Fame 2-3 tier benefits active" : "Reach Fame 2 to unlock"}>
-                        <div>+1 amen</div>
-                        <div>+1 draw</div>
-                      </div>}
-                      {i === 4 && <div style={{
-                        fontSize: 10, lineHeight: 1.25,
-                        color: tierReached ? "#86efac" : "#64748b",
-                        fontWeight: 700,
-                        textAlign: "center",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.4,
-                        padding: "6px 4px",
-                        borderRadius: 8,
-                        background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
-                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
-                        minHeight: 48,
-                        display: "flex", flexDirection: "column", justifyContent: "center",
-                        width: "100%",
-                      }} title={tierReached ? "Fame 4-5 tier benefits active" : "Reach Fame 4 to unlock"}>
-                        <div>pool +</div>
-                        <div>dice</div>
-                      </div>}
-                      {/* Blank spacers at non-tier positions keep the stars aligned to the same baseline. */}
-                      {!isTierStart && <div style={{ minHeight: 48 }} />}
-                      {/* The star itself — big and glowy now */}
-                      <span style={{
-                        fontSize: 32,
-                        color: filled ? "#fbbf24" : "#312e81",
-                        textShadow: filled ? "0 0 10px rgba(251,191,36,0.8)" : "none",
-                        lineHeight: 1,
-                        transition: "all 0.2s",
-                      }}>★</span>
+                <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray · {(playerFameCards[currentPlayerId] || []).length}/5</div>
+                {/* v199.95: Fame tray shows the player's actual drawn Fame cards. Each slot
+                    shows the card name + a short effect summary. Empty slots are dim stars
+                    (fame not yet earned). Max 5 cards. */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, alignItems: "stretch" }}>
+                  {[0,1,2,3,4].map(i => {
+                    const card = (playerFameCards[currentPlayerId] || [])[i];
+                    const empty = !card;
+                    const catBg = card ? (
+                      card.category === "you_may"      ? "linear-gradient(180deg, #78350f, #431407)"  :
+                      card.category === "after_build"  ? "linear-gradient(180deg, #4c1d95, #2e1065)"  :
+                      card.category === "after_browse" ? "linear-gradient(180deg, #14532d, #052e16)"  :
+                      card.category === "after_book"   ? "linear-gradient(180deg, #831843, #500724)"  :
+                      card.category === "reactive"     ? "linear-gradient(180deg, #164e63, #083344)"  :
+                      card.category === "season_start" ? "linear-gradient(180deg, #713f12, #422006)"  :
+                                                         "linear-gradient(180deg, #581c87, #3b0764)"
+                    ) : "rgba(49,46,129,0.3)";
+                    const catBorder = card ? (
+                      card.category === "you_may"      ? "#f59e0b" :
+                      card.category === "after_build"  ? "#a78bfa" :
+                      card.category === "after_browse" ? "#4ade80" :
+                      card.category === "after_book"   ? "#ec4899" :
+                      card.category === "reactive"     ? "#06b6d4" :
+                      card.category === "season_start" ? "#fbbf24" :
+                                                         "#c084fc"
+                    ) : "rgba(100,116,139,0.3)";
+                    return <div key={i} style={{
+                      display: "flex", flexDirection: "column",
+                      padding: 4, borderRadius: 6,
+                      background: catBg,
+                      border: `1px solid ${catBorder}`,
+                      minHeight: 86,
+                      justifyContent: empty ? "center" : "flex-start",
+                      gap: 2,
+                      transition: "all 0.2s",
+                    }} title={card ? `${card.name} — ${card.desc}` : "Empty slot — gain Fame to draw a card"}>
+                      {empty ? (
+                        <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                            {card.category === "you_may" ? "You may" :
+                             card.category === "after_build" ? "After Build" :
+                             card.category === "after_browse" ? "After Browse" :
+                             card.category === "after_book" ? "After Book" :
+                             card.category === "reactive" ? "Reactive" :
+                             card.category === "season_start" ? "Season" : "End"}
+                          </div>
+                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
+                          </div>
+                        </>
+                      )}
                     </div>;
                   })}
                 </div>
-                <div style={{ fontSize: 10, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
+                <div style={{ fontSize: 9, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>
+                  Deck: {fameDeck.length} · Discard: {fameDiscardPile.length}
+                </div>
               </div>, document.body)}
             </div>;
           })()}
@@ -17550,19 +17784,10 @@ export default function Headliners() {
               </div>
             </div>}
 
-            {/* v199.83: Quick Play standalone Fame 4+ dice refresh perk (preserved from the
-                Pick Amenity block which is now Classic-only). */}
-            {gameModeRef.current === "quickYear" && !actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && (currentPD?.fame || 0) >= 4 && (
-              <div style={{ marginBottom: 10, textAlign: "center" }}>
-                <button
-                  onClick={handleFameDiceRefresh}
-                  disabled={qyDiceRefreshUsed}
-                  style={{ ...bs, fontSize: 11, padding: "6px 12px", background: qyDiceRefreshUsed ? "rgba(100,116,139,0.08)" : "rgba(251,191,36,0.15)", border: `1px solid ${qyDiceRefreshUsed ? "#475569" : "#fbbf24"}`, color: qyDiceRefreshUsed ? "#64748b" : "#fcd34d", cursor: qyDiceRefreshUsed ? "not-allowed" : "pointer", fontWeight: 700 }}
-                >
-                  {qyDiceRefreshUsed ? "🔥 Dice refresh used this turn" : "🔥 Fame 4+ perk — Refresh dice (free, 1/turn)"}
-                </button>
-              </div>
-            )}
+            {/* v199.83/v199.95: Fame 4+ dice refresh perk REMOVED from Quick Play — this
+                is now a Fame CARD effect ("Refresh the amenity die at any time") rather
+                than an automatic tier bonus. The handler and reroll logic remain for the
+                Fame-card trigger to call in v199.96+. */}
 
             {/* Pick Amenity — v199.83: Quick Play uses the dice in the top drawer, so this
                 center block is gated to Classic multi-year only. In Quick Play the dice
@@ -17750,6 +17975,59 @@ export default function Headliners() {
                 </div>
               </div>;
             })(), document.body)}
+
+            {/* v199.95: Fame card draw-3-pick-1 modal. Opens when a human gains Fame
+                (microtrend claim or Fame die). Player picks 1 of 3 drawn cards; the
+                other 2 go to the Fame discard pile. */}
+            {fameDrawModal && fameDrawModal.pid === currentPlayerId && typeof document !== "undefined" && createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s", overflowY: "auto" }}>
+              <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.25))", border: "2px solid #a78bfa", boxShadow: "0 0 50px rgba(167,139,250,0.3)", maxWidth: 820, width: "100%", margin: "auto" }}>
+                <div style={{ textAlign: "center", marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 Fame Card Draw</div>
+                  <h2 style={{ color: "#e9d5ff", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>Pick one</h2>
+                  <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>The other two go to the Fame discard pile.</p>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${fameDrawModal.choices.length}, 1fr)`, gap: 12 }}>
+                  {fameDrawModal.choices.map((card, idx) => {
+                    const catColor = card.category === "you_may" ? "#f59e0b" :
+                                     card.category === "after_build" ? "#a78bfa" :
+                                     card.category === "after_browse" ? "#4ade80" :
+                                     card.category === "after_book" ? "#ec4899" :
+                                     card.category === "reactive" ? "#06b6d4" :
+                                     card.category === "season_start" ? "#fbbf24" :
+                                     "#c084fc";
+                    const catLabel = card.category === "you_may" ? "You May" :
+                                     card.category === "after_build" ? "After Build" :
+                                     card.category === "after_browse" ? "After Browse" :
+                                     card.category === "after_book" ? "After Book" :
+                                     card.category === "reactive" ? "When Opponent…" :
+                                     card.category === "season_start" ? "Season Start" :
+                                     "Game End";
+                    return <button
+                      key={idx}
+                      onClick={() => pickFameCard(fameDrawModal.pid, idx)}
+                      style={{
+                        padding: 16, borderRadius: 12,
+                        border: `2px solid ${catColor}`,
+                        background: "rgba(30,27,75,0.5)",
+                        color: "#f3f4f6",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        display: "flex", flexDirection: "column", gap: 8,
+                        minHeight: 160,
+                        transition: "transform 0.15s, box-shadow 0.15s",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 10px 24px ${catColor}40`; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}
+                    >
+                      <div style={{ fontSize: 10, fontWeight: 800, color: catColor, textTransform: "uppercase", letterSpacing: 1 }}>{catLabel}</div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: "#f9fafb" }}>{card.name}</div>
+                      <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.4, flex: 1 }}>{card.desc}</div>
+                      <div style={{ fontSize: 10, color: catColor, fontWeight: 700, textAlign: "center", marginTop: 4, padding: 6, borderRadius: 6, background: `${catColor}20` }}>Pick this →</div>
+                    </button>;
+                  })}
+                </div>
+              </div>
+            </div>, document.body)}
 
             {/* v135: Alternative Artist Objectives picker — shown whenever a human has
                 an objective choice to make (game start / year 2+/failure). Player picks
