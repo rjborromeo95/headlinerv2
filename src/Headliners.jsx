@@ -11551,21 +11551,22 @@ export default function Headliners() {
     }
   };
 
-  // v199.75/v199.82: split "Browse or Buy" into two actions. Both still route through
-  // handleArtistAction for state setup, then flip drawer visibility to match intent.
-  //   Buy    → close pool, open hand (play from hand)
+  // v199.75/v199.82/v199.94: split "Browse or Book" into two actions. Both still route
+  // through handleArtistAction for state setup, then flip drawer visibility to match intent.
+  //   Book   → close pool, open hand (play from hand)
   //   Browse → open pool, close hand (draw from deck or pool), set artistAction="draw2"
-  // v199.82: when ALREADY in artist mode (switching Buy ↔ Browse mid-action), skip
+  // v199.82: when ALREADY in artist mode (switching Book ↔ Browse mid-action), skip
   // handleArtistAction (which bails if qyPicksLeft > 0) and just flip the sub-state.
-  // Picks remaining are SHARED between Buy and Browse since both are artist actions.
-  const handleBuyAction = () => {
+  // Picks remaining are SHARED between Book and Browse since both are artist actions.
+  // v199.94: renamed handleBuyAction → handleBookAction for consistency with the UI label.
+  const handleBookAction = () => {
     if (turnAction === "artist") {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(curPd);
-      // v199.83/v199.87: clicking Buy while Buy is already active (artistAction===null)
+      // v199.83/v199.87: clicking Book while Book is already active (artistAction===null)
       // with no picks consumed → cancel the action (toggle-off). Close the hand drawer
-      // that Buy auto-opened; do NOT open the pool drawer (the previous code did this by
-      // accident, causing the Artists and Amenities tray to pop open when canceling Buy).
+      // that Book auto-opened; do NOT open the pool drawer (the previous code did this by
+      // accident, causing the Artists and Amenities tray to pop open when canceling Book).
       if (artistAction === null && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
         setTurnAction(null);
         setArtistAction(null);
@@ -11574,8 +11575,8 @@ export default function Headliners() {
         setShowHand(false);
         return;
       }
-      // Switching from Browse (or re-entering Buy) — just flip sub-state.
-      // Return any staged draw2 picks back to the pool so switching to Buy doesn't lose
+      // Switching from Browse (or re-entering Book) — just flip sub-state.
+      // Return any staged draw2 picks back to the pool so switching to Book doesn't lose
       // them silently.
       if (draw2Picks && draw2Picks.length > 0) {
         draw2Picks.forEach(a => setArtistPool(prev => [...prev, a]));
@@ -11597,7 +11598,7 @@ export default function Headliners() {
       const maxPicks = getFameArtistMax(curPd);
       // v199.83/v199.87: clicking Browse while Browse is already active with no picks
       // consumed → cancel + close the pool drawer that Browse auto-opened. Symmetric with
-      // Build and Buy toggle-off behavior.
+      // Build and Book toggle-off behavior.
       if (artistAction === "draw2" && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
         setTurnAction(null);
         setArtistAction(null);
@@ -16387,9 +16388,9 @@ export default function Headliners() {
             const fame = pd.fame || 0;
             // Detect which action (if any) is currently active.
             const buildActive = turnAction === "pickAmenity" && !actionTaken;
-            const buyActive = turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && !actionTaken;
+            const bookActive = turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && !actionTaken;
             const browseActive = turnAction === "artist" && artistAction === "draw2" && !actionTaken;
-            const anyActive = buildActive || buyActive || browseActive;
+            const anyActive = buildActive || bookActive || browseActive;
             // Dim style for non-active actions when one is active.
             const dimIf = (active) => anyActive && !active ? { opacity: 0.3, cursor: "not-allowed", filter: "grayscale(60%)" } : {};
             const actionBtnBase = {
@@ -16431,14 +16432,14 @@ export default function Headliners() {
                     boxShadow: buildActive ? "0 0 12px rgba(124,58,237,0.5)" : "none",
                     ...dimIf(buildActive),
                   }}>🏗️ Build{buildActive ? picksLabel : ""}</button>
-                  <button onClick={handleBuyAction} style={{
+                  <button onClick={handleBookAction} style={{
                     ...actionBtnBase,
-                    background: buyActive ? "linear-gradient(135deg, #be185d, #9f1239)" : "rgba(190,24,93,0.4)",
-                    border: `1px solid ${buyActive ? "#ec4899" : "#be185d"}`,
+                    background: bookActive ? "linear-gradient(135deg, #be185d, #9f1239)" : "rgba(190,24,93,0.4)",
+                    border: `1px solid ${bookActive ? "#ec4899" : "#be185d"}`,
                     color: "#fbcfe8",
-                    boxShadow: buyActive ? "0 0 12px rgba(236,72,153,0.5)" : "none",
-                    ...dimIf(buyActive),
-                  }}>💳 Buy</button>
+                    boxShadow: bookActive ? "0 0 12px rgba(236,72,153,0.5)" : "none",
+                    ...dimIf(bookActive),
+                  }}>📖 Book</button>
                   <button onClick={handleBrowseAction} style={{
                     ...actionBtnBase,
                     background: browseActive ? "linear-gradient(135deg, #16a34a, #15803d)" : "rgba(21,128,61,0.4)",
