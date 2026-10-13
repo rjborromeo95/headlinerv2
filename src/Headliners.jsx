@@ -12089,6 +12089,11 @@ export default function Headliners() {
       }
     }
     setUndoSnapshot(null);
+    // v199.92: close both drawers on end turn so the next player starts with clean trays.
+    // The sidebar Actions buttons (Build/Buy/Browse) each auto-open the appropriate drawer
+    // when clicked, so no information is lost — just a clean reset between turns.
+    setPoolDrawerOpen(false);
+    setShowHand(false);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
     // v190: freeze current turn actions as the "last turn" record for this player, then
     // clear the working buffer so their next turn starts fresh.
@@ -16442,6 +16447,27 @@ export default function Headliners() {
                     boxShadow: browseActive ? "0 0 12px rgba(34,197,94,0.5)" : "none",
                     ...dimIf(browseActive),
                   }}>🎤 Browse{browseActive ? picksLabel : ""}</button>
+                  {/* v199.92: Undo button in the sidebar — visible when an undo snapshot
+                      exists AND the player hasn't drawn from the deck yet. Deck draws reveal
+                      information (the drawn card), so undoing after a draw would let the
+                      player peek and redraw — disable in that case. */}
+                  {undoSnapshot && !qyDrewThisAction && (
+                    <button
+                      onClick={handleUndo}
+                      style={{
+                        ...actionBtnBase,
+                        marginTop: 2,
+                        padding: "8px 12px",
+                        background: "rgba(251,191,36,0.12)",
+                        border: "1px solid #fbbf24",
+                        color: "#fcd34d",
+                        fontSize: 11,
+                      }}
+                      title="Undo the current action (not available after drawing from the deck)"
+                    >
+                      ↩️ Undo
+                    </button>
+                  )}
                 </div>
               </div>
               {/* v199.84: Fame tray — portal-rendered at document.body with position:fixed
@@ -17178,11 +17204,14 @@ export default function Headliners() {
                       {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
                     </div>
 
-                    {/* v199.76: shared amenity dice panel on the right. 3-column grid of
+                    {/* v199.76/v199.92: shared amenity dice panel on the right. 3-column grid of
                         compact die buttons. Clickable in Build mode (turnAction === "pickAmenity").
-                        In other modes, dice render dim and non-interactive (reference only). */}
+                        In other modes, dice render dim and non-interactive (reference only).
+                        v199.92: added a reroll button below the dice when diceNeedReroll fires
+                        (fewer than 3 dice OR all dice are the same face). Clickable in Build mode. */}
                     {dice && dice.length > 0 && (
-                      <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, maxWidth: 240 }}>
+                      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, maxWidth: 240 }}>
                         {dice.map((d, i) => {
                           const isFame = d === "fame";
                           const isStage = d === "stage";
@@ -17214,6 +17243,24 @@ export default function Headliners() {
                             <span style={{ fontSize: 8, opacity: 0.8 }}>{sub}</span>
                           </button>;
                         })}
+                      </div>
+                      {/* v199.92: reroll button when dice need refresh (<3 dice or all same face) */}
+                      {diceNeedReroll(dice) && inBuildMode && (
+                        <button
+                          onClick={handleRerollDice}
+                          style={{
+                            padding: "6px 10px", borderRadius: 8,
+                            border: "1px solid #fbbf24",
+                            background: "rgba(251,191,36,0.15)",
+                            color: "#fcd34d",
+                            fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+                            cursor: "pointer", textTransform: "uppercase",
+                          }}
+                          title={dice.length < 3 ? "Fewer than 3 dice — reroll" : "All dice are the same — reroll"}
+                        >
+                          🎲 Reroll ({dice.length < 3 ? `${dice.length} dice` : "stuck"})
+                        </button>
+                      )}
                       </div>
                     )}
                   </div>
@@ -17429,7 +17476,8 @@ export default function Headliners() {
             {actionTaken && !noTurnsLeft && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
-                {undoSnapshot && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
+                {/* v199.92: hide undo after a deck draw to prevent peek-and-redraw */}
+                {undoSnapshot && !qyDrewThisAction && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
                 {hasAgent(currentPlayerId) && !turnAction && (() => {
                   // v199.1: in Quick Play, tempt is agent-powered — show the agent's name
                   // on the button so the player sees who they're calling. Classic retains
