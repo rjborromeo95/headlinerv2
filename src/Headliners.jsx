@@ -17301,13 +17301,24 @@ export default function Headliners() {
               background: "linear-gradient(0deg, rgba(15,14,26,0.98), rgba(15,14,26,0.9) 70%, rgba(15,14,26,0) 100%)",
               paddingTop: 6,
             }}>
-              {/* v199.77: position:sticky keeps the tab visible at the bottom of the viewport
-                  while scrolling. Expanded content still absolute-positions above the tab via
-                  bottom:calc(100% + 10px) so it opens upward from the sticky anchor. */}
-              {showHand && (
+              {/* v199.77/v199.91: position:sticky keeps the tab visible at the bottom of the
+                  viewport while scrolling. Expanded content absolute-positions above the tab
+                  via bottom:calc(100% + 10px) so it opens upward from the sticky anchor.
+                  v199.91: shift the content RIGHT when the Fame tray is visible (any Quick
+                  Play action active) so the hand cards aren't covered by the floating tray.
+                  The Fame tray is ~340px wide + 10px gap, anchored just past the sidebar edge,
+                  so pushing the hand content ~360px right clears it. */}
+              {(() => {
+                const fameTrayVisible = gameMode === "quickYear" && !actionTaken && (
+                  (turnAction === "pickAmenity") ||
+                  (turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage")) ||
+                  (turnAction === "artist" && artistAction === "draw2")
+                );
+                const leftOffset = fameTrayVisible ? 360 : 0;
+                return showHand && (
                 <div style={{
                   position: "absolute",
-                  bottom: "calc(100% + 10px)", left: 0, right: 0,
+                  bottom: "calc(100% + 10px)", left: leftOffset, right: 0,
                   zIndex: 20,
                   padding: 12, borderRadius: 10,
                   background: "rgba(15,14,26,0.96)",
@@ -17315,6 +17326,7 @@ export default function Headliners() {
                   boxShadow: "0 -10px 30px rgba(0,0,0,0.5)",
                   backdropFilter: "blur(4px)",
                   animation: "slideUpIn 0.18s ease-out",
+                  transition: "left 0.2s ease-out",
                 }}>
                   <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
                     {handCards.map((a, i) => a.isFavour
@@ -17359,7 +17371,8 @@ export default function Headliners() {
                     </div>
                   )}
                 </div>
-              )}
+              );
+              })()}
               {/* v199.73: hand toggle button — stays in flow at the bottom of main area.
                   When clicked, the expanded content appears ABOVE this button via absolute
                   positioning (see the showHand block earlier). */}
