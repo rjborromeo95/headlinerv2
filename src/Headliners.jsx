@@ -11360,15 +11360,27 @@ export default function Headliners() {
     aiProcessing.current = false;
   };
 
-  // Trigger AI when it's an AI player's turn
+  // Trigger AI when it's an AI player's turn.
+  // v199.96: block AI from starting its turn while any full-screen modal is active —
+  // previously the AI would start playing BEHIND these modals during season transitions.
+  // Specifically:
+  //   • seasonEndScoring — the season-close scoring modal
+  //   • hotlineSpinPhase !== "idle" — the hotline agent spin modal
+  //   • fameDrawModal — the new v199.95 Fame card draw-3-pick-1 modal
+  // The useEffect re-runs when any of these change, so once the modal closes the AI
+  // picks up its turn cleanly.
   useEffect(() => {
     if (!isCurrentPlayerAI()) { aiProcessing.current = false; return; }
+    // Block AI turn while a human-facing modal is open — otherwise the AI plays beneath it.
+    if (seasonEndScoring) return;
+    if (hotlineSpinPhase !== "idle" && hotlineSpinQueue.length > 0) return;
+    if (fameDrawModal) return;
     // Safety: reset processing flag if somehow stuck
     const safetyTimer = setTimeout(() => { aiProcessing.current = false; }, 5000);
     if (aiProcessing.current) return;
     aiTimer.current = setTimeout(() => aiStep(), 700);
     return () => { if (aiTimer.current) clearTimeout(aiTimer.current); clearTimeout(safetyTimer); };
-  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest, draftIndex]);
+  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest, draftIndex, seasonEndScoring, hotlineSpinPhase, hotlineSpinQueue, fameDrawModal]);
 
   // AI objective choices are handled in startGame — no useEffect needed
 
