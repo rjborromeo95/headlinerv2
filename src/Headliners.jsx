@@ -16574,7 +16574,11 @@ export default function Headliners() {
             {/* v199.74: Microtrends tab removed per design. Microtrend info now surfaces
                 via the microtrend banner above the player's stat row rather than a dedicated
                 sidebar tab. The "🎯 My" tab stays for classic objective-mode play. */}
-            {sidebarView === "default" && !altObjectivesMode && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+            {/* v199.90: "🎯 My" tab button hidden in Quick Play entirely — its content was
+                already removed in Quick Play (Artist Objectives + Fame→VP are Classic-only
+                concepts), so the button opened an empty panel. Classic multi-year still
+                shows it as before. */}
+            {sidebarView === "default" && !altObjectivesMode && gameMode !== "quickYear" && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
               <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
             </div>}
             {/* v199.21/v199.88: Legendary Lineup panel. Now shown ONLY in the Objectives
