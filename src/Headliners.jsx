@@ -1095,9 +1095,12 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   // Legendary (if drawn).
   if (artist && artist.isFavour) {
     const mobF = typeof window !== "undefined" && window.innerWidth < 768;
+    // v199.72: taller card-shaped proportions (~1:1.4, standard playing card ratio).
+    // Previous: 110×90 / 140×100 / 150×130 / 170×140 were nearly square. New dimensions
+    // give proper card feel and more room for name + cost + effect text.
     const szF = small
-      ? (mobF ? { width: 140, minHeight: 100, padding: "8px 10px" } : { width: 110, minHeight: 90, padding: "6px 8px" })
-      : (mobF ? { width: 170, minHeight: 140, padding: "10px 12px" } : { width: 150, minHeight: 130, padding: "8px 10px" });
+      ? (mobF ? { width: 130, minHeight: 185, padding: "10px 10px" } : { width: 110, minHeight: 155, padding: "8px 8px" })
+      : (mobF ? { width: 165, minHeight: 230, padding: "12px 12px" } : { width: 150, minHeight: 210, padding: "10px 10px" });
     const favBg = GENRE_COLORS[artist.genre] || "#fbbf24";
     return (
       <div onClick={disabled ? undefined : onClick} style={{
@@ -1119,9 +1122,11 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
   const grad = gs.length > 1 ? `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)` : undefined;
   const mob = typeof window !== 'undefined' && window.innerWidth < 768;
+  // v199.72: taller card-shaped proportions (~1:1.4 ratio). Matches Favour card
+  // dimensions above so the two card types align in grids / rows.
   const sz = small
-    ? (mob ? { width: 140, minHeight: 100, padding: "8px 10px", fontSize: 12 } : { width: 110, minHeight: 90, padding: "6px 8px", fontSize: 10 })
-    : (mob ? { width: 170, minHeight: 140, padding: "10px 12px", fontSize: 13 } : { width: 150, minHeight: 130, padding: "8px 10px", fontSize: 11 });
+    ? (mob ? { width: 130, minHeight: 185, padding: "10px 10px", fontSize: 12 } : { width: 110, minHeight: 155, padding: "8px 8px", fontSize: 10 })
+    : (mob ? { width: 165, minHeight: 230, padding: "12px 12px", fontSize: 13 } : { width: 150, minHeight: 210, padding: "10px 10px", fontSize: 11 });
   const fs = mob ? { name: small?12:14, meta: small?10:11, cost: 11, effect: small?9:10 } : { name: small?10:12, meta: small?8:9, cost: 10, effect: small?7:8 };
   // v126+: genre-match glow. When a headliner-eligible artist has a genreMatchEffect AND
   // there's a stage in the player's festival with 2 matching-genre artists ready to accept
@@ -2733,6 +2738,12 @@ export default function Headliners() {
   // The ref stays strictly in sync with the state via the useEffect below.
   const quickYearTurnsTakenRef = useRef(0);
   useEffect(() => { quickYearTurnsTakenRef.current = quickYearTurnsTaken; }, [quickYearTurnsTaken]);
+  // v199.71: timestamp of the most recent season transition. endTurn uses this to detect
+  // and reject spurious end-turns that fire within a short window after a season change
+  // (symptom: "player's first Summer turn is auto-skipped"). The intent is: if the player
+  // just arrived at a new season AND hasn't taken an action, don't let endTurn consume
+  // their turn — it's almost certainly a state-propagation race.
+  const seasonJustTransitionedAtRef = useRef(0);
   // Season-end scoring modal state. Null when idle; { season, seasonScores, isGameEnd, nextPlayerIdx } when open.
   const [seasonEndScoring, setSeasonEndScoring] = useState(null);
   // v199.9: season objectives re-introduced. 1 per season, drawn at game start from
@@ -3657,6 +3668,9 @@ export default function Headliners() {
   const [showCouncilDrawBonus, setShowCouncilDrawBonus] = useState(null); // { drawn: [Artist], festival, pid }
   const [floatingBonuses, setFloatingBonuses] = useState([]); // [{ id, text, color, x }]
   const [showHand, setShowHand] = useState(false);
+  // v199.72: collapsible pool drawer at top of main area. Default open so the player
+  // sees available artists on turn start. Hand drawer uses the existing showHand state.
+  const [poolDrawerOpen, setPoolDrawerOpen] = useState(true);
   const [deckDrawnCard, setDeckDrawnCard] = useState(null); // card drawn from deck awaiting confirm
   const [deckCardRevealed, setDeckCardRevealed] = useState(false);
   // Draw 2 flow: player picks 2 artists from any combo of pool/deck
@@ -5364,6 +5378,13 @@ export default function Headliners() {
       // v198: reset pending-effect / selection state so the new player starts clean,
       // mirroring the state resets at the top of endTurn.
       setTurnAction(null); setSelectedDie(null); setActionTaken(false);
+      // v199.71: force actionTaken ref AND actionsLeftThisTurn fresh so no stale state
+      // from the previous player's final turn causes an immediate end-turn fire. Also
+      // mark the transition timestamp — endTurn's new guard reads this to reject
+      // phantom end-turns fired within the next ~1.5s.
+      setActionsLeftThisTurn(QUICKYEAR_ACTIONS_PER_TURN);
+      actionsLeftRef.current = QUICKYEAR_ACTIONS_PER_TURN;
+      seasonJustTransitionedAtRef.current = Date.now();
       setDice(rollDice());
       // Give the player a fresh turn-start view.
       setShowTurnStart(true);
@@ -11916,6 +11937,16 @@ export default function Headliners() {
       if (quickYearTurnsTakenRef && quickYearTurnsTakenRef.current >= maxTotal) {
         return;
       }
+      // v199.71: phantom-endTurn guard. If a season transition just completed in the
+      // last 1.5 seconds AND the current player hasn't taken an action (actionsLeftThisTurn
+      // is still at max), this is almost certainly a stale-state end-turn fire that would
+      // skip the player's first turn in the new season. Bail with a log entry so we can
+      // trace it.
+      const sinceTransition = Date.now() - (seasonJustTransitionedAtRef.current || 0);
+      if (sinceTransition < 1500 && actionsLeftRef.current >= QUICKYEAR_ACTIONS_PER_TURN) {
+        addLog("⚠️ Phantom End Turn", `${currentPlayer?.festivalName || "?"}: endTurn fired within ${sinceTransition}ms of a season transition with no action taken — ignoring to prevent turn skip.`);
+        return;
+      }
     }
     setUndoSnapshot(null);
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
@@ -16740,6 +16771,88 @@ export default function Headliners() {
 
         {/* Main area */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: isMobile ? "12px 16px" : 16, overflow: "auto" }}>
+          {/* v199.72: Pool Drawer — collapsible at top of main area. Default open.
+              Shows deck slot (left) + pool cards. Click the header bar to toggle. */}
+          <div style={{ marginBottom: 10 }}>
+            <button
+              onClick={() => setPoolDrawerOpen(!poolDrawerOpen)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                padding: "10px 16px", borderRadius: 10, border: "1px solid rgba(124,58,237,0.3)",
+                background: "linear-gradient(180deg, rgba(76,29,149,0.4), rgba(76,29,149,0.15))",
+                color: "#e9d5ff", fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
+                textTransform: "uppercase",
+              }}
+              title={poolDrawerOpen ? "Click to collapse pool" : "Click to expand pool"}
+            >
+              <span style={{ fontSize: 16 }}>📚</span>
+              Artist Pool ({artistPool.length})
+              <span style={{ fontSize: 12, opacity: 0.7 }}>{poolDrawerOpen ? "▲" : "▼"}</span>
+            </button>
+            {poolDrawerOpen && (
+              <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.4)", border: "1px solid rgba(124,58,237,0.15)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length})</div>
+                  {/* v197.13: Quick Turnaround (port_1) — free pool refresh once per turn */}
+                  {(() => {
+                    if (!hasInfraReward(currentPlayerId, "port_1")) return null;
+                    const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
+                    const used = infraRewardUsageRef.current[usageKey];
+                    return <button onClick={() => {
+                      if (used) return;
+                      infraRewardUsageRef.current[usageKey] = true;
+                      refreshPool();
+                      addLog("🏗️ Reward", `${currentPlayer.festivalName}: refreshed pool via Quick Turnaround (Most Portaloos)`);
+                    }} disabled={used} style={{
+                      ...bs, fontSize: 11, padding: "6px 12px",
+                      opacity: used ? 0.4 : 1,
+                      cursor: used ? "not-allowed" : "pointer",
+                      background: used ? "#2a2a4a" : "rgba(251,146,60,0.2)",
+                      border: used ? "1px solid #334155" : "1px solid rgba(251,146,60,0.5)",
+                      color: used ? "#94a3b8" : "#fb923c",
+                    }} title={used ? "Already used this turn" : "Refresh the artist pool for free (once per turn)"}>
+                      🔄 {used ? "Used" : "Refresh Pool"}
+                    </button>;
+                  })()}
+                </div>
+                <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
+                  {/* Deck slot visual — grey card to the left of pool, representing the artist deck. */}
+                  <div style={{
+                    minWidth: isMobile ? 100 : 85,
+                    width: isMobile ? 100 : 85,
+                    minHeight: isMobile ? 185 : 155,
+                    borderRadius: 10,
+                    background: "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
+                    border: "1px dashed rgba(148,163,184,0.3)",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    gap: 4, flexShrink: 0, color: "#94a3b8",
+                  }}>
+                    <div style={{ fontSize: 24, opacity: 0.5 }}>🎴</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
+                    <div style={{ fontSize: 14, fontWeight: 900, color: "#c4b5fd" }}>{artistDeck.length}</div>
+                  </div>
+                  {artistPool.map((a, i) => {
+                    const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
+                    return <div key={i} style={{ position: "relative" }}>
+                      <ArtistCard artist={a} showCost small
+                        affordable={canBookArtistAnywhere(a, currentPD)}
+                        genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                        disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
+                        onClick={() => { if (artistAction === null && !actionTaken) {} }}
+                      />
+                      {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
+                        {agentsOnThis.map(([pid, p], ai) => {
+                          const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
+                          return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
+                        })}
+                      </div>}
+                    </div>;
+                  })}
+                  {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
+                </div>
+              </div>
+            )}
+          </div>
           <div style={{ marginBottom: 10, textAlign: "center" }}>
             <h2 style={{ color: "#fbbf24", fontSize: isMobile ? 22 : 20, margin: 0 }}>{currentPlayer?.festivalName}'s Turn</h2>
             <p style={{ color: "#8b5cf6", fontSize: isMobile ? 13 : 12, margin: "4px 0" }}>
@@ -16790,114 +16903,78 @@ export default function Headliners() {
             />
           </div>
 
-          {/* Available Artist Pool */}
-          <div style={{ marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#c4b5fd" }}>Available Artists ({artistPool.length})</div>
-              {/* v197.13: Quick Turnaround (port_1) — free pool refresh once per turn */}
-              {(() => {
-                if (!hasInfraReward(currentPlayerId, "port_1")) return null;
-                const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
-                const used = infraRewardUsageRef.current[usageKey];
-                return <button onClick={() => {
-                  if (used) return;
-                  infraRewardUsageRef.current[usageKey] = true;
-                  refreshPool();
-                  addLog("🏗️ Reward", `${currentPlayer.festivalName}: refreshed pool via Quick Turnaround (Most Portaloos)`);
-                }} disabled={used} style={{
-                  ...bs, fontSize: 11, padding: "6px 12px",
-                  opacity: used ? 0.4 : 1,
-                  cursor: used ? "not-allowed" : "pointer",
-                  background: used ? "#2a2a4a" : "rgba(251,146,60,0.2)",
-                  border: used ? "1px solid #334155" : "1px solid rgba(251,146,60,0.5)",
-                  color: used ? "#94a3b8" : "#fb923c",
-                }} title={used ? "Already used this turn" : "Refresh the artist pool for free (once per turn)"}>
-                  🔄 {used ? "Used" : "Refresh Pool"}
-                </button>;
-              })()}
-            </div>
-            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-              {artistPool.map((a, i) => {
-                const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
-                return <div key={i} style={{ position: "relative" }}>
-                  <ArtistCard artist={a} showCost small
-                    affordable={canBookArtistAnywhere(a, currentPD)}
-                    genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                    disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
-                    onClick={() => {
-                      if (artistAction === null && !actionTaken) {
-                        // Show book/reserve choice
-                      }
-                    }}
-                  />
-                  {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
-                    {agentsOnThis.map(([pid, p], ai) => {
-                      const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
-                      return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
-                    })}
-                  </div>}
-                </div>;
-              })}
-            </div>
-          </div>
+          {/* v199.72: pool rendering moved to drawer at TOP of main area (above header). */}
 
-          {/* Player Hand — v199.29: includes both artist cards AND Festival Principle cards. */}
+          {/* v199.72: Hand Drawer — collapsible, bottom-of-center. Default closed (showHand=false).
+              Clickable "Your Hand" tab opens upward-feeling content (cards appear above the tab
+              when closed state matches current Show/Hide). Festival Principles row renders below
+              hand cards when both are present. */}
           {(() => {
             const principles = (gameMode === "quickYear") ? (playerPrinciples[currentPlayerId] || []) : [];
             const totalItems = handCards.length + principles.length;
             if (totalItems === 0) return null;
-            // v199.32: break down hand into artists vs favours for the header count.
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
-            // Favour-play is a free action — can fire even when the main action is taken.
-            // Only gated by stage availability (checked in picker).
-            return <div style={{ marginTop: 8 }}>
-              <button onClick={() => setShowHand(!showHand)} style={{ ...bs, padding: "4px 12px", fontSize: 11, marginBottom: 6 }}>
-                {/* v199.46: Festival Principles removed from the hand. The hand is now
-                    artists + favours only. Principles are shown separately below the hand
-                    (dedicated row) so they don't clutter the artist-picking flow. */}
-                {showHand ? "Hide" : "Show"} Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
+            return <div style={{ marginTop: 10 }}>
+              <button
+                onClick={() => setShowHand(!showHand)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  padding: "10px 16px", borderRadius: 10, border: "1px solid rgba(236,72,153,0.3)",
+                  background: "linear-gradient(0deg, rgba(131,24,67,0.4), rgba(131,24,67,0.15))",
+                  color: "#fbcfe8", fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+                title={showHand ? "Click to collapse hand" : "Click to expand hand"}
+              >
+                <span style={{ fontSize: 16 }}>✋</span>
+                Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
+                <span style={{ fontSize: 12, opacity: 0.7 }}>{showHand ? "▼" : "▲"}</span>
               </button>
-              {showHand && <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-                {handCards.map((a, i) => a.isFavour
-                  ? <ArtistCard key={`a-${i}`} artist={a} small
-                      disabled={!!favourPlayMode}
-                      onClick={() => {
-                        if (favourPlayMode) return;
-                        setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
-                      }}
-                    />
-                  : <ArtistCard key={`a-${i}`} artist={a} showCost small
-                      affordable={canBookArtistAnywhere(a, currentPD)}
-                      genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                      disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
-                      onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
-                    />
-                )}
-              </div>}
-              {/* v199.46: Dedicated Principles row — separate from the hand so artist
-                  flow and principle-spending flow don't visually overlap. */}
-              {gameModeRef.current === "quickYear" && principles.length > 0 && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
-                  <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6, textAlign: "center" }}>📜 Festival Principles · spend to open a stage (1 action)</div>
-                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, justifyContent: "center" }}>
-                    {principles.map((pr, i) => {
-                      const am = pr.fieldIdx != null
-                        ? ((currentPD?.fields || [])[pr.fieldIdx] || {})
-                        : (currentPD?.amenities || {});
-                      return <PrincipleCard
-                        key={`p-${i}`}
-                        principle={pr}
-                        amenities={am}
-                        stageCount={(currentPD?.stages || []).length}
-                        maxStages={QUICKYEAR_MAX_STAGES}
-                        amenityIcons={AMENITY_ICONS}
-                        unusedBonus={UNUSED_PRINCIPLE_BONUS}
-                        onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
-                        small
-                      />;
-                    })}
+              {showHand && (
+                <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "rgba(15,14,26,0.4)", border: "1px solid rgba(236,72,153,0.15)" }}>
+                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
+                    {handCards.map((a, i) => a.isFavour
+                      ? <ArtistCard key={`a-${i}`} artist={a} small
+                          disabled={!!favourPlayMode}
+                          onClick={() => {
+                            if (favourPlayMode) return;
+                            setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
+                          }}
+                        />
+                      : <ArtistCard key={`a-${i}`} artist={a} showCost small
+                          affordable={canBookArtistAnywhere(a, currentPD)}
+                          genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                          disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
+                          onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
+                        />
+                    )}
                   </div>
+                  {/* v199.46: Dedicated Principles row — separate from the hand so artist
+                      flow and principle-spending flow don't visually overlap. */}
+                  {gameModeRef.current === "quickYear" && principles.length > 0 && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(124,58,237,0.3)" }}>
+                      <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6, textAlign: "center" }}>📜 Festival Principles · spend to open a stage (1 action)</div>
+                      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, justifyContent: "center" }}>
+                        {principles.map((pr, i) => {
+                          const am = pr.fieldIdx != null
+                            ? ((currentPD?.fields || [])[pr.fieldIdx] || {})
+                            : (currentPD?.amenities || {});
+                          return <PrincipleCard
+                            key={`p-${i}`}
+                            principle={pr}
+                            amenities={am}
+                            stageCount={(currentPD?.stages || []).length}
+                            maxStages={QUICKYEAR_MAX_STAGES}
+                            amenityIcons={AMENITY_ICONS}
+                            unusedBonus={UNUSED_PRINCIPLE_BONUS}
+                            onOpenStage={() => openStageViaPrinciple(currentPlayerId, pr.id)}
+                            small
+                          />;
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>;
