@@ -17,7 +17,7 @@
  *  - Final tickets are shown ×100 for a festival-appropriate headline number
  */
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 
 // ═══════════════════════════════════════════════════════════
@@ -3666,9 +3666,31 @@ export default function Headliners() {
   const [showCouncilDrawBonus, setShowCouncilDrawBonus] = useState(null); // { drawn: [Artist], festival, pid }
   const [floatingBonuses, setFloatingBonuses] = useState([]); // [{ id, text, color, x }]
   const [showHand, setShowHand] = useState(false);
-  // v199.72: collapsible pool drawer at top of main area. Default open so the player
-  // sees available artists on turn start. Hand drawer uses the existing showHand state.
-  const [poolDrawerOpen, setPoolDrawerOpen] = useState(true);
+  // v199.72/v199.84: collapsible pool drawer at top of main area. Default CLOSED so the
+  // game opens clean — players tap "Artists and Amenities" to expand. (showHand drawer
+  // was already closed by default — now both match.)
+  const [poolDrawerOpen, setPoolDrawerOpen] = useState(false);
+  // v199.84: Fame tray is portal-rendered at document.body with position:fixed to escape
+  // the sidebar's overflow clipping. actionsBoxRef points at the stacked-buttons container;
+  // fameTrayPos tracks its right-edge screen coordinates so the tray can anchor there.
+  const actionsBoxRef = useRef(null);
+  const [fameTrayPos, setFameTrayPos] = useState({ top: 0, left: 0, height: 0 });
+  // Measure the Actions box on mount, on resize, and on scroll (sidebar may scroll).
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (actionsBoxRef.current) {
+        const rect = actionsBoxRef.current.getBoundingClientRect();
+        setFameTrayPos({ top: rect.top, left: rect.right, height: rect.height });
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  });
   const [deckDrawnCard, setDeckDrawnCard] = useState(null); // card drawn from deck awaiting confirm
   const [deckCardRevealed, setDeckCardRevealed] = useState(false);
   // Draw 2 flow: player picks 2 artists from any combo of pool/deck
@@ -16334,14 +16356,17 @@ export default function Headliners() {
             // without needing the central banner.
             const picksLeft = qyPicksLeft || 0;
             const picksLabel = picksLeft > 0 ? ` · ${picksLeft} left` : "";
-            // v199.82: Actions row + Fame tray opens horizontally to the right.
-            // position:relative on the Actions container → absolute-positioned Fame tray
-            // extends `left: 100%` into the main area, overlaying center content with high
-            // z-index. The sidebar's overflow-y:auto doesn't clip horizontal overflow
-            // (overflow-x defaults to visible when only overflow-y is set to auto).
-            return <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
-              {/* ACTIONS row — vertical label + stacked buttons */}
-              <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+            // v199.82/v199.84: Actions row + Fame tray that opens horizontally to the right.
+            // CSS note (v199.84): a sidebar with `overflow-y: auto` and `overflow-x: visible`
+            // STILL CLIPS horizontally in most browsers because setting one axis to a non-visible
+            // value implicitly promotes the other to `auto` too. Fix: render the Fame tray via
+            // React Portal at document.body with `position: fixed` so it escapes the sidebar's
+            // overflow context entirely. Its coordinates are computed from a ref on the Actions
+            // column via actionsBoxRef below.
+            return <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* ACTIONS row — vertical label + stacked buttons. The ref is on the buttons
+                  container so the Fame tray can measure where to pop out from. */}
+              <div ref={actionsBoxRef} style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
                 <div style={{
                   writingMode: "vertical-rl",
                   transform: "rotate(180deg)",
@@ -16377,24 +16402,23 @@ export default function Headliners() {
                   }}>🎤 Browse{browseActive ? picksLabel : ""}</button>
                 </div>
               </div>
-              {/* v199.82: Fame tray opens to the RIGHT of the actions, extending into the
-                  main area. absolute-positioned with left: calc(100% + 10px) and a wider
-                  fixed width so stars/badges aren't cramped. z-index 50 keeps it above
-                  center content. */}
-              {anyActive && <div style={{
-                position: "absolute",
-                left: "calc(100% + 10px)",
-                top: 0,
+              {/* v199.84: Fame tray — portal-rendered at document.body with position:fixed
+                  so the sidebar's overflow doesn't clip it. Position measured from
+                  actionsBoxRef on mount. */}
+              {anyActive && typeof document !== "undefined" && createPortal(<div style={{
+                position: "fixed",
+                left: fameTrayPos.left + 10,
+                top: fameTrayPos.top,
                 width: 340,
-                zIndex: 50,
+                zIndex: 100,
                 display: "flex",
                 flexDirection: "column",
                 padding: "12px 16px",
                 borderRadius: 12,
-                background: "linear-gradient(180deg, rgba(76,29,149,0.92), rgba(45,16,96,0.92))",
+                background: "linear-gradient(180deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
                 border: "1px solid rgba(251,191,36,0.4)",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                backdropFilter: "blur(4px)",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+                backdropFilter: "blur(6px)",
                 animation: "slideRightIn 0.18s ease-out",
                 gap: 10,
               }}>
@@ -16458,7 +16482,7 @@ export default function Headliners() {
                   })}
                 </div>
                 <div style={{ fontSize: 10, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
-              </div>}
+              </div>, document.body)}
             </div>;
           })()}
 
@@ -17305,8 +17329,13 @@ export default function Headliners() {
             </div>;
           })()}
 
-          {/* Action bar */}
-          <div style={{ ...card, width: "100%", maxWidth: 700, marginTop: 12, padding: 16, alignSelf: "center" }}>
+          {/* Action bar — v199.84: card styling removed so the container is INVISIBLE when
+              no sub-element renders. Previously the empty card shell produced a "blank bar"
+              beneath the hand drawer in states where no mode-specific UI was active. Visible
+              sub-elements (pending-tempt banner, action-complete panel, deploy agent flow,
+              deck reveal, Pick Amenity dice for Classic, etc.) each carry their own
+              background/border, so nothing's lost. */}
+          <div style={{ width: "100%", maxWidth: 700, marginTop: 12, padding: "0 16px", alignSelf: "center" }}>
             {/* v131: pending-tempt undo — visible whenever the current player has any pending
                 tempts, regardless of whether they've taken their turn action. Refunds 1 Fame
                 per undo click, popping the most recent placement. Safe to use before ending turn. */}
