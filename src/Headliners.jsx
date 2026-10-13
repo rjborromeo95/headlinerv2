@@ -3754,6 +3754,7 @@ export default function Headliners() {
           });
         } else {
           setFameDrawPicker({ pid, cardName: card.name, remaining: 2, picked: [], allowDeck: true });
+          setPoolDrawerOpen(true);
         }
         break;
       }
@@ -3792,6 +3793,7 @@ export default function Headliners() {
             pid, cardName: card.name, remaining: 1, picked: [], allowDeck: true,
             mode: "genre_match", bookedArtist,
           });
+          setPoolDrawerOpen(true);
         }
         break;
       }
@@ -3988,6 +3990,7 @@ export default function Headliners() {
           setTimeout(() => refillPool(), 100);
         } else {
           setFameDrawPicker({ pid, cardName: card.name, remaining: takeCount, picked: [], allowDeck: false });
+          setPoolDrawerOpen(true);
         }
         break;
       }
@@ -12446,14 +12449,13 @@ export default function Headliners() {
   };
   // v199.52: Fame 4+ once-per-turn dice re-roll. Costs no action — pure Fame-tier perk.
   const handleFameDiceRefresh = () => {
-    const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
-    if ((pd.fame || 0) < 4) return;
-    if (qyDiceRefreshUsedRef.current) return;
+    // v199.95/v199.105: this is now called ONLY by the Fame REFRESH_DIE card activation
+    // (the old Fame 4+ tier perk UI was removed in v199.95). All gates removed — the
+    // Fame card has its own per-turn tracking via fameCardUsedThisTurn, and multiple
+    // card copies should each be usable in a single turn (each counts separately).
     const fresh = rollDice();
     setDice(fresh);
-    setQyDiceRefreshUsed(true);
-    qyDiceRefreshUsedRef.current = true;
-    addLog(currentPlayer?.festivalName || "?", `🔥 Fame 4+ perk — refreshed amenity dice`);
+    addLog(currentPlayer?.festivalName || "?", `🔥 Fame card — refreshed amenity dice`);
     showFloatingBonus("🎲 Dice refreshed!", "#fbbf24");
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
@@ -14633,7 +14635,10 @@ export default function Headliners() {
   // with fresh deck draws. Artists that have been "approached" (any agent via tempt
   // placement) stay in the pool. Usable once per artist action.
   const refreshArtistPool = () => {
-    if (qyPoolRefreshUsedRef.current) return;
+    // v199.95/v199.105: called ONLY by the Fame REFRESH_POOL card activation (old Fame
+    // 4+ tier perk removed). The qyPoolRefreshUsed once-per-turn gate was for the old
+    // tier perk; Fame card has its own fameCardUsedThisTurn tracking per instance, so
+    // we don't need the shared gate here.
     const pool = [...(artistPool || [])];
     const toKeep = [];
     const toReplace = [];
@@ -14660,10 +14665,8 @@ export default function Headliners() {
       setArtistPool([...toKeep, ...fresh]);
       return remaining;
     });
-    setQyPoolRefreshUsed(true);
-    qyPoolRefreshUsedRef.current = true;
     showFloatingBonus("🔁 Pool refreshed!", "#c4b5fd");
-    addLog(currentPlayer.festivalName, `🔁 Refreshed ${needed} pool artist${needed === 1 ? "" : "s"} (Fame 4+ perk)`);
+    addLog(currentPlayer.festivalName, `🔁 Refreshed ${needed} pool artist${needed === 1 ? "" : "s"} (Fame card)`);
   };
 
   const refillPoolTo5 = () => {
@@ -17157,6 +17160,65 @@ export default function Headliners() {
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🔥 Fame {vpd.fame || 0}</span>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🃏 {(vpd.hand || []).length} in hand</span>
             </div>
+            {/* v199.104: show the opponent's Fame cards so players can see what triggers
+                and end-game effects their rivals are banking. Opens the inspection modal
+                to the same Fame tray UX the owner sees. */}
+            {gameMode === "quickYear" && (playerFameCards[viewingPlayerId] || []).length > 0 && (
+              <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(76,29,149,0.3), rgba(45,16,96,0.15))", border: "1px solid rgba(167,139,250,0.4)" }}>
+                <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 8, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).length}/5</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+                  {[0,1,2,3,4].map(i => {
+                    const card = (playerFameCards[viewingPlayerId] || [])[i];
+                    const empty = !card;
+                    const catBg = card ? (
+                      card.category === "you_may"      ? "linear-gradient(180deg, #78350f, #431407)"  :
+                      card.category === "after_build"  ? "linear-gradient(180deg, #4c1d95, #2e1065)"  :
+                      card.category === "after_browse" ? "linear-gradient(180deg, #14532d, #052e16)"  :
+                      card.category === "after_book"   ? "linear-gradient(180deg, #831843, #500724)"  :
+                      card.category === "reactive"     ? "linear-gradient(180deg, #164e63, #083344)"  :
+                      card.category === "season_start" ? "linear-gradient(180deg, #713f12, #422006)"  :
+                                                         "linear-gradient(180deg, #581c87, #3b0764)"
+                    ) : "rgba(49,46,129,0.3)";
+                    const catBorder = card ? (
+                      card.category === "you_may"      ? "#f59e0b" :
+                      card.category === "after_build"  ? "#a78bfa" :
+                      card.category === "after_browse" ? "#4ade80" :
+                      card.category === "after_book"   ? "#ec4899" :
+                      card.category === "reactive"     ? "#06b6d4" :
+                      card.category === "season_start" ? "#fbbf24" :
+                                                         "#c084fc"
+                    ) : "rgba(100,116,139,0.3)";
+                    return <div key={i} style={{
+                      display: "flex", flexDirection: "column",
+                      padding: 4, borderRadius: 6,
+                      background: catBg,
+                      border: `1px solid ${catBorder}`,
+                      minHeight: 72,
+                      justifyContent: empty ? "center" : "flex-start",
+                      gap: 2,
+                    }} title={card ? `${card.name} — ${card.desc}` : "Empty slot"}>
+                      {empty ? (
+                        <span style={{ fontSize: 20, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                            {card.category === "you_may" ? "You may" :
+                             card.category === "after_build" ? "After Build" :
+                             card.category === "after_browse" ? "After Browse" :
+                             card.category === "after_book" ? "After Book" :
+                             card.category === "reactive" ? "Reactive" :
+                             card.category === "season_start" ? "Season" : "End"}
+                          </div>
+                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
+                          </div>
+                        </>
+                      )}
+                    </div>;
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 16, justifyContent: "center", alignItems: "flex-start", flexWrap: "wrap" }}>
               <PlayerBoard pd={vpd} stageColors={vpd.stageColors || []} year={year} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
               <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 170 }}>
@@ -17302,7 +17364,8 @@ export default function Headliners() {
                   }
                 </span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲{pd.heldDice}</span>}
-                {AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t}>{AMENITY_ICONS[t]}{c}</span> : null; })}
+                {/* v199.104: removed inline amenity counts — too noisy for the sidebar.
+                    Players can see amenities on their board / in the opponent-view modal. */}
               </div>
               {/* v197.21: infrastructure reward badges. Prominent, orange, tooltipped —
                   shows exactly which rewards this player currently holds. Panel gives the
@@ -17329,22 +17392,13 @@ export default function Headliners() {
                   ))}
                 </div>;
               })()}
-              <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>🎤 {(pd.stageArtists || []).flat().length} artists • 🃏 {(pd.hand || []).length} in hand</div>
+              {/* v199.104: removed the "N artists • M in hand" line and the per-player
+                  "Last turn: did XYZ" summary — too noisy, clutters the sidebar. Game log
+                  still records all turn actions for anyone who wants to review history. */}
               {/* v132: pending-tempt notification (real-time, so other players can consider contesting) */}
               {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 6, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 10, color: "#fbbf24", fontWeight: 600 }}>
                 💫 {p.festivalName} is tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}
               </div>}
-              {/* v132: last-action line for spectator awareness */}
-              {(() => {
-                const acts = lastAction[p.id];
-                if (!acts || ic) return null;
-                const arr = Array.isArray(acts) ? acts : [acts];
-                if (arr.length === 0) return null;
-                return <div style={{ marginTop: 4, fontSize: 10, color: "#8b5cf6", fontStyle: "italic" }}>
-                  <div style={{ fontWeight: 700, color: "#a78bfa", marginBottom: 2 }}>Last turn ({p.festivalName}):</div>
-                  {arr.map((a, i) => <div key={i} style={{ marginLeft: 6 }}>• {a}</div>)}
-                </div>;
-              })()}
               {/* v135: alt-objectives — objectives are HIDDEN info; only the current player
                   sees their own. Opponents' objective panels stay hidden so nobody can
                   reverse-engineer what they're trying for. v138: completed objectives are
@@ -18221,45 +18275,63 @@ export default function Headliners() {
                       on the right. Dice are informational by default; clickable in Build mode. */}
                   <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                     <div style={{ flex: 1, minWidth: 0, display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
-                      {/* Deck slot — click to draw when in Browse mode. */}
-                      <div
-                        onClick={() => { if (canBrowseDeck) draw2PickFromDeck(); }}
-                        style={{
-                          minWidth: isMobile ? 100 : 85,
-                          width: isMobile ? 100 : 85,
-                          minHeight: isMobile ? 155 : 130,
-                          borderRadius: 10,
-                          background: canBrowseDeck
-                            ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
-                            : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
-                          border: canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
-                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                          gap: 4, flexShrink: 0,
-                          color: canBrowseDeck ? "#bbf7d0" : "#94a3b8",
-                          cursor: canBrowseDeck ? "pointer" : "default",
-                          boxShadow: canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
-                          animation: canBrowseDeck ? "affordPulse 2s ease-in-out infinite" : "none",
-                        }}
-                        title={canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
-                      >
-                        <div style={{ fontSize: 24, opacity: canBrowseDeck ? 1 : 0.5 }}>🎴</div>
-                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
-                        {canBrowseDeck && <div style={{ fontSize: 9, color: "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
-                      </div>
+                      {/* Deck slot — click to draw when in Browse mode OR when a Fame draw
+                          picker is active with allowDeck. v199.105: Fame-pick mode replaces
+                          the previous modal UI; pick directly from the top tray. */}
+                      {(() => {
+                        const fameDeckActive = !!fameDrawPicker && fameDrawPicker.allowDeck && artistDeck.length > 0;
+                        const deckClickable = canBrowseDeck || fameDeckActive;
+                        const fameHighlight = fameDeckActive;
+                        return <div
+                          onClick={() => {
+                            if (fameDeckActive) { pickFameDrawFromDeck(); return; }
+                            if (canBrowseDeck) draw2PickFromDeck();
+                          }}
+                          style={{
+                            minWidth: isMobile ? 100 : 85,
+                            width: isMobile ? 100 : 85,
+                            minHeight: isMobile ? 155 : 130,
+                            borderRadius: 10,
+                            background: fameHighlight
+                              ? "linear-gradient(135deg, rgba(251,191,36,0.3), rgba(217,119,6,0.2))"
+                              : canBrowseDeck
+                                ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
+                                : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
+                            border: fameHighlight ? "2px solid #fbbf24" : canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            gap: 4, flexShrink: 0,
+                            color: fameHighlight ? "#fde68a" : canBrowseDeck ? "#bbf7d0" : "#94a3b8",
+                            cursor: deckClickable ? "pointer" : "default",
+                            boxShadow: fameHighlight ? "0 0 18px rgba(251,191,36,0.7)" : canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
+                            animation: deckClickable ? "affordPulse 2s ease-in-out infinite" : "none",
+                          }}
+                          title={fameHighlight ? `🔥 Draw from deck (Fame card: ${fameDrawPicker.cardName})` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
+                        >
+                          <div style={{ fontSize: 24, opacity: deckClickable ? 1 : 0.5 }}>🎴</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
+                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                        </div>;
+                      })()}
                       {artistPool.map((a, i) => {
                         const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                         const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                         const browseClickable = canBrowsePool && !claimedByOther;
+                        // v199.105: Fame draw picker — pool cards are clickable from the
+                        // top tray when the picker is active. Replaces the previous modal UI.
+                        const famePoolActive = !!fameDrawPicker && !claimedByOther;
                         return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
                           <ArtistCard artist={a} showCost small
-                            affordable={browseClickable ? true : canBookArtistAnywhere(a, currentPD)}
-                            genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                            disabled={!browseClickable && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
-                            onClick={browseClickable
-                              ? () => draw2PickFromPool(i)
-                              : () => { if (artistAction === null && !actionTaken) {} }}
+                            affordable={browseClickable || famePoolActive ? true : canBookArtistAnywhere(a, currentPD)}
+                            genreMatchGlow={famePoolActive || hasGenreMatchBonusAvailable(a, currentPD)}
+                            disabled={!browseClickable && !famePoolActive && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
+                            onClick={famePoolActive
+                              ? () => pickFameDrawFromPool(i)
+                              : browseClickable
+                                ? () => draw2PickFromPool(i)
+                                : () => { if (artistAction === null && !actionTaken) {} }}
                           />
+                          {famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(251,191,36,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🔥 Pick</div>}
                           {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                             {agentsOnThis.map(([pid, p], ai) => {
                               const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -18284,27 +18356,35 @@ export default function Headliners() {
                           const isStage = d === "stage";
                           const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
                           const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
-                          const borderColor = inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed") : "rgba(100,116,139,0.4)";
-                          const bg = inBuildMode
+                          // v199.105: when a Fame amenity pick is pending, dice are clickable
+                          // for the Fame pick (only amenity faces, not fame/stage). This
+                          // replaces the previous modal UI — pick directly from the top tray.
+                          const famePickActive = !!fameAmenityPending && !isFame && !isStage;
+                          const diceClickable = inBuildMode || famePickActive;
+                          const borderColor = famePickActive ? "#fbbf24" : inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed") : "rgba(100,116,139,0.4)";
+                          const bg = diceClickable
                             ? (isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)")
                             : "rgba(30,27,75,0.4)";
-                          const textColor = inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#e9d5ff") : "#94a3b8";
+                          const textColor = diceClickable ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#e9d5ff") : "#94a3b8";
                           return <button
                             key={i}
-                            onClick={() => { if (inBuildMode) handleDiePick(i, d); }}
-                            disabled={!inBuildMode}
+                            onClick={() => {
+                              if (famePickActive) { pickFameAmenity(i); return; }
+                              if (inBuildMode) handleDiePick(i, d);
+                            }}
+                            disabled={!diceClickable}
                             style={{
                               width: 68, height: 72, borderRadius: 10,
                               border: `2px solid ${borderColor}`,
                               background: bg, color: textColor,
                               display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                              gap: 2, cursor: inBuildMode ? "pointer" : "default",
-                              fontSize: 20, opacity: inBuildMode ? 1 : 0.55,
+                              gap: 2, cursor: diceClickable ? "pointer" : "default",
+                              fontSize: 20, opacity: diceClickable ? 1 : (fameAmenityPending ? 0.3 : 0.55),
                               transition: "all 0.2s",
-                              boxShadow: inBuildMode ? "0 0 10px rgba(251,191,36,0.25)" : "none",
-                              animation: inBuildMode ? "affordPulse 2s ease-in-out infinite" : "none",
+                              boxShadow: famePickActive ? "0 0 14px rgba(251,191,36,0.6)" : inBuildMode ? "0 0 10px rgba(251,191,36,0.25)" : "none",
+                              animation: (famePickActive || inBuildMode) ? "affordPulse 2s ease-in-out infinite" : "none",
                             }}
-                            title={inBuildMode ? `Pick ${sub}` : `${sub} (click Build to use)`}
+                            title={famePickActive ? `🔥 Place ${sub} (Fame card: ${fameAmenityPending.cardName})` : inBuildMode ? `Pick ${sub}` : `${sub} (click Build to use)`}
                           >
                             <span>{label}</span>
                             <span style={{ fontSize: 8, opacity: 0.8 }}>{sub}</span>
@@ -18811,71 +18891,50 @@ export default function Headliners() {
                 for a human (after-action draw_2_artists, reactive draw_N_from_pool). Shows
                 deck + pool; click to draw to hand. Auto-closes when the remaining count
                 reaches 0. */}
-            {fameDrawPicker && fameDrawPicker.pid === currentPlayerId && typeof document !== "undefined" && createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.9)", zIndex: 9480, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s", overflowY: "auto" }}>
-              <div style={{ padding: 20, borderRadius: 14, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.25))", border: "2px solid #c084fc", boxShadow: "0 0 40px rgba(192,132,252,0.3)", maxWidth: 760, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
-                <div style={{ textAlign: "center", marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, color: "#d8b4fe", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 Fame Card Draw</div>
-                  <h3 style={{ color: "#e9d5ff", fontSize: 18, margin: "4px 0 2px", fontWeight: 800 }}>{fameDrawPicker.cardName}</h3>
-                  <p style={{ color: "#cbd5e1", fontSize: 12, margin: 0 }}>
+            {/* v199.105: Fame draw picker is now a SLIM NON-BLOCKING BANNER at the top of
+                the screen. Players click directly on dice (for amenity cards), pool
+                artists (highlighted amber), or the deck slot in the top tray. The modal
+                is gone — pool drawer auto-opens when the picker starts. */}
+            {fameDrawPicker && fameDrawPicker.pid === currentPlayerId && typeof document !== "undefined" && createPortal(
+              <div style={{
+                position: "fixed",
+                top: 12, left: "50%", transform: "translateX(-50%)",
+                zIndex: 9480,
+                padding: "10px 16px",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
+                border: "2px solid #fbbf24",
+                boxShadow: "0 0 24px rgba(251,191,36,0.5)",
+                display: "flex", alignItems: "center", gap: 14,
+                maxWidth: "90vw",
+                animation: "fadeSlideIn 0.25s",
+                backdropFilter: "blur(6px)",
+              }}>
+                <div style={{ fontSize: 20 }}>🔥</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "#fcd34d", fontWeight: 800, letterSpacing: 0.5 }}>Fame Card: {fameDrawPicker.cardName}</div>
+                  <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>
                     {fameDrawPicker.mode === "genre_match" && fameDrawPicker.bookedArtist ? (
-                      <>Pick 1 from the pool (any artist — kept) or the deck (blind — kept only if genre matches <b style={{ color: "#fbbf24" }}>{fameDrawPicker.bookedArtist.name}</b>: <b style={{ color: "#86efac" }}>{(Array.isArray(fameDrawPicker.bookedArtist.genre) ? fameDrawPicker.bookedArtist.genre : [fameDrawPicker.bookedArtist.genre]).filter(Boolean).join(" / ")}</b>).</>
+                      <>Pick from pool (any — kept) or deck (blind — kept only if matches <b style={{ color: "#fbbf24" }}>{(Array.isArray(fameDrawPicker.bookedArtist.genre) ? fameDrawPicker.bookedArtist.genre : [fameDrawPicker.bookedArtist.genre]).filter(Boolean).join(" / ")}</b>)</>
                     ) : fameDrawPicker.allowDeck ? (
-                      `Pick ${fameDrawPicker.remaining} more from the pool or deck (any combination).`
+                      `Click ${fameDrawPicker.remaining} more from the pool or deck above.`
                     ) : (
-                      `Pick ${fameDrawPicker.remaining} more from the pool.`
+                      `Click ${fameDrawPicker.remaining} more from the pool above.`
                     )}
-                  </p>
-                  {fameDrawPicker.picked.length > 0 && (
-                    <p style={{ color: "#a78bfa", fontSize: 11, margin: "4px 0 0", fontStyle: "italic" }}>Already drew: {fameDrawPicker.picked.join(", ")}</p>
-                  )}
+                    {fameDrawPicker.picked.length > 0 && <span style={{ color: "#a78bfa", fontStyle: "italic" }}> · Drew: {fameDrawPicker.picked.join(", ")}</span>}
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch", justifyContent: "flex-start" }}>
-                  {fameDrawPicker.allowDeck && (
-                    <button
-                      onClick={pickFameDrawFromDeck}
-                      disabled={artistDeck.length === 0}
-                      style={{
-                        minWidth: 100, width: 100, minHeight: 150,
-                        borderRadius: 10,
-                        background: artistDeck.length > 0 ? "linear-gradient(135deg, rgba(168,85,247,0.3), rgba(124,58,237,0.2))" : "rgba(100,116,139,0.2)",
-                        border: artistDeck.length > 0 ? "2px solid rgba(192,132,252,0.6)" : "1px dashed rgba(100,116,139,0.4)",
-                        color: artistDeck.length > 0 ? "#d8b4fe" : "#64748b",
-                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6,
-                        flexShrink: 0,
-                        cursor: artistDeck.length > 0 ? "pointer" : "not-allowed",
-                        boxShadow: artistDeck.length > 0 ? "0 0 14px rgba(192,132,252,0.35)" : "none",
-                        animation: artistDeck.length > 0 ? "affordPulse 1.6s ease-in-out infinite" : "none",
-                      }}
-                    >
-                      <div style={{ fontSize: 32 }}>🎴</div>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                      <div style={{ fontSize: 14, fontWeight: 900 }}>{artistDeck.length}</div>
-                      <div style={{ fontSize: 9, color: "#c084fc", marginTop: 4 }}>+1 →</div>
-                    </button>
-                  )}
-                  {artistPool.map((a, i) => (
-                    <div key={i} onClick={() => pickFameDrawFromPool(i)} style={{ cursor: "pointer", position: "relative" }}>
-                      <ArtistCard artist={a} showCost small affordable disabled={false} onClick={() => pickFameDrawFromPool(i)} />
-                      <div style={{ position: "absolute", top: 4, right: 4, background: "rgba(192,132,252,0.9)", color: "#1a1a2e", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 4 }}>Pick</div>
-                    </div>
-                  ))}
-                  {artistPool.length === 0 && !fameDrawPicker.allowDeck && (
-                    <div style={{ fontSize: 12, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty.</div>
-                  )}
-                </div>
-                <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
-                  <button
-                    onClick={() => {
-                      addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: skipped remaining draws from "${fameDrawPicker.cardName}".`);
-                      setFameDrawPicker(null);
-                    }}
-                    style={{ ...bs, fontSize: 11, padding: "8px 14px", color: "#94a3b8", border: "1px solid #475569" }}
-                  >
-                    Skip remaining ({fameDrawPicker.remaining} left)
-                  </button>
-                </div>
-              </div>
-            </div>, document.body)}
+                <button
+                  onClick={() => {
+                    addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: skipped remaining draws from "${fameDrawPicker.cardName}".`);
+                    setFameDrawPicker(null);
+                  }}
+                  style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#cbd5e1", border: "1px solid #475569", background: "rgba(30,27,75,0.6)" }}
+                >
+                  Skip
+                </button>
+              </div>, document.body
+            )}
 
             {/* v199.99: Fame card season-start picker. Opens for humans when a
                 season-start card requires a choice (discard artists / discard amenities /
@@ -19097,43 +19156,37 @@ export default function Headliners() {
               </div>;
             })(), document.body)}
 
-            {/* v199.97: Fame card amenity picker. Opens when a Fame card effect
-                requires a bonus amenity placement (gain_amenity_from_die /
-                place_amenity_from_die). Shows the current dice; click an amenity face
-                to place that amenity in the next available field. */}
-            {fameAmenityPending && fameAmenityPending.pid === currentPlayerId && typeof document !== "undefined" && createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.9)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
-              <div style={{ padding: 20, borderRadius: 14, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.25))", border: "2px solid #a78bfa", boxShadow: "0 0 40px rgba(167,139,250,0.3)", maxWidth: 520, width: "100%", textAlign: "center" }}>
-                <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 4 }}>🔥 Fame Card Effect</div>
-                <h3 style={{ color: "#e9d5ff", fontSize: 16, margin: "4px 0 8px", fontWeight: 800 }}>{fameAmenityPending.cardName}</h3>
-                <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 16px" }}>Click an amenity die to place that amenity in your festival (first available field).</p>
-                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(dice.length, 5)}, 1fr)`, gap: 8, marginBottom: 16 }}>
-                  {dice.map((d, i) => {
-                    const isAmenity = d !== "fame" && d !== "stage";
-                    const label = d === "fame" ? "🔥" : d === "stage" ? "🎪" : AMENITY_ICONS[d];
-                    const sub = d === "fame" ? "Fame" : d === "stage" ? "Stage" : AMENITY_LABELS[d];
-                    return <button
-                      key={i}
-                      onClick={() => { if (isAmenity) pickFameAmenity(i); }}
-                      disabled={!isAmenity}
-                      style={{
-                        padding: 12, borderRadius: 10,
-                        border: `2px solid ${isAmenity ? "#7c3aed" : "rgba(100,116,139,0.4)"}`,
-                        background: isAmenity ? "linear-gradient(135deg, #1e1b4b, #312e81)" : "rgba(30,27,75,0.4)",
-                        color: isAmenity ? "#e9d5ff" : "#64748b",
-                        display: "flex", flexDirection: "column", alignItems: "center",
-                        gap: 4, cursor: isAmenity ? "pointer" : "not-allowed",
-                        fontSize: 24, opacity: isAmenity ? 1 : 0.45,
-                      }}
-                      title={isAmenity ? `Place ${sub}` : `${sub} — not an amenity`}
-                    >
-                      <span>{label}</span>
-                      <span style={{ fontSize: 9, opacity: 0.8 }}>{sub}</span>
-                    </button>;
-                  })}
+            {/* v199.97/v199.105: Fame amenity picker is now a SLIM NON-BLOCKING BANNER.
+                Players click directly on an amenity die face in the top tray (dice glow
+                amber when picker is active). */}
+            {fameAmenityPending && fameAmenityPending.pid === currentPlayerId && typeof document !== "undefined" && createPortal(
+              <div style={{
+                position: "fixed",
+                top: 12, left: "50%", transform: "translateX(-50%)",
+                zIndex: 9400,
+                padding: "10px 16px",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
+                border: "2px solid #fbbf24",
+                boxShadow: "0 0 24px rgba(251,191,36,0.5)",
+                display: "flex", alignItems: "center", gap: 14,
+                maxWidth: "90vw",
+                animation: "fadeSlideIn 0.25s",
+                backdropFilter: "blur(6px)",
+              }}>
+                <div style={{ fontSize: 20 }}>🔥</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "#fcd34d", fontWeight: 800, letterSpacing: 0.5 }}>Fame Card: {fameAmenityPending.cardName}</div>
+                  <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>Click an amenity die above to place it in your festival.</div>
                 </div>
-                <button onClick={() => { addLog("🔥 Fame", `${currentPlayer?.festivalName}: skipped "${fameAmenityPending.cardName}" bonus amenity.`); setFameAmenityPending(null); }} style={{ ...bs, fontSize: 11, padding: "6px 12px", color: "#64748b" }}>Skip (no amenity face available)</button>
-              </div>
-            </div>, document.body)}
+                <button
+                  onClick={() => { addLog("🔥 Fame", `${currentPlayer?.festivalName}: skipped "${fameAmenityPending.cardName}" bonus amenity.`); setFameAmenityPending(null); }}
+                  style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#cbd5e1", border: "1px solid #475569", background: "rgba(30,27,75,0.6)" }}
+                >
+                  Skip
+                </button>
+              </div>, document.body
+            )}
 
             {/* v199.95: Fame card draw-3-pick-1 modal. Opens when a human gains Fame
                 (microtrend claim or Fame die). Player picks 1 of 3 drawn cards; the
@@ -20480,6 +20533,19 @@ export default function Headliners() {
               setYearEndEffectsList([]); setYearEndEffectIdx(0); setYearEndEffectsPlayer(0);
               setRevealIndex(0); setLeaderboardRevealed(false); setTurnNumber(0);
               setLastAction({}); setCurrentTurnActions({}); setYearlyStats({}); setUndoSnapshot(null); setPendingDiceRoll(null);
+              // v199.104: reset setup/draft state so AI drafts in the new game. Previously these
+              // leaked from the finished game — the draft useEffect saw stale draftIndex and
+              // skipped AI picks on game 2+.
+              setSetupDraftOptions([]); setSetupDraftSelected([]);
+              setDraftRemaining0([]); setDraftRemaining5([]); setUndraftedArtists([]);
+              setDraftCards([]); setDraftOrder([]); setDraftIndex(0);
+              // v199.104: reset all Fame card system state so Fame starts fresh in the new game.
+              setFameDeck([]); setFameDiscardPile([]); setPlayerFameCards({});
+              setFameDrawModal(null); setFameAmenityPending(null); setFameSeasonPicker(null);
+              setFameDrawPicker(null); setPendingReactiveEffects({}); setPendingAfterTriggers({});
+              setFameCardUsedThisTurn({}); setQuickYearTurnsTaken(0);
+              playerFameCardsRef.current = {}; pendingReactiveEffectsRef.current = {};
+              pendingAfterTriggersRef.current = {}; quickYearTurnsTakenRef.current = 0;
             }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
