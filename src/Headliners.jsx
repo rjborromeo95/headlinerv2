@@ -11125,10 +11125,19 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => {
-    // v199.37/v199.58/v199.62: block re-entry if actively mid-Build with picks remaining.
-    // Null turnAction with lingering qyPicksLeft is stale state — auto-reset defensively
-    // rather than refusing the click (fixes the "buttons don't respond" bug).
-    if (turnAction === "pickAmenity" && gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 0) {
+    // v199.37/v199.58/v199.62/v199.83: Quick Play — clicking Build while already in Build
+    // mode acts as a toggle: cancel the action if no picks have been consumed, otherwise
+    // keep the current mode (user must complete remaining picks).
+    if (turnAction === "pickAmenity" && gameModeRef.current === "quickYear") {
+      const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+      const maxPicks = getFameAmenityMax(curPd);
+      if (qyPicksLeftRef.current === maxPicks) {
+        // Nothing consumed yet — cancel.
+        setTurnAction(null);
+        setQyPicksLeft(0);
+        qyPicksLeftRef.current = 0;
+        return;
+      }
       return;
     }
     if (gameModeRef.current === "quickYear" && turnAction === null && qyPicksLeftRef.current > 0) {
@@ -11514,6 +11523,19 @@ export default function Headliners() {
   // Picks remaining are SHARED between Buy and Browse since both are artist actions.
   const handleBuyAction = () => {
     if (turnAction === "artist") {
+      const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+      const maxPicks = getFameArtistMax(curPd);
+      // v199.83: clicking Buy while Buy is already active (artistAction===null) with no
+      // picks consumed → cancel the action (toggle-off).
+      if (artistAction === null && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
+        setTurnAction(null);
+        setArtistAction(null);
+        setQyPicksLeft(0);
+        qyPicksLeftRef.current = 0;
+        setPoolDrawerOpen(true);
+        setShowHand(false);
+        return;
+      }
       // Switching from Browse (or re-entering Buy) — just flip sub-state.
       // Return any staged draw2 picks back to the pool so switching to Buy doesn't lose
       // them silently.
@@ -11533,6 +11555,18 @@ export default function Headliners() {
   };
   const handleBrowseAction = () => {
     if (turnAction === "artist") {
+      const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
+      const maxPicks = getFameArtistMax(curPd);
+      // v199.83: clicking Browse while Browse is already active with no picks consumed
+      // → cancel.
+      if (artistAction === "draw2" && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
+        setTurnAction(null);
+        setArtistAction(null);
+        setQyPicksLeft(0);
+        qyPicksLeftRef.current = 0;
+        setPoolDrawerOpen(true);
+        return;
+      }
       // Switching from Buy (or re-entering Browse) — just flip sub-state.
       setArtistAction("draw2");
       setDraw2Picks([]);
@@ -13991,27 +14025,11 @@ export default function Headliners() {
           3 years · 6 turns per year · Tempt function · Festival Identities · Anti-Lead Mechanics · Council Incentives (amenity trends) & Trending Genres (genre trends)
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label onClick={() => setTotalYears(totalYears === 3 ? 4 : 3)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: totalYears === 4 ? "2px solid #a78bfa" : "1px solid #4c1d95", background: totalYears === 4 ? "rgba(167,139,250,0.10)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${totalYears === 4 ? "#a78bfa" : "#4c1d95"}`, background: totalYears === 4 ? "#a78bfa" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{totalYears === 4 ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: totalYears === 4 ? "#c4b5fd" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🎪 4-Year Mode (6/7/8/8 turn schedule)</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{totalYears === 4 ? "On — a longer game with escalating turn counts. 29 turns per player total." : "Off — standard 3-year game, 6 turns per year (18 turns total)."}</div>
-            </div>
-          </label>
-          <label onClick={() => setStageOpenFameBonus(!stageOpenFameBonus)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: stageOpenFameBonus ? "2px solid #22c55e" : "1px solid #4c1d95", background: stageOpenFameBonus ? "rgba(34,197,94,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${stageOpenFameBonus ? "#22c55e" : "#4c1d95"}`, background: stageOpenFameBonus ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{stageOpenFameBonus ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: stageOpenFameBonus ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🔥 +1 Fame when opening a new stage</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{stageOpenFameBonus ? "On — opening a stage grants +1 Fame at the start of the next year." : "Off — opening a stage is free of Fame reward. Fame is scarcer overall."}</div>
-            </div>
-          </label>
-          <label onClick={() => setInfraRewardsMode(!infraRewardsMode)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: infraRewardsMode ? "2px solid #22c55e" : "1px solid #4c1d95", background: infraRewardsMode ? "rgba(34,197,94,0.08)" : "rgba(124,58,237,0.05)" }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${infraRewardsMode ? "#22c55e" : "#4c1d95"}`, background: infraRewardsMode ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{infraRewardsMode ? "✓" : ""}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ color: infraRewardsMode ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>🏗️ Infrastructure Rewards (Most Campsites / Portaloos / Catering / Security)</div>
-              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{infraRewardsMode ? `On — each amenity type has a game-specific benefit for whoever leads strictly. ${gameMode === "quickYear" ? "3" : "4"} rewards drawn from a pool of 12 at game start; ties = no benefit.` : "Off — amenities don't grant special leader bonuses."}</div>
-            </div>
-          </label>
+          {/* v199.83: 4-Year Mode, +1 Fame on stage open, and Infrastructure Rewards
+              toggles removed from the setup screen per design cleanup. Their state
+              variables remain (defaulting to off / 3 years / no stage-open fame) so no
+              gameplay path depends on them being toggled from here. If needed later,
+              they can be re-added as part of an "advanced options" expander. */}
           {/* v198: Quick Play (1 Year) mode toggle. Switches to the 12-turn, 4-season,
               objective-driven Fame-as-status variant. Rendered last so classic settings
               stack above it and this reads as the "or try this alternate shape" option. */}
@@ -17390,11 +17408,27 @@ export default function Headliners() {
               </div>
             </div>}
 
-            {/* Pick Amenity */}
-            {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && <div style={{ textAlign: "center" }}>
+            {/* v199.83: Quick Play standalone Fame 4+ dice refresh perk (preserved from the
+                Pick Amenity block which is now Classic-only). */}
+            {gameModeRef.current === "quickYear" && !actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && (currentPD?.fame || 0) >= 4 && (
+              <div style={{ marginBottom: 10, textAlign: "center" }}>
+                <button
+                  onClick={handleFameDiceRefresh}
+                  disabled={qyDiceRefreshUsed}
+                  style={{ ...bs, fontSize: 11, padding: "6px 12px", background: qyDiceRefreshUsed ? "rgba(100,116,139,0.08)" : "rgba(251,191,36,0.15)", border: `1px solid ${qyDiceRefreshUsed ? "#475569" : "#fbbf24"}`, color: qyDiceRefreshUsed ? "#64748b" : "#fcd34d", cursor: qyDiceRefreshUsed ? "not-allowed" : "pointer", fontWeight: 700 }}
+                >
+                  {qyDiceRefreshUsed ? "🔥 Dice refresh used this turn" : "🔥 Fame 4+ perk — Refresh dice (free, 1/turn)"}
+                </button>
+              </div>
+            )}
+
+            {/* Pick Amenity — v199.83: Quick Play uses the dice in the top drawer, so this
+                center block is gated to Classic multi-year only. In Quick Play the dice
+                live in the "Artists and Amenities" drawer; clicking the active Build button
+                in the sidebar cancels (replacing this block's Cancel). */}
+            {!actionTaken && turnAction === "pickAmenity" && pickingFieldFor == null && gameModeRef.current !== "quickYear" && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#c4b5fd", fontSize: 13, marginBottom: 12 }}>
                 Pick a die to build that amenity:
-                {gameModeRef.current === "quickYear" && qyPicksLeft > 1 && <span style={{ color: "#fbbf24", marginLeft: 6, fontWeight: 700 }}>· 🔥 {qyPicksLeft} picks left</span>}
               </p>
               <DiceDisplay dice={dice} onPick={handleDiePick} canReroll={diceNeedReroll(dice)} onReroll={handleRerollDice} />
               {/* v199.52: Fame 4+ perk — once-per-turn free dice re-roll. */}
