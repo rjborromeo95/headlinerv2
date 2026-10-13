@@ -3321,6 +3321,37 @@ export default function Headliners() {
     return { total, lines };
   };
 
+  // v199.106: live ticket tally for a single game-end Fame card (shown in brackets on
+  // the Fame tray so players can see how well each End card is paying off right now).
+  const computeFameCardEndTally = (pid, card) => {
+    if (!card || card.trigger !== "game_end") return 0;
+    const pd = (playerDataRef.current || playerData)[pid] || {};
+    const fields = pd.fields || [];
+    const am = { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+    fields.forEach(f => { if (!f) return; Object.keys(am).forEach(k => { am[k] += f[k] || 0; }); });
+    const stages = pd.stageArtists || [];
+    const stageCount = stages.length;
+    let headlinerCount = 0;
+    stages.forEach(sa => sa.forEach(a => { if (a && (a.isHeadliner || (a.fame || 0) >= 5)) headlinerCount++; }));
+    const fame = pd.fame || 0;
+    const pairCS = Math.min(am.catering, am.security);
+    const pairSP = Math.min(am.security, am.portaloo);
+    const pairCP = Math.min(am.catering, am.portaloo);
+    switch (card.effect) {
+      case "end_10":            return 10;
+      case "end_per_catering":  return am.catering * 2;
+      case "end_per_security":  return am.security * 2;
+      case "end_per_portaloo":  return am.portaloo * 2;
+      case "end_per_stage":     return stageCount * 3;
+      case "end_per_headliner": return headlinerCount * 2;
+      case "end_per_fame":      return fame * 2;
+      case "end_pair_cat_sec":  return pairCS * 3;
+      case "end_pair_sec_port": return pairSP * 3;
+      case "end_pair_cat_port": return pairCP * 3;
+      default: return 0;
+    }
+  };
+
   // v199.97/v199.103: YOU MAY card usage tracking. Keyed by `${pid}:${turnCount}:${instanceId}`.
   // v199.103 BUG FIX: previously used `${year}:${season}:${currentPlayerIdx}` as the turn
   // key, but currentPlayerIdx is the TURN ORDER index — it changes between PLAYERS, not
@@ -3433,6 +3464,8 @@ export default function Headliners() {
         addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")} from pool.`);
         setFameDrawPicker(null);
         setTimeout(() => refillPool(), 100);
+        // v199.106: auto-close pool drawer when picker finishes.
+        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
       } else {
         setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
       }
@@ -3465,6 +3498,8 @@ export default function Headliners() {
           showFloatingBonus(`⚠️ ${picked.name} — no match`, "#ef4444");
         }
         setFameDrawPicker(null);
+        // v199.106: auto-close pool drawer when picker finishes.
+        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
         return remainingDeck;
       }
       // Normal mode: add to hand.
@@ -3477,6 +3512,8 @@ export default function Headliners() {
       if (newRemaining <= 0) {
         addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
         setFameDrawPicker(null);
+        // v199.106: auto-close pool drawer when picker finishes.
+        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
       } else {
         setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
       }
@@ -3485,39 +3522,52 @@ export default function Headliners() {
   };
 
   const pickFameAmenity = (dieFaceIdx) => {
-    if (!fameAmenityPending) return;
-    const { pid, cardName } = fameAmenityPending;
-    const face = dice[dieFaceIdx];
-    if (!face || face === "fame" || face === "stage") {
-      addLog("🔥 Fame", `${cardName}: skipped — pick an amenity die (not fame or stage).`);
-      return;
-    }
-    // Place amenity in the lowest-cost field that has room (first field with < 5 amenities).
-    const pd = (playerDataRef.current || playerData)[pid] || {};
-    const fields = pd.fields || emptyFields();
-    let targetField = 0;
-    for (let i = 0; i < fields.length; i++) {
-      const f = fields[i] || {};
-      const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-      if (count < 5) { targetField = i; break; }
-    }
-    setPlayerData(p => {
-      const cur = p[pid];
-      let updated = mutateAmenity(cur, targetField, face, +1);
-      if (face === "security" && cur.vpPerSecurity > 0) {
-        logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus (Fame card)");
-        updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
+    try {
+      if (!fameAmenityPending) return;
+      // v199.106: defensive — if the picker's pid doesn't match the current player,
+      // bail (prevents cross-player amenity applications when state is leaked).
+      const { pid, cardName } = fameAmenityPending;
+      if (pid !== currentPlayerId) {
+        setFameAmenityPending(null);
+        return;
       }
-      return { ...p, [pid]: updated };
-    });
-    // v199.103: consume the die face so subsequent Fame picks (e.g. a second copy of
-    // "after Browse gain amenity") can't claim the same face twice. Previously the dice
-    // array was unchanged after a Fame pick, so duplicate cards drew the same amenity.
-    setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
-    addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
-    if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
-    setFameAmenityPending(null);
-    setTimeout(() => recalcTickets(), 50);
+      const face = dice[dieFaceIdx];
+      if (!face || face === "fame" || face === "stage") {
+        addLog("🔥 Fame", `${cardName}: skipped — pick an amenity die (not fame or stage).`);
+        return;
+      }
+      setPlayerData(p => {
+        const cur = p[pid];
+        if (!cur) return p; // defensive — player data missing
+        // Place amenity in first field with < 5 amenities, read from the current state.
+        const fields = cur.fields || emptyFields();
+        let targetField = 0;
+        for (let i = 0; i < fields.length; i++) {
+          const f = fields[i] || {};
+          const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+          if (count < 5) { targetField = i; break; }
+        }
+        let updated = mutateAmenity(cur, targetField, face, +1);
+        if (face === "security" && cur.vpPerSecurity > 0) {
+          logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus (Fame card)");
+          updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
+        }
+        addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
+        return { ...p, [pid]: updated };
+      });
+      // v199.103: consume the die face so a second Fame card can't claim it.
+      setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
+      setFameAmenityPending(null);
+      // v199.106: auto-close pool drawer if no other Fame picker is still active.
+      setTimeout(() => {
+        if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+      }, 100);
+      setTimeout(() => recalcTickets(), 50);
+    } catch (e) {
+      console.error("pickFameAmenity error:", e);
+      setFameAmenityPending(null);
+    }
   };
 
   // v199.99/v199.101: season-start picker resolvers. All setPlayerData calls use
@@ -3726,12 +3776,23 @@ export default function Headliners() {
     });
   };
 
-  // v199.95: Fame card effect dispatcher. Only the simplest effects (artist draws) are
-  // wired in this build; amenity-die, YOU MAY, reactive, season_start, and game_end
-  // effects defer to later phases with a TODO log entry.
+  // v199.95/v199.106: Fame card effect dispatcher. Wrapped in try-catch so a single
+  // bad card doesn't crash the whole game. Error gets logged + card is skipped.
   const fireFameCardEffect = (pid, card, ctx) => {
+    if (!card || !card.effect) {
+      addLog("🔥 Fame", `Skipped malformed Fame card${card?.name ? ` "${card.name}"` : ""}.`);
+      return;
+    }
     const player = players.find(pl => pl.id === pid);
     const festName = player?.festivalName || "?";
+    try {
+      _fireFameCardEffectInner(pid, card, ctx, player, festName);
+    } catch (e) {
+      console.error(`Fame card "${card.name}" (${card.effect}) error:`, e);
+      addLog("🔥 Fame", `⚠️ "${card.name}" failed to resolve (${e?.message || "unknown error"}). Card remains in your tray.`);
+    }
+  };
+  const _fireFameCardEffectInner = (pid, card, ctx, player, festName) => {
     switch (card.effect) {
       case "draw_2_artists": {
         // v199.101: humans see a picker (pool OR deck, any combination of 2); AI
@@ -17209,8 +17270,12 @@ export default function Headliners() {
                              card.category === "reactive" ? "Reactive" :
                              card.category === "season_start" ? "Season" : "End"}
                           </div>
-                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
+                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                            <div>{card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}</div>
+                            {card.category === "game_end" && (() => {
+                              const tally = computeFameCardEndTally(viewingPlayerId, card);
+                              return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
+                            })()}
                           </div>
                         </>
                       )}
@@ -17649,13 +17714,18 @@ export default function Headliners() {
                            card.category === "reactive" ? "Reactive" :
                            card.category === "season_start" ? "Season" : "End"}
                         </div>
-                        <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
+                        <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                          <div>{card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}</div>
+                          {/* v199.106: live game-end tally for END cards. */}
+                          {card.category === "game_end" && (() => {
+                            const tally = computeFameCardEndTally(currentPlayerId, card);
+                            return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
+                          })()}
                         </div>
                       </>
                     );
                     const titleText = card
-                      ? `${card.name} — ${card.desc}${afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}`
+                      ? `${card.name} — ${card.desc}${afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}${card.category === "game_end" ? ` · currently worth ${computeFameCardEndTally(currentPlayerId, card)} 🎟️` : ""}`
                       : "Empty slot — gain Fame to draw a card";
                     return clickable ? (
                       <button key={i} onClick={() => activateFameCard(currentPlayerId, card)} style={{ ...slotStyle, color: "inherit", font: "inherit" }} title={titleText}>
@@ -18279,7 +18349,7 @@ export default function Headliners() {
                           picker is active with allowDeck. v199.105: Fame-pick mode replaces
                           the previous modal UI; pick directly from the top tray. */}
                       {(() => {
-                        const fameDeckActive = !!fameDrawPicker && fameDrawPicker.allowDeck && artistDeck.length > 0;
+                        const fameDeckActive = !!fameDrawPicker && fameDrawPicker.pid === currentPlayerId && fameDrawPicker.allowDeck && artistDeck.length > 0;
                         const deckClickable = canBrowseDeck || fameDeckActive;
                         const fameHighlight = fameDeckActive;
                         return <div
@@ -18317,9 +18387,9 @@ export default function Headliners() {
                         const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                         const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                         const browseClickable = canBrowsePool && !claimedByOther;
-                        // v199.105: Fame draw picker — pool cards are clickable from the
-                        // top tray when the picker is active. Replaces the previous modal UI.
-                        const famePoolActive = !!fameDrawPicker && !claimedByOther;
+                        // v199.105/v199.106: Fame draw picker — pool cards are clickable from
+                        // the top tray when the picker is active for current player.
+                        const famePoolActive = !!fameDrawPicker && fameDrawPicker.pid === currentPlayerId && !claimedByOther;
                         return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
                           <ArtistCard artist={a} showCost small
                             affordable={browseClickable || famePoolActive ? true : canBookArtistAnywhere(a, currentPD)}
@@ -18356,10 +18426,11 @@ export default function Headliners() {
                           const isStage = d === "stage";
                           const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
                           const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
-                          // v199.105: when a Fame amenity pick is pending, dice are clickable
-                          // for the Fame pick (only amenity faces, not fame/stage). This
-                          // replaces the previous modal UI — pick directly from the top tray.
-                          const famePickActive = !!fameAmenityPending && !isFame && !isStage;
+                          // v199.105/v199.106: when a Fame amenity pick is pending FOR THE
+                          // CURRENT PLAYER, dice are clickable for the Fame pick (only
+                          // amenity faces, not fame/stage). Pid-match guard prevents
+                          // cross-player state leaks.
+                          const famePickActive = !!fameAmenityPending && fameAmenityPending.pid === currentPlayerId && !isFame && !isStage;
                           const diceClickable = inBuildMode || famePickActive;
                           const borderColor = famePickActive ? "#fbbf24" : inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed") : "rgba(100,116,139,0.4)";
                           const bg = diceClickable
