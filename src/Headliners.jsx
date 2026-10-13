@@ -16150,7 +16150,7 @@ export default function Headliners() {
         </div>;
       })()}
 
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: "100vh" }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", height: "100vh", overflow: "hidden" }}>
         {/* Desktop: classic sidebar | Mobile: horizontal player bar */}
         {!isMobile ? <div style={{ width: 220, padding: 16, borderRight: "1px solid #2a2a4a", overflowY: "auto", flexShrink: 0 }}>
           {winCondition && gameMode !== "quickYear" && <div style={{ padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(251,191,36,0.14), rgba(124,58,237,0.06))", border: "1px solid rgba(251,191,36,0.4)", marginBottom: 10, fontSize: 10, color: "#fbbf24", textAlign: "center", fontWeight: 700, letterSpacing: 0.5 }} title={winCondition === "consistency" ? "Most years led in tickets wins. Ties → cumulative total." : winCondition === "following" ? "Highest cumulative tickets across all years wins." : "Highest single-year ticket count wins."}>🏆 {winCondition === "consistency" ? "Consistency" : winCondition === "following" ? "Following" : "Talk of the Town"}</div>}
@@ -16211,10 +16211,10 @@ export default function Headliners() {
               {sidebarView === "objectives" ? "← Back to Quick view" : "Objectives"}
             </button>
           )}
-          {/* v199.88: Default view — players + actions + supporting info. Hidden when
-              Objectives view is active. */}
-          {sidebarView === "default" && <>
-          {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
+          {/* v199.88/v199.89: Default view content gated INDIVIDUALLY per panel on
+              sidebarView to avoid fragment nesting issues. Legendary Lineup below is
+              gated to objectives view. */}
+          {sidebarView === "default" && players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
               : ic ? "rgba(124,58,237,0.2)"
@@ -16377,7 +16377,7 @@ export default function Headliners() {
               normal handler AND opens the Fame tray drawer below, showing a visual
               representation of the player's Fame as 5 star-slots. Future: those slots
               will hold Fame cards that activate/deactivate based on the chosen action. */}
-          {phase === "game" && gameMode === "quickYear" && (() => {
+          {sidebarView === "default" && phase === "game" && gameMode === "quickYear" && (() => {
             const pd = playerData[currentPlayerId] || {};
             const fame = pd.fame || 0;
             // Detect which action (if any) is currently active.
@@ -16528,9 +16528,9 @@ export default function Headliners() {
             </div>;
           })()}
 
-          <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
+          {sidebarView === "default" && <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
-          </div>
+          </div>}
           {/* ── Always-visible Trending Lineups panel (desktop). The trending-lineup race is
               the game's most engaging mechanic — promoted out of the tab system so players
               always see what they're racing for. ── */}
@@ -16574,10 +16574,9 @@ export default function Headliners() {
             {/* v199.74: Microtrends tab removed per design. Microtrend info now surfaces
                 via the microtrend banner above the player's stat row rather than a dedicated
                 sidebar tab. The "🎯 My" tab stays for classic objective-mode play. */}
-            {!altObjectivesMode && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+            {sidebarView === "default" && !altObjectivesMode && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
               <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
             </div>}
-            </>}
             {/* v199.21/v199.88: Legendary Lineup panel. Now shown ONLY in the Objectives
                 sidebar view (toggled via the button above). v199.22: tokens are per-player
                 (not first-come), so each requirement row shows a colored dot for every
@@ -16765,7 +16764,10 @@ export default function Headliners() {
                 </div>;
               })}
             </div>}
-            {sidebarTab === "my" && <div style={{ marginTop: 6 }}>
+            {/* v199.89: "My" tab content (Artist Objectives + Fame→VP box) removed in
+                Quick Play per design — these were Classic-mode concepts that didn't apply
+                to the Quick Play ticket-based scoring. Classic multi-year keeps them. */}
+            {sidebarTab === "my" && gameMode !== "quickYear" && <div style={{ marginTop: 6 }}>
               {(playerObjectives[currentPlayerId] || []).length > 0 && (() => { return <div style={{ marginBottom: 6 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: "#c4b5fd", textTransform: "uppercase" }}>🎯 Artist Objectives</div>
                 {(playerObjectives[currentPlayerId] || []).map((entry, oi) => { const r = evalArtistObjective(entry.obj, currentPD); return <div key={oi} style={{ padding: 6, borderRadius: 6, background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)", marginBottom: 4 }}>
