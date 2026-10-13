@@ -3745,6 +3745,10 @@ export default function Headliners() {
   const [showObjectives, setShowObjectives] = useState(false);
   const [showStageDetail, setShowStageDetail] = useState(null);
   const [sidebarTab, setSidebarTab] = useState("my");
+  // v199.88: sidebar quick-view ↔ objectives toggle. "default" shows the player stat rows
+  // + Actions panel + deck info + supporting panels. "objectives" hides those and surfaces
+  // the Legendary Lineup panel instead. Toggle button sits under the microtrend banner.
+  const [sidebarView, setSidebarView] = useState("default");
   const [showYearAnnouncement, setShowYearAnnouncement] = useState(false);
 
   const [viewingPlayerId, setViewingPlayerId] = useState(null);
@@ -16185,6 +16189,31 @@ export default function Headliners() {
               )}
             </div>;
           })() : <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>}
+          {/* v199.88: Objectives toggle — switches the sidebar between the default view
+              (player stat rows + Actions panel + supporting panels) and the objectives
+              view (Legendary Lineup). Only shown in Quick Play since the Legendary Lineup
+              panel is Quick-Play-only. */}
+          {gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
+            <button
+              onClick={() => setSidebarView(sidebarView === "objectives" ? "default" : "objectives")}
+              style={{
+                width: "100%", marginBottom: 10,
+                padding: "10px 12px", borderRadius: 10,
+                border: `1px solid ${sidebarView === "objectives" ? "#64748b" : "#7c3aed"}`,
+                background: sidebarView === "objectives" ? "rgba(100,116,139,0.2)" : "rgba(124,58,237,0.2)",
+                color: sidebarView === "objectives" ? "#94a3b8" : "#e9d5ff",
+                fontSize: 12, fontWeight: 700,
+                cursor: "pointer", textTransform: "uppercase", letterSpacing: 1,
+                transition: "all 0.15s",
+              }}
+              title={sidebarView === "objectives" ? "Click to return to Quick view" : "Click to view Legendary objectives"}
+            >
+              {sidebarView === "objectives" ? "← Back to Quick view" : "Objectives"}
+            </button>
+          )}
+          {/* v199.88: Default view — players + actions + supporting info. Hidden when
+              Objectives view is active. */}
+          {sidebarView === "default" && <>
           {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
@@ -16548,11 +16577,12 @@ export default function Headliners() {
             {!altObjectivesMode && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
               <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
             </div>}
-            {/* v199.21: Legendary Lineup panel. v199.22: tokens are per-player (not first-come),
-                so each requirement row shows a colored dot for every player who's claimed it.
-                Current season's row is highlighted. Gold styling throughout to signal the
-                "legendary" theme. */}
-            {gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
+            </>}
+            {/* v199.21/v199.88: Legendary Lineup panel. Now shown ONLY in the Objectives
+                sidebar view (toggled via the button above). v199.22: tokens are per-player
+                (not first-come), so each requirement row shows a colored dot for every
+                player who's claimed it. Gold styling throughout. */}
+            {sidebarView === "objectives" && gameMode === "quickYear" && gameLegendaryArtists.length > 0 && (
               <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "linear-gradient(180deg, rgba(252,211,77,0.22) 0%, rgba(234,179,8,0.12) 60%, rgba(168,85,247,0.08) 100%)", border: "2px solid rgba(252,211,77,0.65)", boxShadow: "0 0 16px rgba(252,211,77,0.18), inset 0 1px 0 rgba(255,255,255,0.05)" }}>
                 <div style={{ color: "#fde68a", fontWeight: 800, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center", textShadow: "0 0 8px rgba(252,211,77,0.4)" }}>🎸 Legendary Lineup</div>
 
@@ -16648,11 +16678,10 @@ export default function Headliners() {
                 felt cluttered given the per-player ticket displays elsewhere in the sidebar.
                 Season Objective race info (+4/+3 tickets) still fires in gameplay but is no
                 longer rendered here as a sub-panel. */}
-            {/* v199.7: Hotline agent panel. Only shows the CURRENT player's own agent card.
-                Opponents' agents are private — the only indication other players have an
-                agent is a one-line "N opponents have agents" count (no names, no effects).
-                Agents become visible to all once used, via the game log. */}
-            {gameMode === "quickYear" && Object.keys(hotlineAgents).length > 0 && (() => {
+            {/* v199.7/v199.88: Hotline agent panel. Only shows the CURRENT player's own
+                agent card. Opponents' agents are private. v199.88: gated to the default
+                sidebar view (hidden in Objectives view). */}
+            {sidebarView === "default" && gameMode === "quickYear" && Object.keys(hotlineAgents).length > 0 && (() => {
               const myAgent = hotlineAgents[currentPlayerId];
               const myUsed = hotlineUsed[currentPlayerId];
               const opponentsWithAgents = players.filter(p => p.id !== currentPlayerId && hotlineAgents[p.id]).length;
@@ -16679,11 +16708,9 @@ export default function Headliners() {
                 </div>
               );
             })()}
-            {/* v197.14: Infrastructure Rewards panel — moved OUT of the microtrends tab so
-                it's always visible during gameplay regardless of which sidebar tab is
-                selected. Shows current reward + leader per amenity. Refreshes live as
-                amenities change (getInfraLeader reads playerDataRef for freshness). */}
-            {infraRewardsMode && infraRewards && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.25)" }}>
+            {/* v197.14/v199.88: Infrastructure Rewards panel — gated to default sidebar
+                view. Shows current reward + leader per amenity. */}
+            {sidebarView === "default" && infraRewardsMode && infraRewards && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(251,146,60,0.06)", border: "1px solid rgba(251,146,60,0.25)" }}>
               <div style={{ color: "#fb923c", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🏗️ Infrastructure Rewards</div>
               {["campsite", "portaloo", "catering", "security"].map(amenity => {
                 const rewardId = infraRewards[amenity];
