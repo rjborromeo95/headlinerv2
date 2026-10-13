@@ -11127,6 +11127,10 @@ export default function Headliners() {
       const maxPicks = getFameAmenityMax(pd);
       setQyPicksLeft(maxPicks);
       qyPicksLeftRef.current = maxPicks;
+      // v199.76: open the pool drawer (now "Artists and Amenities") so the dice are visible
+      // for Build selection. Close the hand drawer — not needed for Build.
+      setPoolDrawerOpen(true);
+      setShowHand(false);
     }
   };
   // Direct amenity placement when player picks a die. Build 1: defaults to field 0.
@@ -16749,26 +16753,37 @@ export default function Headliners() {
               cards are clickable — this IS the Browse UI now. */}
           {(() => {
             const inBrowseMode = turnAction === "artist" && artistAction === "draw2" && !actionTaken;
+            const inBuildMode = turnAction === "pickAmenity" && pickingFieldFor == null && !actionTaken;
             const canBrowsePool = inBrowseMode && draw2Picks.length === 0;
             const canBrowseDeck = inBrowseMode && draw2Picks.length === 0 && artistDeck.length > 0;
+            // v199.76: tab accent — green in Browse mode, amber in Build mode, purple default.
+            const tabBorder = inBrowseMode ? "rgba(34,197,94,0.6)" : (inBuildMode ? "rgba(251,191,36,0.6)" : "rgba(124,58,237,0.3)");
+            const tabBg = inBrowseMode
+              ? "linear-gradient(180deg, rgba(21,128,61,0.5), rgba(21,128,61,0.2))"
+              : (inBuildMode
+                  ? "linear-gradient(180deg, rgba(146,64,14,0.5), rgba(146,64,14,0.2))"
+                  : "linear-gradient(180deg, rgba(76,29,149,0.4), rgba(76,29,149,0.15))");
+            const tabColor = inBrowseMode ? "#bbf7d0" : (inBuildMode ? "#fde68a" : "#e9d5ff");
+            const tabShadow = inBrowseMode ? "0 0 12px rgba(34,197,94,0.35)" : (inBuildMode ? "0 0 12px rgba(251,191,36,0.35)" : "none");
+            const tabLabel = inBrowseMode
+              ? "Browsing — click deck or pool card"
+              : (inBuildMode ? "Building — click a die to place" : "Artists and Amenities");
             return <div style={{ marginBottom: 10, position: "relative" }}>
               <button
                 onClick={() => setPoolDrawerOpen(!poolDrawerOpen)}
                 style={{
                   width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
                   padding: "10px 16px", borderRadius: 10,
-                  border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.6)" : "rgba(124,58,237,0.3)"}`,
-                  background: inBrowseMode
-                    ? "linear-gradient(180deg, rgba(21,128,61,0.5), rgba(21,128,61,0.2))"
-                    : "linear-gradient(180deg, rgba(76,29,149,0.4), rgba(76,29,149,0.15))",
-                  color: inBrowseMode ? "#bbf7d0" : "#e9d5ff",
+                  border: `1px solid ${tabBorder}`,
+                  background: tabBg,
+                  color: tabColor,
                   fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer",
                   textTransform: "uppercase",
-                  boxShadow: inBrowseMode ? "0 0 12px rgba(34,197,94,0.35)" : "none",
+                  boxShadow: tabShadow,
                 }}
-                title={poolDrawerOpen ? "Click to collapse pool" : "Click to expand pool"}
+                title={poolDrawerOpen ? "Click to collapse" : "Click to expand"}
               >
-                {inBrowseMode ? "Browsing — click deck or pool card" : `Artist Pool (${artistPool.length})`}
+                {tabLabel}
                 <span style={{ fontSize: 12, opacity: 0.7 }}>{poolDrawerOpen ? "▲" : "▼"}</span>
               </button>
               {poolDrawerOpen && (
@@ -16778,13 +16793,13 @@ export default function Headliners() {
                   zIndex: 20,
                   padding: 12, borderRadius: 10,
                   background: "rgba(15,14,26,0.96)",
-                  border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.3)" : "rgba(124,58,237,0.25)"}`,
+                  border: `1px solid ${inBrowseMode ? "rgba(34,197,94,0.3)" : (inBuildMode ? "rgba(251,191,36,0.3)" : "rgba(124,58,237,0.25)")}`,
                   boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
                   backdropFilter: "blur(4px)",
                   animation: "slideDownIn 0.18s ease-out",
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length})</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>📦 Deck ({artistDeck.length}) · 🗑️ Discard ({discardPile.length}) · 🎲 Amenity Dice</div>
                     {(() => {
                       if (!hasInfraReward(currentPlayerId, "port_1")) return null;
                       const usageKey = `port_1:${currentPlayerId}:${turnNumber}`;
@@ -16806,55 +16821,98 @@ export default function Headliners() {
                       </button>;
                     })()}
                   </div>
-                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
-                    {/* Deck slot — click to draw when in Browse mode. */}
-                    <div
-                      onClick={() => { if (canBrowseDeck) draw2PickFromDeck(); }}
-                      style={{
-                        minWidth: isMobile ? 100 : 85,
-                        width: isMobile ? 100 : 85,
-                        minHeight: isMobile ? 155 : 130,
-                        borderRadius: 10,
-                        background: canBrowseDeck
-                          ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
-                          : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
-                        border: canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
-                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                        gap: 4, flexShrink: 0,
-                        color: canBrowseDeck ? "#bbf7d0" : "#94a3b8",
-                        cursor: canBrowseDeck ? "pointer" : "default",
-                        boxShadow: canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
-                        animation: canBrowseDeck ? "affordPulse 2s ease-in-out infinite" : "none",
-                      }}
-                      title={canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
-                    >
-                      <div style={{ fontSize: 24, opacity: canBrowseDeck ? 1 : 0.5 }}>🎴</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                      <div style={{ fontSize: 14, fontWeight: 900, color: canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
-                      {canBrowseDeck && <div style={{ fontSize: 9, color: "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                  {/* v199.76: two-column layout — artists on the left, shared amenity dice
+                      on the right. Dice are informational by default; clickable in Build mode. */}
+                  <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6, alignItems: "stretch" }}>
+                      {/* Deck slot — click to draw when in Browse mode. */}
+                      <div
+                        onClick={() => { if (canBrowseDeck) draw2PickFromDeck(); }}
+                        style={{
+                          minWidth: isMobile ? 100 : 85,
+                          width: isMobile ? 100 : 85,
+                          minHeight: isMobile ? 155 : 130,
+                          borderRadius: 10,
+                          background: canBrowseDeck
+                            ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
+                            : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
+                          border: canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          gap: 4, flexShrink: 0,
+                          color: canBrowseDeck ? "#bbf7d0" : "#94a3b8",
+                          cursor: canBrowseDeck ? "pointer" : "default",
+                          boxShadow: canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
+                          animation: canBrowseDeck ? "affordPulse 2s ease-in-out infinite" : "none",
+                        }}
+                        title={canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
+                      >
+                        <div style={{ fontSize: 24, opacity: canBrowseDeck ? 1 : 0.5 }}>🎴</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                        {canBrowseDeck && <div style={{ fontSize: 9, color: "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                      </div>
+                      {artistPool.map((a, i) => {
+                        const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
+                        const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
+                        const browseClickable = canBrowsePool && !claimedByOther;
+                        return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
+                          <ArtistCard artist={a} showCost small
+                            affordable={browseClickable ? true : canBookArtistAnywhere(a, currentPD)}
+                            genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
+                            disabled={!browseClickable && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
+                            onClick={browseClickable
+                              ? () => draw2PickFromPool(i)
+                              : () => { if (artistAction === null && !actionTaken) {} }}
+                          />
+                          {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
+                            {agentsOnThis.map(([pid, p], ai) => {
+                              const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
+                              return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
+                            })}
+                          </div>}
+                        </div>;
+                      })}
+                      {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
                     </div>
-                    {artistPool.map((a, i) => {
-                      const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
-                      const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
-                      const browseClickable = canBrowsePool && !claimedByOther;
-                      return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
-                        <ArtistCard artist={a} showCost small
-                          affordable={browseClickable ? true : canBookArtistAnywhere(a, currentPD)}
-                          genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
-                          disabled={!browseClickable && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
-                          onClick={browseClickable
-                            ? () => draw2PickFromPool(i)
-                            : () => { if (artistAction === null && !actionTaken) {} }}
-                        />
-                        {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
-                          {agentsOnThis.map(([pid, p], ai) => {
-                            const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
-                            return <div key={ai} style={{ background: pColor, borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: "2px solid #1e1b4b" }}>🕵️</div>;
-                          })}
-                        </div>}
-                      </div>;
-                    })}
-                    {artistPool.length === 0 && <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", alignSelf: "center", paddingLeft: 10 }}>Pool is empty — draw from deck or wait for refresh</div>}
+
+                    {/* v199.76: shared amenity dice panel on the right. 3-column grid of
+                        compact die buttons. Clickable in Build mode (turnAction === "pickAmenity").
+                        In other modes, dice render dim and non-interactive (reference only). */}
+                    {dice && dice.length > 0 && (
+                      <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, maxWidth: 240 }}>
+                        {dice.map((d, i) => {
+                          const isFame = d === "fame";
+                          const isStage = d === "stage";
+                          const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
+                          const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
+                          const borderColor = inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed") : "rgba(100,116,139,0.4)";
+                          const bg = inBuildMode
+                            ? (isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)")
+                            : "rgba(30,27,75,0.4)";
+                          const textColor = inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#e9d5ff") : "#94a3b8";
+                          return <button
+                            key={i}
+                            onClick={() => { if (inBuildMode) handleDiePick(i, d); }}
+                            disabled={!inBuildMode}
+                            style={{
+                              width: 68, height: 72, borderRadius: 10,
+                              border: `2px solid ${borderColor}`,
+                              background: bg, color: textColor,
+                              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                              gap: 2, cursor: inBuildMode ? "pointer" : "default",
+                              fontSize: 20, opacity: inBuildMode ? 1 : 0.55,
+                              transition: "all 0.2s",
+                              boxShadow: inBuildMode ? "0 0 10px rgba(251,191,36,0.25)" : "none",
+                              animation: inBuildMode ? "affordPulse 2s ease-in-out infinite" : "none",
+                            }}
+                            title={inBuildMode ? `Pick ${sub}` : `${sub} (click Build to use)`}
+                          >
+                            <span>{label}</span>
+                            <span style={{ fontSize: 8, opacity: 0.8 }}>{sub}</span>
+                          </button>;
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
