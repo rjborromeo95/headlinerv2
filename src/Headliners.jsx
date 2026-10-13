@@ -11505,16 +11505,42 @@ export default function Headliners() {
     }
   };
 
-  // v199.75: split "Browse or Buy" into two actions. Both still route through
+  // v199.75/v199.82: split "Browse or Buy" into two actions. Both still route through
   // handleArtistAction for state setup, then flip drawer visibility to match intent.
   //   Buy    → close pool, open hand (play from hand)
   //   Browse → open pool, close hand (draw from deck or pool), set artistAction="draw2"
+  // v199.82: when ALREADY in artist mode (switching Buy ↔ Browse mid-action), skip
+  // handleArtistAction (which bails if qyPicksLeft > 0) and just flip the sub-state.
+  // Picks remaining are SHARED between Buy and Browse since both are artist actions.
   const handleBuyAction = () => {
+    if (turnAction === "artist") {
+      // Switching from Browse (or re-entering Buy) — just flip sub-state.
+      // Return any staged draw2 picks back to the pool so switching to Buy doesn't lose
+      // them silently.
+      if (draw2Picks && draw2Picks.length > 0) {
+        draw2Picks.forEach(a => setArtistPool(prev => [...prev, a]));
+        setDraw2Picks([]);
+      }
+      setDraw2DeckCard(null);
+      setArtistAction(null);
+      setPoolDrawerOpen(false);
+      setShowHand(true);
+      return;
+    }
     handleArtistAction();
     setPoolDrawerOpen(false);
     setShowHand(true);
   };
   const handleBrowseAction = () => {
+    if (turnAction === "artist") {
+      // Switching from Buy (or re-entering Browse) — just flip sub-state.
+      setArtistAction("draw2");
+      setDraw2Picks([]);
+      setDraw2DeckCard(null);
+      setPoolDrawerOpen(true);
+      setShowHand(false);
+      return;
+    }
     handleArtistAction();
     // Set draw2 state so the pool drawer enters Browse mode (deck + pool cards clickable).
     setArtistAction("draw2");
@@ -13872,7 +13898,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } }`}</style>;
+  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes slideRightIn { from { opacity:0; transform:translateX(-12px) scaleX(0.92); transform-origin: left; } to { opacity:1; transform:translateX(0) scaleX(1); transform-origin: left; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -16290,7 +16316,12 @@ export default function Headliners() {
             // without needing the central banner.
             const picksLeft = qyPicksLeft || 0;
             const picksLabel = picksLeft > 0 ? ` · ${picksLeft} left` : "";
-            return <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            // v199.82: Actions row + Fame tray opens horizontally to the right.
+            // position:relative on the Actions container → absolute-positioned Fame tray
+            // extends `left: 100%` into the main area, overlaying center content with high
+            // z-index. The sidebar's overflow-y:auto doesn't clip horizontal overflow
+            // (overflow-x defaults to visible when only overflow-y is set to auto).
+            return <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
               {/* ACTIONS row — vertical label + stacked buttons */}
               <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
                 <div style={{
@@ -16328,41 +16359,49 @@ export default function Headliners() {
                   }}>🎤 Browse{browseActive ? picksLabel : ""}</button>
                 </div>
               </div>
-              {/* v199.81: Fame tray — stacked BELOW the actions row (previously squeezed to the
-                  right where it got clipped). Full sidebar width + larger stars + readable
-                  tier badges. Opens whenever an action is active. */}
+              {/* v199.82: Fame tray opens to the RIGHT of the actions, extending into the
+                  main area. absolute-positioned with left: calc(100% + 10px) and a wider
+                  fixed width so stars/badges aren't cramped. z-index 50 keeps it above
+                  center content. */}
               {anyActive && <div style={{
+                position: "absolute",
+                left: "calc(100% + 10px)",
+                top: 0,
+                width: 340,
+                zIndex: 50,
                 display: "flex",
                 flexDirection: "column",
-                padding: "10px 12px",
-                borderRadius: 10,
-                background: "linear-gradient(180deg, rgba(76,29,149,0.3), rgba(76,29,149,0.1))",
-                border: "1px solid rgba(251,191,36,0.3)",
-                animation: "slideDownIn 0.18s ease-out",
-                gap: 8,
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: "linear-gradient(180deg, rgba(76,29,149,0.92), rgba(45,16,96,0.92))",
+                border: "1px solid rgba(251,191,36,0.4)",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                backdropFilter: "blur(4px)",
+                animation: "slideRightIn 0.18s ease-out",
+                gap: 10,
               }}>
-                <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center" }}>Fame Tray</div>
-                {/* v199.81: Larger star row with tier-benefit indicators at 2★ and 4★. Full
-                    sidebar width means stars can be 26px and badges can be 9-10px readable. */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, alignItems: "end" }}>
+                <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray</div>
+                {/* v199.82: Fame tray extends into main area with 340px fixed width — stars
+                    at 32px, benefit badges at 10px, generous padding. */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, alignItems: "end" }}>
                   {[1,2,3,4,5].map(i => {
                     const filled = i <= fame;
                     const isTierStart = i === 2 || i === 4;
                     const tierReached = isTierStart && fame >= i;
-                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                       {/* Tier benefit indicator ABOVE the star */}
                       {i === 2 && <div style={{
-                        fontSize: 9, lineHeight: 1.2,
+                        fontSize: 10, lineHeight: 1.25,
                         color: tierReached ? "#86efac" : "#64748b",
                         fontWeight: 700,
                         textAlign: "center",
                         textTransform: "uppercase",
-                        letterSpacing: 0.3,
-                        padding: "4px 4px",
-                        borderRadius: 6,
+                        letterSpacing: 0.4,
+                        padding: "6px 4px",
+                        borderRadius: 8,
                         background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
                         border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
-                        minHeight: 36,
+                        minHeight: 48,
                         display: "flex", flexDirection: "column", justifyContent: "center",
                         width: "100%",
                       }} title={tierReached ? "Fame 2-3 tier benefits active" : "Reach Fame 2 to unlock"}>
@@ -16370,17 +16409,17 @@ export default function Headliners() {
                         <div>+1 draw</div>
                       </div>}
                       {i === 4 && <div style={{
-                        fontSize: 9, lineHeight: 1.2,
+                        fontSize: 10, lineHeight: 1.25,
                         color: tierReached ? "#86efac" : "#64748b",
                         fontWeight: 700,
                         textAlign: "center",
                         textTransform: "uppercase",
-                        letterSpacing: 0.3,
-                        padding: "4px 4px",
-                        borderRadius: 6,
+                        letterSpacing: 0.4,
+                        padding: "6px 4px",
+                        borderRadius: 8,
                         background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
                         border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
-                        minHeight: 36,
+                        minHeight: 48,
                         display: "flex", flexDirection: "column", justifyContent: "center",
                         width: "100%",
                       }} title={tierReached ? "Fame 4-5 tier benefits active" : "Reach Fame 4 to unlock"}>
@@ -16388,19 +16427,19 @@ export default function Headliners() {
                         <div>dice</div>
                       </div>}
                       {/* Blank spacers at non-tier positions keep the stars aligned to the same baseline. */}
-                      {!isTierStart && <div style={{ minHeight: 36 }} />}
-                      {/* The star itself — bigger now that we have room */}
+                      {!isTierStart && <div style={{ minHeight: 48 }} />}
+                      {/* The star itself — big and glowy now */}
                       <span style={{
-                        fontSize: 26,
+                        fontSize: 32,
                         color: filled ? "#fbbf24" : "#312e81",
-                        textShadow: filled ? "0 0 8px rgba(251,191,36,0.75)" : "none",
+                        textShadow: filled ? "0 0 10px rgba(251,191,36,0.8)" : "none",
                         lineHeight: 1,
                         transition: "all 0.2s",
                       }}>★</span>
                     </div>;
                   })}
                 </div>
-                <div style={{ fontSize: 9, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
+                <div style={{ fontSize: 10, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
               </div>}
             </div>;
           })()}
@@ -17329,25 +17368,18 @@ export default function Headliners() {
                 );
               })()}
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                {/* v199.75: three distinct action buttons — Build / Buy / Browse.
-                    Buy opens the hand drawer (play from hand).
-                    Browse opens the pool drawer with deck+pool clickable (draw to hand).
-                    Classic multi-year still shows the legacy "Book / Reserve Artist" label. */}
-                <button onClick={handlePickAmenity} style={bp}>
-                  {gameModeRef.current === "quickYear" ? "🏗️ Build" : "🎲 Pick Amenity"}
-                </button>
-                {gameModeRef.current === "quickYear" ? <>
-                  <button onClick={handleBuyAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(190,24,93,0.3))", border: "1px solid #ec4899", color: "#fbcfe8", fontWeight: 700 }}>
-                    💳 Buy
+                {/* v199.75/v199.82: Quick Play Build/Buy/Browse buttons REMOVED from center —
+                    they live exclusively in the sidebar Actions panel now. Classic
+                    multi-year keeps its central buttons since Classic doesn't render the
+                    sidebar Actions panel (that panel is gated on quickYear). */}
+                {gameModeRef.current !== "quickYear" && <>
+                  <button onClick={handlePickAmenity} style={bp}>
+                    🎲 Pick Amenity
                   </button>
-                  <button onClick={handleBrowseAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.3))", border: "1px solid #22c55e", color: "#bbf7d0", fontWeight: 700 }}>
-                    🎤 Browse
-                  </button>
-                </> : (
                   <button onClick={handleArtistAction} style={{ ...bs, background: "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(249,115,22,0.3))", border: "1px solid #ec4899" }}>
                     🎤 Book / Reserve Artist
                   </button>
-                )}
+                </>}
                 {hasAgent(currentPlayerId) && (() => {
                   const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
                   const label = gameMode === "quickYear" && temptMode
