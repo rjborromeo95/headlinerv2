@@ -16286,8 +16286,12 @@ export default function Headliners() {
               display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
               transition: "all 0.15s",
             };
-            return <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "stretch" }}>
-              {/* ACTIONS column — vertical label + stacked buttons */}
+            // v199.81: picks counter shown on the active button so the user sees progress
+            // without needing the central banner.
+            const picksLeft = qyPicksLeft || 0;
+            const picksLabel = picksLeft > 0 ? ` · ${picksLeft} left` : "";
+            return <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* ACTIONS row — vertical label + stacked buttons */}
               <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
                 <div style={{
                   writingMode: "vertical-rl",
@@ -16305,7 +16309,7 @@ export default function Headliners() {
                     color: "#e9d5ff",
                     boxShadow: buildActive ? "0 0 12px rgba(124,58,237,0.5)" : "none",
                     ...dimIf(buildActive),
-                  }}>🏗️ Build</button>
+                  }}>🏗️ Build{buildActive ? picksLabel : ""}</button>
                   <button onClick={handleBuyAction} style={{
                     ...actionBtnBase,
                     background: buyActive ? "linear-gradient(135deg, #be185d, #9f1239)" : "rgba(190,24,93,0.4)",
@@ -16321,84 +16325,82 @@ export default function Headliners() {
                     color: "#bbf7d0",
                     boxShadow: browseActive ? "0 0 12px rgba(34,197,94,0.5)" : "none",
                     ...dimIf(browseActive),
-                  }}>🎤 Browse</button>
+                  }}>🎤 Browse{browseActive ? picksLabel : ""}</button>
                 </div>
               </div>
-              {/* Fame tray — opens when an action is active, shows 5 star slots.
-                  Yellow stars = Fame achieved. Dim stars = Fame not yet earned.
-                  Future: slot-based Fame card system will place cards over these stars. */}
+              {/* v199.81: Fame tray — stacked BELOW the actions row (previously squeezed to the
+                  right where it got clipped). Full sidebar width + larger stars + readable
+                  tier badges. Opens whenever an action is active. */}
               {anyActive && <div style={{
-                flex: 1,
                 display: "flex",
                 flexDirection: "column",
-                justifyContent: "center",
-                padding: "8px 10px",
+                padding: "10px 12px",
                 borderRadius: 10,
                 background: "linear-gradient(180deg, rgba(76,29,149,0.3), rgba(76,29,149,0.1))",
                 border: "1px solid rgba(251,191,36,0.3)",
                 animation: "slideDownIn 0.18s ease-out",
-                gap: 4,
+                gap: 8,
               }}>
-                <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, textAlign: "center" }}>Fame Tray</div>
-                {/* v199.80: 5-column grid — each star gets a column with optional tier-benefit
-                    indicator at the 2★ and 4★ positions as a stand-in for the future Fame card
-                    system. Benefit text brightens green when that tier is reached, stays dim
-                    grey when not. */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 2, alignItems: "end" }}>
+                <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, textAlign: "center" }}>Fame Tray</div>
+                {/* v199.81: Larger star row with tier-benefit indicators at 2★ and 4★. Full
+                    sidebar width means stars can be 26px and badges can be 9-10px readable. */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, alignItems: "end" }}>
                   {[1,2,3,4,5].map(i => {
                     const filled = i <= fame;
                     const isTierStart = i === 2 || i === 4;
                     const tierReached = isTierStart && fame >= i;
-                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                      {/* Tier benefit indicator ABOVE the star (only at tier-start positions) */}
+                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      {/* Tier benefit indicator ABOVE the star */}
                       {i === 2 && <div style={{
-                        fontSize: 7, lineHeight: 1.15,
-                        color: tierReached ? "#86efac" : "#475569",
+                        fontSize: 9, lineHeight: 1.2,
+                        color: tierReached ? "#86efac" : "#64748b",
                         fontWeight: 700,
                         textAlign: "center",
                         textTransform: "uppercase",
-                        letterSpacing: 0.2,
-                        padding: "2px 3px",
-                        borderRadius: 4,
-                        background: tierReached ? "rgba(34,197,94,0.12)" : "rgba(71,85,105,0.1)",
-                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.4)" : "rgba(71,85,105,0.25)"}`,
-                        minHeight: 24,
+                        letterSpacing: 0.3,
+                        padding: "4px 4px",
+                        borderRadius: 6,
+                        background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
+                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
+                        minHeight: 36,
                         display: "flex", flexDirection: "column", justifyContent: "center",
+                        width: "100%",
                       }} title={tierReached ? "Fame 2-3 tier benefits active" : "Reach Fame 2 to unlock"}>
                         <div>+1 amen</div>
                         <div>+1 draw</div>
                       </div>}
                       {i === 4 && <div style={{
-                        fontSize: 7, lineHeight: 1.15,
-                        color: tierReached ? "#86efac" : "#475569",
+                        fontSize: 9, lineHeight: 1.2,
+                        color: tierReached ? "#86efac" : "#64748b",
                         fontWeight: 700,
                         textAlign: "center",
                         textTransform: "uppercase",
-                        letterSpacing: 0.2,
-                        padding: "2px 3px",
-                        borderRadius: 4,
-                        background: tierReached ? "rgba(34,197,94,0.12)" : "rgba(71,85,105,0.1)",
-                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.4)" : "rgba(71,85,105,0.25)"}`,
-                        minHeight: 24,
+                        letterSpacing: 0.3,
+                        padding: "4px 4px",
+                        borderRadius: 6,
+                        background: tierReached ? "rgba(34,197,94,0.14)" : "rgba(71,85,105,0.12)",
+                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.45)" : "rgba(71,85,105,0.3)"}`,
+                        minHeight: 36,
                         display: "flex", flexDirection: "column", justifyContent: "center",
+                        width: "100%",
                       }} title={tierReached ? "Fame 4-5 tier benefits active" : "Reach Fame 4 to unlock"}>
-                        <div>pool</div>
-                        <div>+ dice</div>
+                        <div>pool +</div>
+                        <div>dice</div>
                       </div>}
                       {/* Blank spacers at non-tier positions keep the stars aligned to the same baseline. */}
-                      {!isTierStart && <div style={{ minHeight: 24 }} />}
-                      {/* The star itself */}
+                      {!isTierStart && <div style={{ minHeight: 36 }} />}
+                      {/* The star itself — bigger now that we have room */}
                       <span style={{
-                        fontSize: 20,
+                        fontSize: 26,
                         color: filled ? "#fbbf24" : "#312e81",
-                        textShadow: filled ? "0 0 6px rgba(251,191,36,0.7)" : "none",
+                        textShadow: filled ? "0 0 8px rgba(251,191,36,0.75)" : "none",
                         lineHeight: 1,
                         transition: "all 0.2s",
                       }}>★</span>
                     </div>;
                   })}
                 </div>
-                <div style={{ fontSize: 8, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
+                <div style={{ fontSize: 9, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
               </div>}
             </div>;
           })()}
@@ -17257,32 +17259,23 @@ export default function Headliners() {
               </div>
               <button onClick={() => undoLastTempt(currentPlayerId)} style={{ ...bs, fontSize: 11, padding: "4px 10px", color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.15)" }}>↩️ Undo Last Tempt</button>
             </div>}
-            {/* v199.10: Quick Play Fame-tier pick counter. Shows during pickAmenity or
-                artist actions, giving the player a running indicator of how many picks
-                they still have in this action before it ends. */}
-            {gameMode === "quickYear" && (turnAction === "pickAmenity" || turnAction === "artist") && qyPicksLeft > 0 && (() => {
-              const pd = playerData[currentPlayerId] || {};
-              const fame = pd.fame || 0;
-              const kind = turnAction === "pickAmenity" ? "amenity die" : "artist (pool or deck)";
-              const canRefresh = turnAction === "artist" && canUsePoolRefresh(pd) && !qyPoolRefreshUsed;
-              return (
-                <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "rgba(251,146,60,0.08)", border: "1px solid rgba(251,146,60,0.4)", textAlign: "center" }}>
-                  <div style={{ fontSize: 11, color: "#fdba74", fontWeight: 700, letterSpacing: 0.5 }}>
-                    🔥 Fame {fame} — <strong style={{ color: "#fcd34d" }}>{qyPicksLeft} {kind} pick{qyPicksLeft === 1 ? "" : "s"} left</strong> in this action
-                  </div>
-                  {/* v199.24: Fame 4+ pool refresh. Once per artist action. Replaces unclaimed
-                      pool artists with fresh deck draws, keeping any approached by agents. */}
-                  {canRefresh && (
-                    <button onClick={refreshArtistPool} style={{ ...bs, marginTop: 8, fontSize: 11, padding: "6px 12px", background: "rgba(196,181,253,0.15)", border: "1px solid #c4b5fd", color: "#c4b5fd", fontWeight: 700 }}>
-                      🔁 Refresh Pool (Fame 4+ perk)
-                    </button>
-                  )}
-                  {turnAction === "artist" && canUsePoolRefresh(pd) && qyPoolRefreshUsed && (
-                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 6, fontStyle: "italic" }}>✓ Pool refresh used this action</div>
-                  )}
-                </div>
-              );
-            })()}
+            {/* v199.10/v199.81: Fame-tier pick counter banner removed from center — the picks
+                counter now shows inline on the active action button in the sidebar, and the
+                Fame visualization lives in the sidebar Fame tray. The one piece that stayed
+                useful here: the Fame 4+ pool refresh button, which is a one-click action
+                during artist mode. Isolated below so Classic multi-year (which doesn't show
+                this banner at all) is unaffected. */}
+            {gameMode === "quickYear" && turnAction === "artist" && canUsePoolRefresh(playerData[currentPlayerId] || {}) && (
+              <div style={{ marginBottom: 10, textAlign: "center" }}>
+                {!qyPoolRefreshUsed ? (
+                  <button onClick={refreshArtistPool} style={{ ...bs, fontSize: 11, padding: "6px 12px", background: "rgba(196,181,253,0.15)", border: "1px solid #c4b5fd", color: "#c4b5fd", fontWeight: 700 }}>
+                    🔁 Refresh Pool (Fame 4+ perk)
+                  </button>
+                ) : (
+                  <div style={{ fontSize: 10, color: "#64748b", fontStyle: "italic" }}>✓ Pool refresh used this action</div>
+                )}
+              </div>
+            )}
             {actionTaken && !noTurnsLeft && <div style={{ textAlign: "center" }}>
               <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
@@ -17771,22 +17764,13 @@ export default function Headliners() {
 
             {/* Agent indicators on pool artists */}
 
-            {/* Artist Action — v199.75: hand duplicate removed (hand is shown via the drawer
-                at the bottom of the main area). This panel now shows only mode-specific
-                instructions and the reveal strip. */}
+            {/* Artist Action — v199.75/v199.81: mode banners removed (sidebar action buttons
+                + drawer theming already convey Browse/Buy state). This panel now holds only:
+                  - Reveal strip (what was just drawn, momentary)
+                  - Classic-mode pool refresh buttons (sacrifice portaloo, council perks)
+                  - Objectives toggle
+                  - Cancel button */}
             {!actionTaken && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "draw2") && !selectedArtist && <div style={{ textAlign: "center" }}>
-              {artistAction === "draw2" ? (
-                <>
-                  <p style={{ color: "#86efac", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>🎤 Browse</p>
-                  <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Click a pool card or the deck in the <strong style={{ color: "#86efac" }}>Artist Pool</strong> drawer above to draw.</p>
-                </>
-              ) : (
-                <>
-                  <p style={{ color: "#fbcfe8", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>💳 Buy</p>
-                  <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>Click a card in <strong style={{ color: "#fbcfe8" }}>Your Hand</strong> below to book it to a stage.</p>
-                </>
-              )}
-              
               {/* Reveal strip — briefly shows what was drawn before finishDraw2 clears it */}
               {draw2Picks.length > 0 && <div style={{ marginBottom: 12, padding: 8, borderRadius: 10, background: "rgba(34,197,94,0.1)", border: "1px solid #22c55e40" }}>
                 <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>Drew {draw2Picks.length} artist{draw2Picks.length === 1 ? "" : "s"}</div>
