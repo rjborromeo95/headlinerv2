@@ -3670,18 +3670,26 @@ export default function Headliners() {
   // game opens clean — players tap "Artists and Amenities" to expand. (showHand drawer
   // was already closed by default — now both match.)
   const [poolDrawerOpen, setPoolDrawerOpen] = useState(false);
-  // v199.84: Fame tray is portal-rendered at document.body with position:fixed to escape
-  // the sidebar's overflow clipping. actionsBoxRef points at the stacked-buttons container;
-  // fameTrayPos tracks its right-edge screen coordinates so the tray can anchor there.
+  // v199.84/v199.85: Fame tray is portal-rendered at document.body with position:fixed to
+  // escape the sidebar's overflow clipping. actionsBoxRef points at the stacked-buttons
+  // container; fameTrayPos tracks its right-edge screen coordinates so the tray can anchor
+  // there. v199.85: compare values before setState to avoid an infinite re-render loop —
+  // the previous version created a new {top, left, height} object every tick, which React
+  // treats as a state change, so every render triggered another measurement, which set
+  // state again, which triggered another render...
   const actionsBoxRef = useRef(null);
   const [fameTrayPos, setFameTrayPos] = useState({ top: 0, left: 0, height: 0 });
-  // Measure the Actions box on mount, on resize, and on scroll (sidebar may scroll).
   useLayoutEffect(() => {
     const measure = () => {
-      if (actionsBoxRef.current) {
-        const rect = actionsBoxRef.current.getBoundingClientRect();
-        setFameTrayPos({ top: rect.top, left: rect.right, height: rect.height });
-      }
+      if (!actionsBoxRef.current) return;
+      const rect = actionsBoxRef.current.getBoundingClientRect();
+      setFameTrayPos(prev => {
+        // Only update state if the position actually changed. Prevents infinite re-render.
+        if (prev.top === rect.top && prev.left === rect.right && prev.height === rect.height) {
+          return prev;
+        }
+        return { top: rect.top, left: rect.right, height: rect.height };
+      });
     };
     measure();
     window.addEventListener("resize", measure);
