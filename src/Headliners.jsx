@@ -16249,13 +16249,12 @@ export default function Headliners() {
           </div>}
           {/* Desktop sidebar tabs + content */}
           {!isMobile && <>
-            <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
-              {/* v147: hide the "🎯 My" tab under altObjectivesMode — the objective/fame
-                  info it used to hold now lives inline in the stat rows, so the tab
-                  renders empty. Kept for the classic objective mode. */}
-              {!altObjectivesMode && <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>}
-              <button onClick={() => setSidebarTab(sidebarTab === "trending" ? null : "trending")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "trending" ? "rgba(251,191,36,0.3)" : "rgba(251,191,36,0.08)", color: sidebarTab === "trending" ? "#fbbf24" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>📢 Microtrends</button>
-            </div>
+            {/* v199.74: Microtrends tab removed per design. Microtrend info now surfaces
+                via the microtrend banner above the player's stat row rather than a dedicated
+                sidebar tab. The "🎯 My" tab stays for classic objective-mode play. */}
+            {!altObjectivesMode && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+              <button onClick={() => setSidebarTab(sidebarTab === "my" ? null : "my")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: sidebarTab === "my" ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: sidebarTab === "my" ? "#e9d5ff" : "#64748b", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>🎯 My</button>
+            </div>}
             {/* v199.21: Legendary Lineup panel. v199.22: tokens are per-player (not first-come),
                 so each requirement row shows a colored dot for every player who's claimed it.
                 Current season's row is highlighted. Gold styling throughout to signal the
@@ -16352,60 +16351,10 @@ export default function Headliners() {
             )}
             {/* v199.29: Festival Principles sidebar panel removed — principles now show
                 in the player's hand (as white-backed cards alongside artist cards). */}
-            {/* v199.9: Quick Play season-scoring panel with PROJECTED mid-season total.
-                Running total (pd.tickets) only reflects season bonuses that have already
-                been applied (previous seasons' close). Mid-season, a player might have built
-                3 campsites and played 2 artists this season but see 0 added to their running
-                total — confusing. We now show "running + projected this-season bonus" so the
-                leaderboard reflects what they'd score if the season ended NOW. */}
-            {gameMode === "quickYear" && <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.25)" }}>
-              <div style={{ color: "#fcd34d", fontWeight: 700, fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🎟️ Season Scoring</div>
-              {/* v199.9: current season's drawn objective — the race. +4 🎟️ to the first
-                  player to complete it this season, +3 🎟️ to the second. Shows claim status. */}
-              {(() => {
-                const obj = seasonObjectives[quickYearSeason];
-                if (!obj) return null;
-                const claims = (seasonObjectiveClaims[quickYearSeason] || {});
-                const firstName = claims.first != null ? (players.find(p => p.id === claims.first)?.festivalName || "?") : null;
-                const secondName = claims.second != null ? (players.find(p => p.id === claims.second)?.festivalName || "?") : null;
-                return (
-                  <div style={{ padding: 6, borderRadius: 6, marginBottom: 6, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)" }}>
-                    <div style={{ color: "#fca5a5", fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 3 }}>🎯 Season Objective</div>
-                    <div style={{ color: "#e2e8f0", fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{obj.label}</div>
-                    <div style={{ fontSize: 9, color: firstName ? "#64748b" : "#86efac", marginBottom: 1 }}>
-                      <strong>1st (+4 🎟️):</strong> {firstName ? <s>{firstName}</s> : "unclaimed"}
-                    </div>
-                    <div style={{ fontSize: 9, color: secondName ? "#64748b" : "#86efac" }}>
-                      <strong>2nd (+3 🎟️):</strong> {secondName ? <s>{secondName}</s> : (firstName ? "open" : "unclaimed")}
-                    </div>
-                  </div>
-                );
-              })()}
-              <div style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 6 }}>
-                At each season close: <strong style={{ color: "#86efac" }}>1 🎟️ per campsite + 1 🎟️ per artist</strong> on your stages.
-              </div>
-              <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, fontStyle: "italic" }}>Projected total (running + current-season bonus if it closed now):</div>
-              {players.map(p => {
-                const pd = playerData[p.id];
-                const running = pd?.tickets || 0;
-                // Compute this-season bonus as it would score right now.
-                const fields = pd?.fields || [];
-                const campsiteCount = fields.reduce((sum, f) => sum + (f?.amenities?.campsite || 0), 0);
-                const stages = pd?.stageArtists || [];
-                const artistCount = stages.reduce((sum, s) => sum + (Array.isArray(s) ? s.length : 0), 0);
-                const projectedBonus = campsiteCount + artistCount;
-                const projected = running + projectedBonus;
-                return <div key={p.id} style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 2 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>{p.festivalName}{p.isAI ? " 🤖" : ""}</span>
-                    <span style={{ color: "#fcd34d", fontWeight: 700 }}>🎟️ {projected}</span>
-                  </div>
-                  <div style={{ fontSize: 8, color: "#64748b", marginLeft: 4 }}>
-                    {running} banked + {projectedBonus} projected ({campsiteCount} 🏕️ + {artistCount} 🎤)
-                  </div>
-                </div>;
-              })}
-            </div>}
+            {/* v199.74: Season Scoring panel removed per design — leaderboard projections
+                felt cluttered given the per-player ticket displays elsewhere in the sidebar.
+                Season Objective race info (+4/+3 tickets) still fires in gameplay but is no
+                longer rendered here as a sub-panel. */}
             {/* v199.7: Hotline agent panel. Only shows the CURRENT player's own agent card.
                 Opponents' agents are private — the only indication other players have an
                 agent is a one-line "N opponents have agents" count (no names, no effects).
@@ -16691,10 +16640,11 @@ export default function Headliners() {
           </div>}
 
           {/* Accordion info panels — mobile only. v147: filter out "My" tab under
-              altObjectivesMode; info renders inline in the stat rows there. */}
+              altObjectivesMode; info renders inline in the stat rows there.
+              v199.74: Microtrends tab removed per design (microtrend info surfaces via
+              the banner above the player's stat row instead). */}
           {isMobile && <>{[
             { key: "my", label: "🎯 My Festival", color: "#c4b5fd", bg: "rgba(124,58,237,0.3)" },
-            { key: "trending", label: "📢 Microtrends", color: "#fbbf24", bg: "rgba(251,191,36,0.3)" },
           ].filter(tab => tab.key !== "my" || !altObjectivesMode).map(tab => (
             <div key={tab.key} style={{ marginTop: 6 }}>
               <button onClick={() => setSidebarTab(sidebarTab === tab.key ? null : tab.key)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "none", background: sidebarTab === tab.key ? tab.bg : "rgba(124,58,237,0.08)", color: sidebarTab === tab.key ? tab.color : "#64748b", cursor: "pointer", fontSize: 13, fontWeight: 700, textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -17590,26 +17540,15 @@ export default function Headliners() {
                 </div>
               </div>}
 
-              {/* Pool + Deck row.
-                  v199.52: genre-match direct play removed. Pool click draws to hand only
-                  (Favour cash remains the single direct pool→stage play path). */}
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{gameMode === "quickYear" ? `Draw ${getFameArtistMax(currentPD)} — mix pool & deck (${qyPicksLeft} left)` : `Pool (1 card) or Deck (${getDeckDrawCount(currentPD)} cards)`}</div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", alignItems: "flex-start" }}>
-                  {artistPool.map((a, i) => {
-                    const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
-                    return <div key={i} style={{ position: "relative", opacity: claimedByOther ? 0.4 : 1, cursor: claimedByOther ? "not-allowed" : "pointer" }} title={claimedByOther ? "Claimed by another agent" : "Click to draw to hand"}>
-                      <ArtistCard artist={a} showCost small onClick={() => {
-                        if (claimedByOther || draw2Picks.length > 0) return;
-                        draw2PickFromPool(i);
-                      }} />
-                    </div>;
-                  })}
-                  <button onClick={() => { if (draw2Picks.length === 0) draw2PickFromDeck(); }} disabled={artistDeck.length === 0 || draw2Picks.length > 0} style={{ ...bs, fontSize: 24, padding: "16px 20px", minHeight: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(124,58,237,0.1)", border: "1px dashed #7c3aed", color: "#c4b5fd", opacity: (artistDeck.length === 0 || draw2Picks.length > 0) ? 0.3 : 1 }}>
-                    📦<span style={{ fontSize: 10 }}>Deck ({artistDeck.length}) → +1</span>
-                  </button>
+              {/* v199.74: duplicate Pool+Deck row removed. Browse now happens via the pool
+                  drawer at the top of the main area (deck slot + pool cards are clickable
+                  when artistAction === "draw2"). This panel keeps only the hand + reveal
+                  strip, which are hand-specific. */}
+              {draw2Picks.length === 0 && <div style={{ marginBottom: 8, padding: 10, borderRadius: 8, background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.3)", textAlign: "center" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#86efac", letterSpacing: 0.5 }}>
+                  🎤 Click a pool card or the deck in the <strong>Artist Pool</strong> drawer above to draw
                 </div>
-              </div>
+              </div>}
               
               {/* v199.24: portaloo-sacrifice-for-pool-refresh retired in Quick Play (artifact
                   of pre-Fame-tier design). Classic multi-year keeps it for compatibility. */}
