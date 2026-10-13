@@ -11162,10 +11162,13 @@ export default function Headliners() {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameAmenityMax(curPd);
       if (qyPicksLeftRef.current === maxPicks) {
-        // Nothing consumed yet — cancel.
+        // v199.87: nothing consumed yet — cancel AND close the pool drawer that Build
+        // auto-opened. Clicking Build should feel symmetric: 1st click opens the tray,
+        // 2nd click (toggle-off) closes it.
         setTurnAction(null);
         setQyPicksLeft(0);
         qyPicksLeftRef.current = 0;
+        setPoolDrawerOpen(false);
         return;
       }
       return;
@@ -11555,14 +11558,15 @@ export default function Headliners() {
     if (turnAction === "artist") {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(curPd);
-      // v199.83: clicking Buy while Buy is already active (artistAction===null) with no
-      // picks consumed → cancel the action (toggle-off).
+      // v199.83/v199.87: clicking Buy while Buy is already active (artistAction===null)
+      // with no picks consumed → cancel the action (toggle-off). Close the hand drawer
+      // that Buy auto-opened; do NOT open the pool drawer (the previous code did this by
+      // accident, causing the Artists and Amenities tray to pop open when canceling Buy).
       if (artistAction === null && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
         setTurnAction(null);
         setArtistAction(null);
         setQyPicksLeft(0);
         qyPicksLeftRef.current = 0;
-        setPoolDrawerOpen(true);
         setShowHand(false);
         return;
       }
@@ -11587,14 +11591,15 @@ export default function Headliners() {
     if (turnAction === "artist") {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(curPd);
-      // v199.83: clicking Browse while Browse is already active with no picks consumed
-      // → cancel.
+      // v199.83/v199.87: clicking Browse while Browse is already active with no picks
+      // consumed → cancel + close the pool drawer that Browse auto-opened. Symmetric with
+      // Build and Buy toggle-off behavior.
       if (artistAction === "draw2" && qyPicksLeftRef.current === maxPicks && (!draw2Picks || draw2Picks.length === 0)) {
         setTurnAction(null);
         setArtistAction(null);
         setQyPicksLeft(0);
         qyPicksLeftRef.current = 0;
-        setPoolDrawerOpen(true);
+        setPoolDrawerOpen(false);
         return;
       }
       // Switching from Buy (or re-entering Browse) — just flip sub-state.
@@ -17246,15 +17251,20 @@ export default function Headliners() {
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
             return <div style={{
-              marginTop: 10,
+              // v199.86: hybrid of flex ordering + sticky.
+              //   order:10 + marginTop:auto → visually push to the END of the main-area
+              //     flex column (below Festival Grounds and action bar) when content fits.
+              //     This matters because the hand drawer's expanded content absolute-positions
+              //     ABOVE the tab (bottom: calc(100% + 10px)) — so if the tab sits mid-column,
+              //     the opened hand overlays Festival Grounds. Pushing the tab to the bottom
+              //     means the opened hand expands into empty vertical space, not over content.
+              //   position:sticky, bottom:0 → when content overflows and the viewport scrolls,
+              //     the tab stays visible pinned to the bottom.
+              order: 10,
+              marginTop: "auto",
               position: "sticky",
               bottom: 0,
               zIndex: 15,
-              // v199.77: switched from flex ordering (order:10 + marginTop:auto) to
-              // position:sticky. The tab button now sticks to the bottom of the main-area
-              // scroll container when its natural position would scroll out of view.
-              // Semi-opaque background so content scrolling behind it reads cleanly rather
-              // than bleeding through the sticky tab.
               background: "linear-gradient(0deg, rgba(15,14,26,0.98), rgba(15,14,26,0.9) 70%, rgba(15,14,26,0) 100%)",
               paddingTop: 6,
             }}>
