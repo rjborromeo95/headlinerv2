@@ -9475,8 +9475,14 @@ export default function Headliners() {
     });
   };
 
-  const confirmSetupDraft = () => {
-    const selected = setupDraftSelected || [];
+  const confirmSetupDraft = (overridePicks) => {
+    // v199.70: accept an optional overridePicks array so AI callers can pass picks
+    // directly. The previous flow relied on setSetupDraftSelected(picks) + a 300ms
+    // setTimeout to confirmSetupDraft, but the setTimeout's closure captured the stale
+    // confirmSetupDraft from BEFORE the state update committed — so when it fired, the
+    // length-2 guard below read the old empty array and bailed. The AI's picks never
+    // committed, leaving the human to click "Draft 2 Artists" themselves.
+    const selected = (overridePicks && overridePicks.length === 2) ? overridePicks : (setupDraftSelected || []);
     if (selected.length !== 2) return;
     const chosen = selected.map(i => setupDraftOptions[i]);
     setPlayerData(p => ({ ...p, [currentSetupPlayer.id]: { ...p[currentSetupPlayer.id], hand: [...p[currentSetupPlayer.id].hand, ...chosen] } }));
@@ -10332,7 +10338,11 @@ export default function Headliners() {
         const picks = aiDraftSelect(setupDraftOptions);
         setSetupDraftSelected(picks);
         aiProcessing.current = false;
-        setTimeout(() => { confirmSetupDraft(); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
+        // v199.70: pass picks directly to confirmSetupDraft. Previously relied on
+        // setSetupDraftSelected committing before the 300ms setTimeout fired, which
+        // doesn't work — the setTimeout's confirmSetupDraft closure is captured BEFORE
+        // the state update commits, so it reads an empty setupDraftSelected and bails.
+        setTimeout(() => { confirmSetupDraft(picks); aiTimer.current = setTimeout(() => aiStep(), 500); }, 300);
         return;
       }
       if (setupStep === "pickAmenity") {
