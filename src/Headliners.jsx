@@ -3321,17 +3321,21 @@ export default function Headliners() {
     return { total, lines };
   };
 
-  // v199.97: YOU MAY card usage tracking. Keyed by `${pid}:${turnKey}:${instanceId}`
-  // where turnKey is `${year}:${season}:${currentPlayerIdx}` so each turn resets the
-  // used flag per card instance.
+  // v199.97/v199.103: YOU MAY card usage tracking. Keyed by `${pid}:${turnCount}:${instanceId}`.
+  // v199.103 BUG FIX: previously used `${year}:${season}:${currentPlayerIdx}` as the turn
+  // key, but currentPlayerIdx is the TURN ORDER index — it changes between PLAYERS, not
+  // between a single player's turns. So Player 0's three turns in Autumn all had the same
+  // key, meaning YOU MAY cards could only be used once per season per player. Now we use
+  // quickYearTurnsTaken (increments every turn across the game), giving every turn a
+  // unique key per player.
   const [fameCardUsedThisTurn, setFameCardUsedThisTurn] = useState({});
   const isFameCardUsedThisTurn = (pid, instanceId) => {
-    const turnKey = `${pid}:${year}:${quickYearSeason}:${currentPlayerIdx}`;
-    return !!fameCardUsedThisTurn[`${turnKey}:${instanceId}`];
+    const turnKey = `${pid}:${quickYearTurnsTaken}:${instanceId}`;
+    return !!fameCardUsedThisTurn[turnKey];
   };
   const markFameCardUsedThisTurn = (pid, instanceId) => {
-    const turnKey = `${pid}:${year}:${quickYearSeason}:${currentPlayerIdx}`;
-    setFameCardUsedThisTurn(prev => ({ ...prev, [`${turnKey}:${instanceId}`]: true }));
+    const turnKey = `${pid}:${quickYearTurnsTaken}:${instanceId}`;
+    setFameCardUsedThisTurn(prev => ({ ...prev, [turnKey]: true }));
   };
 
   // v199.97/v199.100: Fame tray card click handler. Handles two kinds of click:
@@ -3406,8 +3410,11 @@ export default function Headliners() {
   //     - allowDeck=true for draw_2_artists (deck+pool)
   //     - allowDeck=false for draw_N_from_pool (pool only, reactive effects)
   const [fameDrawPicker, setFameDrawPicker] = useState(null);
-  // v199.101: Fame draw picker handlers. One click = one draw. When remaining hits 0,
-  // the picker auto-closes.
+  // v199.101/v199.103: Fame draw picker handlers. One click = one draw. When remaining
+  // hits 0, the picker auto-closes.
+  // v199.103: in picker.mode === "genre_match", pool picks always keep (player chose a
+  // visible genre match). Deck picks are blind — keep if genre matches picker.bookedArtist,
+  // else discard.
   const pickFameDrawFromPool = (poolIdx) => {
     if (!fameDrawPicker) return;
     const picker = fameDrawPicker;
@@ -3423,7 +3430,7 @@ export default function Headliners() {
       const newRemaining = picker.remaining - 1;
       const newPicked = [...picker.picked, picked.name];
       if (newRemaining <= 0) {
-        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
+        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")} from pool.`);
         setFameDrawPicker(null);
         setTimeout(() => refillPool(), 100);
       } else {
@@ -3440,6 +3447,27 @@ export default function Headliners() {
       if (deck.length === 0) return deck;
       const picked = deck[0];
       const remainingDeck = deck.slice(1);
+      // Genre-match mode: blind draw, keep only if matches booked artist's genres.
+      if (picker.mode === "genre_match" && picker.bookedArtist) {
+        const bookedGenres = Array.isArray(picker.bookedArtist.genre) ? picker.bookedArtist.genre : [picker.bookedArtist.genre].filter(Boolean);
+        const drawnGenres = Array.isArray(picked.genre) ? picked.genre : [picked.genre].filter(Boolean);
+        const matches = drawnGenres.some(g => bookedGenres.includes(g));
+        if (matches) {
+          setPlayerData(pd => {
+            const curHand = pd[picker.pid]?.hand || [];
+            return { ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...curHand, picked] } };
+          });
+          addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, KEPT (genre match with ${picker.bookedArtist.name}).`);
+          showFloatingBonus(`🎸 Kept ${picked.name} (match!)`, "#4ade80");
+        } else {
+          setDiscardPile(dp => [...dp, picked]);
+          addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, DISCARDED (no genre match).`);
+          showFloatingBonus(`⚠️ ${picked.name} — no match`, "#ef4444");
+        }
+        setFameDrawPicker(null);
+        return remainingDeck;
+      }
+      // Normal mode: add to hand.
       setPlayerData(pd => {
         const curHand = pd[picker.pid]?.hand || [];
         return { ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...curHand, picked] } };
@@ -3482,6 +3510,10 @@ export default function Headliners() {
       }
       return { ...p, [pid]: updated };
     });
+    // v199.103: consume the die face so subsequent Fame picks (e.g. a second copy of
+    // "after Browse gain amenity") can't claim the same face twice. Previously the dice
+    // array was unchanged after a Fame pick, so duplicate cards drew the same amenity.
+    setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
     addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
     if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
     setFameAmenityPending(null);
@@ -3726,32 +3758,41 @@ export default function Headliners() {
         break;
       }
       case "draw_keep_if_genre_match": {
-        // Draw 1 artist. Keep if any genre matches the just-booked artist's genres; else discard.
+        // v199.95/v199.103: Draw 1 artist. For humans, open the Fame draw picker with
+        // genre_match mode: picking from the POOL always keeps (player can see & choose
+        // a genre match); picking from the DECK is blind — kept if genre matches the
+        // booked artist, else discarded. For AI, pull blind from the deck as before.
         const bookedArtist = ctx?.bookedArtist;
         if (!bookedArtist) {
           addLog("🔥 Fame", `${festName}: "${card.name}" — no booked artist context, skipped.`);
           return;
         }
-        const bookedGenres = Array.isArray(bookedArtist.genre) ? bookedArtist.genre : [bookedArtist.genre].filter(Boolean);
-        setArtistDeck(deck => {
-          if (deck.length === 0) {
-            addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty.`);
-            return deck;
-          }
-          const drawn = deck[0];
-          const remaining = deck.slice(1);
-          const drawnGenres = Array.isArray(drawn.genre) ? drawn.genre : [drawn.genre].filter(Boolean);
-          const matches = drawnGenres.some(g => bookedGenres.includes(g));
-          if (matches) {
-            setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
-            addLog("🔥 Fame", `${festName}: "${card.name}" → kept ${drawn.name} (genre match with ${bookedArtist.name}).`);
-            if (!player?.isAI) showFloatingBonus(`🔥 Kept ${drawn.name} (genre match)`, "#c084fc");
-          } else {
-            setDiscardPile(dp => [...dp, drawn]);
-            addLog("🔥 Fame", `${festName}: "${card.name}" → drew ${drawn.name}, no genre match, discarded.`);
-          }
-          return remaining;
-        });
+        if (player && player.isAI) {
+          const bookedGenres = Array.isArray(bookedArtist.genre) ? bookedArtist.genre : [bookedArtist.genre].filter(Boolean);
+          setArtistDeck(deck => {
+            if (deck.length === 0) {
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — deck is empty.`);
+              return deck;
+            }
+            const drawn = deck[0];
+            const remaining = deck.slice(1);
+            const drawnGenres = Array.isArray(drawn.genre) ? drawn.genre : [drawn.genre].filter(Boolean);
+            const matches = drawnGenres.some(g => bookedGenres.includes(g));
+            if (matches) {
+              setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → kept ${drawn.name} (genre match with ${bookedArtist.name}).`);
+            } else {
+              setDiscardPile(dp => [...dp, drawn]);
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name}, no genre match, discarded.`);
+            }
+            return remaining;
+          });
+        } else {
+          setFameDrawPicker({
+            pid, cardName: card.name, remaining: 1, picked: [], allowDeck: true,
+            mode: "genre_match", bookedArtist,
+          });
+        }
         break;
       }
       case "ss_new_stage": {
@@ -3974,6 +4015,8 @@ export default function Headliners() {
           }
           const face = dice[faceIdx];
           setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, face, +1) }));
+          // v199.103: consume the die face so a second AI Fame card can't claim the same face.
+          setDice(prev => prev.filter((_, i) => i !== faceIdx));
           addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
           setTimeout(() => recalcTickets(), 50);
         } else {
@@ -17474,6 +17517,23 @@ export default function Headliners() {
                 gap: 10,
               }}>
                 <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray · {(playerFameCards[currentPlayerId] || []).length}/5</div>
+                {/* v199.102: pending-trigger banner. If the player has after-action cards
+                    with pending triggers, prompt them to click. Without this, players
+                    sometimes miss the glow. */}
+                {(() => {
+                  const pendCount = (pendingAfterTriggers[currentPlayerId] || []).length;
+                  if (pendCount === 0) return null;
+                  return <div style={{
+                    fontSize: 10, color: "#1a1a2e", textAlign: "center",
+                    fontWeight: 800, letterSpacing: 0.5,
+                    padding: "6px 8px", borderRadius: 6,
+                    background: "linear-gradient(135deg, #fbbf24, #f59e0b)",
+                    boxShadow: "0 0 14px rgba(251,191,36,0.6)",
+                    animation: "pulse 1.4s ease-in-out infinite",
+                  }}>
+                    ⚡ {pendCount} Fame trigger{pendCount === 1 ? "" : "s"} ready — click glowing card{pendCount === 1 ? "" : "s"}!
+                  </div>;
+                })()}
                 {/* v199.95: Fame tray shows the player's actual drawn Fame cards. Each slot
                     shows the card name + a short effect summary. Empty slots are dim stars
                     (fame not yet earned). Max 5 cards. */}
@@ -18363,12 +18423,11 @@ export default function Headliners() {
                   The Fame tray is ~340px wide + 10px gap, anchored just past the sidebar edge,
                   so pushing the hand content ~360px right clears it. */}
               {(() => {
-                const fameTrayVisible = gameMode === "quickYear" && !actionTaken && (
-                  (turnAction === "pickAmenity") ||
-                  (turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage")) ||
-                  (turnAction === "artist" && artistAction === "draw2")
-                );
-                const leftOffset = fameTrayVisible ? 360 : 0;
+                // v199.102: Fame tray is now visible for the entire player's turn (v199.100),
+                // not just during an active action. Keep the hand's leftOffset in sync so the
+                // tray doesn't overlap hand cards. Bumped to 380px for a cleaner gap.
+                const fameTrayVisible = gameMode === "quickYear" && !currentPlayer?.isAI && phase === "game" && !noTurnsLeft;
+                const leftOffset = fameTrayVisible ? 380 : 0;
                 return showHand && (
                 <div style={{
                   position: "absolute",
@@ -18758,9 +18817,13 @@ export default function Headliners() {
                   <div style={{ fontSize: 10, color: "#d8b4fe", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 Fame Card Draw</div>
                   <h3 style={{ color: "#e9d5ff", fontSize: 18, margin: "4px 0 2px", fontWeight: 800 }}>{fameDrawPicker.cardName}</h3>
                   <p style={{ color: "#cbd5e1", fontSize: 12, margin: 0 }}>
-                    {fameDrawPicker.allowDeck
-                      ? `Pick ${fameDrawPicker.remaining} more from the pool or deck (any combination).`
-                      : `Pick ${fameDrawPicker.remaining} more from the pool.`}
+                    {fameDrawPicker.mode === "genre_match" && fameDrawPicker.bookedArtist ? (
+                      <>Pick 1 from the pool (any artist — kept) or the deck (blind — kept only if genre matches <b style={{ color: "#fbbf24" }}>{fameDrawPicker.bookedArtist.name}</b>: <b style={{ color: "#86efac" }}>{(Array.isArray(fameDrawPicker.bookedArtist.genre) ? fameDrawPicker.bookedArtist.genre : [fameDrawPicker.bookedArtist.genre]).filter(Boolean).join(" / ")}</b>).</>
+                    ) : fameDrawPicker.allowDeck ? (
+                      `Pick ${fameDrawPicker.remaining} more from the pool or deck (any combination).`
+                    ) : (
+                      `Pick ${fameDrawPicker.remaining} more from the pool.`
+                    )}
                   </p>
                   {fameDrawPicker.picked.length > 0 && (
                     <p style={{ color: "#a78bfa", fontSize: 11, margin: "4px 0 0", fontStyle: "italic" }}>Already drew: {fameDrawPicker.picked.join(", ")}</p>
