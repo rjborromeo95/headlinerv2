@@ -9516,8 +9516,25 @@ export default function Headliners() {
     // v199.41: Quick Play skips the starting-amenity pick. Players start with 0 amenities
     // and 0 stages — the first stage opens via a Festival Principle once amenity reqs are
     // met. Classic multi-year still goes through pickAmenity as before.
+    // v199.78: in Quick Play, also skip the "Confirm your starting setup" review screen
+    // (it was redundant — players had already made their draft picks and seen them).
+    // Advance directly to the next player's draft or start the game. The AI's "confirm"
+    // step handler becomes dead code for Quick Play but is left in for Classic.
     if (gameModeRef.current === "quickYear") {
-      setSetupStep("confirm");
+      // Inline confirmSetupPlacement for Quick Play: advance or start game.
+      addLog(currentSetupPlayer.festivalName, `setup complete`);
+      sfx.placeStage();
+      if (setupIndex < players.length - 1) {
+        const nextIdx = setupIndex + 1;
+        setSetupIndex(nextIdx); setSetupSelectedAmenity(null); setSetupSelectedField(null);
+        setSetupCouncilSelected([]); setSetupCouncilAssignments({});
+        const skipObjective = !altObjectivesModeRef.current;
+        setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
+        setSetupDraftOptions(skipObjective ? newR0.slice(0, 6) : []);
+        setSetupDraftSelected([]);
+      } else {
+        startGame();
+      }
     } else {
       setSetupStep("pickAmenity");
     }
@@ -16108,32 +16125,49 @@ export default function Headliners() {
               animation: fameAnim,
               cursor: ic ? "default" : "pointer", transition: "all 0.15s",
             }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}<StarBadge pid={p.id} size={13} /></span>
-                {!ic && <span style={{ fontSize: 9, color: isViewing ? "#fbbf24" : "#64748b" }}>{isViewing ? "👁️" : "👁️"}</span>}
+              {/* v199.79: simplified card layout per design mockups. Festival name on top,
+                  BIG ticket count below with 5-star Fame row to the right. Secondary info
+                  (amenities, dice held, infra, hand count) moved to a compact footer line. */}
+              <div style={{ fontWeight: 700, fontSize: 15, color: onFire ? "#fde68a" : (ic || yellowed) ? "#fbbf24" : "#c4b5fd", marginBottom: 8, letterSpacing: -0.2 }}>
+                {onFire ? "🔥 " : ic ? "▶ " : ""}{p.festivalName}{p.isAI ? " 🤖" : ""}{onFire ? " 🔥" : ""}
+                <StarBadge pid={p.id} size={13} />
               </div>
-              {/* v133: tickets are the score — promoted to hero display in every stat row.
-                  The other stats are supporting context underneath. */}
-              <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ display: "block", marginBottom: 6 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "6px 10px", borderRadius: 8, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)" }}>
-                  <span style={{ fontSize: 18 }}>🎟️</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: "#60a5fa", letterSpacing: -0.5 }}>{pd.tickets || 0}</span>
-                  <span style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginLeft: "auto" }}>tickets</span>
-                </div>
-              </TicketBreakdown>
-              <div style={{ fontSize: 11, color: "#94a3b8", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+              {/* v199.79: BIG ticket count + 5-star Fame row on the same line. */}
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 6 }}>
+                <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ flex: 1, display: "block" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)", height: "100%" }}>
+                    <span style={{ fontSize: 14, opacity: 0.9 }}>🎟️</span>
+                    <span style={{ fontSize: 28, fontWeight: 900, color: "#60a5fa", letterSpacing: -1, lineHeight: 1 }}>{pd.tickets || 0}</span>
+                  </div>
+                </TicketBreakdown>
                 <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
-                  <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
+                  <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "6px 8px", borderRadius: 10, background: "rgba(76,29,149,0.3)", border: "1px solid rgba(251,191,36,0.3)", gap: 2 }} title={`Fame: ${pd.fame || 0}/5`}>
+                    <div style={{ display: "flex", gap: 1 }}>
+                      {[1,2,3,4,5].map(i => {
+                        const filled = i <= (pd.fame || 0);
+                        return <span key={i} style={{
+                          fontSize: 13,
+                          color: filled ? "#fbbf24" : "#312e81",
+                          textShadow: filled ? "0 0 4px rgba(251,191,36,0.6)" : "none",
+                          lineHeight: 1,
+                        }}>★</span>;
+                      })}
+                    </div>
+                    <div style={{ fontSize: 7, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center", fontWeight: 700 }}>Fame</div>
+                  </div>
                 </FameBreakdown>
+              </div>
+              {/* v199.79: Compact footer line — turn status + amenity counts + dice held, inline. */}
+              <div style={{ fontSize: 10, color: "#64748b", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                 <span>
                   {gameModeRef.current === "quickYear"
-                    ? ((turnsLeft[p.id] || 0) === 0 ? "✅ Finished" : (turnsLeft[p.id] === 1 ? <span style={{ color: "#f97316", fontWeight: 700 }}>⚠️ Last turn</span> : <>🔄 {turnsLeft[p.id]} turns</>))
-                    : <>🔄 {turnsLeft[p.id] || 0} turns</>
+                    ? ((turnsLeft[p.id] || 0) === 0 ? "✅ Finished" : (turnsLeft[p.id] === 1 ? <span style={{ color: "#f97316", fontWeight: 700 }}>⚠️ LAST</span> : <>🔄 {turnsLeft[p.id]}</>))
+                    : <>🔄 {turnsLeft[p.id] || 0}</>
                   }
                 </span>
-                {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
+                {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲{pd.heldDice}</span>}
+                {AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t}>{AMENITY_ICONS[t]}{c}</span> : null; })}
               </div>
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
               {/* v197.21: infrastructure reward badges. Prominent, orange, tooltipped —
                   shows exactly which rewards this player currently holds. Panel gives the
                   full picture; this makes the answer to "is X getting anything?" visible
@@ -16229,6 +16263,100 @@ export default function Headliners() {
                 </div>;
               })()}
             </div>); })}
+
+          {/* v199.79: Sidebar Actions panel + Fame tray placeholder.
+              Build / Buy / Browse stacked vertically. Clicking an action triggers the
+              normal handler AND opens the Fame tray drawer below, showing a visual
+              representation of the player's Fame as 5 star-slots. Future: those slots
+              will hold Fame cards that activate/deactivate based on the chosen action. */}
+          {phase === "game" && gameMode === "quickYear" && (() => {
+            const pd = playerData[currentPlayerId] || {};
+            const fame = pd.fame || 0;
+            // Detect which action (if any) is currently active.
+            const buildActive = turnAction === "pickAmenity" && !actionTaken;
+            const buyActive = turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && !actionTaken;
+            const browseActive = turnAction === "artist" && artistAction === "draw2" && !actionTaken;
+            const anyActive = buildActive || buyActive || browseActive;
+            // Dim style for non-active actions when one is active.
+            const dimIf = (active) => anyActive && !active ? { opacity: 0.3, cursor: "not-allowed", filter: "grayscale(60%)" } : {};
+            const actionBtnBase = {
+              width: "100%", padding: "10px 12px", borderRadius: 8,
+              fontSize: 13, fontWeight: 700, letterSpacing: 0.3,
+              cursor: "pointer", textAlign: "center",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              transition: "all 0.15s",
+            };
+            return <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "stretch" }}>
+              {/* ACTIONS column — vertical label + stacked buttons */}
+              <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+                <div style={{
+                  writingMode: "vertical-rl",
+                  transform: "rotate(180deg)",
+                  fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: 2,
+                  textTransform: "uppercase", textAlign: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  padding: "4px 0",
+                }}>Actions</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+                  <button onClick={handlePickAmenity} style={{
+                    ...actionBtnBase,
+                    background: buildActive ? "linear-gradient(135deg, #7c3aed, #5b21b6)" : "rgba(124,58,237,0.5)",
+                    border: `1px solid ${buildActive ? "#a78bfa" : "#7c3aed"}`,
+                    color: "#e9d5ff",
+                    boxShadow: buildActive ? "0 0 12px rgba(124,58,237,0.5)" : "none",
+                    ...dimIf(buildActive),
+                  }}>🏗️ Build</button>
+                  <button onClick={handleBuyAction} style={{
+                    ...actionBtnBase,
+                    background: buyActive ? "linear-gradient(135deg, #be185d, #9f1239)" : "rgba(190,24,93,0.4)",
+                    border: `1px solid ${buyActive ? "#ec4899" : "#be185d"}`,
+                    color: "#fbcfe8",
+                    boxShadow: buyActive ? "0 0 12px rgba(236,72,153,0.5)" : "none",
+                    ...dimIf(buyActive),
+                  }}>💳 Buy</button>
+                  <button onClick={handleBrowseAction} style={{
+                    ...actionBtnBase,
+                    background: browseActive ? "linear-gradient(135deg, #16a34a, #15803d)" : "rgba(21,128,61,0.4)",
+                    border: `1px solid ${browseActive ? "#4ade80" : "#16a34a"}`,
+                    color: "#bbf7d0",
+                    boxShadow: browseActive ? "0 0 12px rgba(34,197,94,0.5)" : "none",
+                    ...dimIf(browseActive),
+                  }}>🎤 Browse</button>
+                </div>
+              </div>
+              {/* Fame tray — opens when an action is active, shows 5 star slots.
+                  Yellow stars = Fame achieved. Dim stars = Fame not yet earned.
+                  Future: slot-based Fame card system will place cards over these stars. */}
+              {anyActive && <div style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: "linear-gradient(180deg, rgba(76,29,149,0.3), rgba(76,29,149,0.1))",
+                border: "1px solid rgba(251,191,36,0.3)",
+                animation: "slideDownIn 0.18s ease-out",
+                gap: 6,
+              }}>
+                <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, textAlign: "center" }}>Fame Tray</div>
+                <div style={{ display: "flex", justifyContent: "space-around", gap: 2 }}>
+                  {[1,2,3,4,5].map(i => {
+                    const filled = i <= fame;
+                    return <span key={i} style={{
+                      fontSize: 22,
+                      color: filled ? "#fbbf24" : "#312e81",
+                      textShadow: filled ? "0 0 6px rgba(251,191,36,0.7)" : "none",
+                      lineHeight: 1,
+                      transition: "all 0.2s",
+                    }}>★</span>;
+                  })}
+                </div>
+                <div style={{ fontSize: 8, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
+              </div>}
+            </div>;
+          })()}
+
           <div style={{ marginTop: 12, padding: 8, borderRadius: 8, background: "rgba(124,58,237,0.1)", fontSize: 11, color: "#8b5cf6" }}>
             📦 Deck: {artistDeck.length} • 🗑️ Discard: {discardPile.length} • <span style={{ color: "#fbbf24" }}>🎲 Pool: {dicePool}</span>
           </div>
