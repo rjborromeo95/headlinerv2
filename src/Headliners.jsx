@@ -3277,6 +3277,161 @@ export default function Headliners() {
     setFameDrawModal(null);
     addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame card "${picked.name}".`);
   };
+  // v199.97: compute total Fame-card game-end ticket bonus for a player. Called by
+  // the game-end tally in continueFromSeasonEnd when transitioning to gameOver.
+  // Returns { total, lines[] } where lines is a per-card breakdown for the game log.
+  const computeFameCardEndGameTickets = (pid) => {
+    if (gameModeRef.current !== "quickYear") return { total: 0, lines: [] };
+    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "game_end");
+    if (cards.length === 0) return { total: 0, lines: [] };
+    const pd = (playerDataRef.current || playerData)[pid] || {};
+    const fields = pd.fields || [];
+    const am = { campsite: 0, security: 0, catering: 0, portaloo: 0 };
+    fields.forEach(f => { if (!f) return; Object.keys(am).forEach(k => { am[k] += f[k] || 0; }); });
+    const stages = pd.stageArtists || [];
+    const stageCount = stages.length;
+    let headlinerCount = 0;
+    stages.forEach(sa => sa.forEach(a => { if (a && (a.isHeadliner || (a.fame || 0) >= 5)) headlinerCount++; }));
+    const fame = pd.fame || 0;
+    const pairCS = Math.min(am.catering, am.security);
+    const pairSP = Math.min(am.security, am.portaloo);
+    const pairCP = Math.min(am.catering, am.portaloo);
+    let total = 0;
+    const lines = [];
+    cards.forEach(c => {
+      let bonus = 0;
+      switch (c.effect) {
+        case "end_10":              bonus = 10;                     break;
+        case "end_per_catering":    bonus = am.catering * 2;        break;
+        case "end_per_security":    bonus = am.security * 2;        break;
+        case "end_per_portaloo":    bonus = am.portaloo * 2;        break;
+        case "end_per_stage":       bonus = stageCount * 3;         break;
+        case "end_per_headliner":   bonus = headlinerCount * 2;     break;
+        case "end_per_fame":        bonus = fame * 2;               break;
+        case "end_pair_cat_sec":    bonus = pairCS * 3;             break;
+        case "end_pair_sec_port":   bonus = pairSP * 3;             break;
+        case "end_pair_cat_port":   bonus = pairCP * 3;             break;
+        default: break;
+      }
+      if (bonus > 0) {
+        total += bonus;
+        lines.push(`"${c.name}" +${bonus} 🎟️`);
+      }
+    });
+    return { total, lines };
+  };
+
+  // v199.97: YOU MAY card usage tracking. Keyed by `${pid}:${turnKey}:${instanceId}`
+  // where turnKey is `${year}:${season}:${currentPlayerIdx}` so each turn resets the
+  // used flag per card instance.
+  const [fameCardUsedThisTurn, setFameCardUsedThisTurn] = useState({});
+  const isFameCardUsedThisTurn = (pid, instanceId) => {
+    const turnKey = `${pid}:${year}:${quickYearSeason}:${currentPlayerIdx}`;
+    return !!fameCardUsedThisTurn[`${turnKey}:${instanceId}`];
+  };
+  const markFameCardUsedThisTurn = (pid, instanceId) => {
+    const turnKey = `${pid}:${year}:${quickYearSeason}:${currentPlayerIdx}`;
+    setFameCardUsedThisTurn(prev => ({ ...prev, [`${turnKey}:${instanceId}`]: true }));
+  };
+
+  // v199.97: YOU MAY card activation (click handler for Fame tray cards). Only fires
+  // if the card is a YOU MAY type, it's the player's turn, and the card hasn't been
+  // used this turn.
+  const activateFameCard = (pid, card) => {
+    if (card.category !== "you_may") return;
+    if (pid !== currentPlayerId) return;
+    if (isFameCardUsedThisTurn(pid, card.instanceId)) return;
+    const player = players.find(pl => pl.id === pid);
+    const festName = player?.festivalName || "?";
+    switch (card.effect) {
+      case "refresh_pool": {
+        refreshArtistPool();
+        addLog("🔥 Fame", `${festName}: activated "${card.name}" — pool refreshed.`);
+        if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: pool refreshed`, "#fbbf24");
+        markFameCardUsedThisTurn(pid, card.instanceId);
+        break;
+      }
+      case "refresh_die": {
+        handleFameDiceRefresh();
+        addLog("🔥 Fame", `${festName}: activated "${card.name}" — dice refreshed.`);
+        if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: dice refreshed`, "#fbbf24");
+        markFameCardUsedThisTurn(pid, card.instanceId);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  // v199.97: Fame card amenity-pick picker state. When an after-action trigger fires
+  // "gain_amenity_from_die" or "place_amenity_from_die", we open this picker so the
+  // player can select which die face to grant them.
+  //   fameAmenityPending: { pid, cardName, remaining } | null
+  // Remaining counts how many amenity picks the Fame card still owes.
+  const [fameAmenityPending, setFameAmenityPending] = useState(null);
+  // v199.98: pending reactive effects queue. When an opponent takes an action, every
+  // other player's matching reactive Fame cards queue an entry here. At the holder's
+  // next turn start, these entries fire. Shape: { pid: [{ card, context }] }
+  const [pendingReactiveEffects, setPendingReactiveEffects] = useState({});
+  const pendingReactiveEffectsRef = useRef({});
+  useEffect(() => { pendingReactiveEffectsRef.current = pendingReactiveEffects; }, [pendingReactiveEffects]);
+  const pickFameAmenity = (dieFaceIdx) => {
+    if (!fameAmenityPending) return;
+    const { pid, cardName } = fameAmenityPending;
+    const face = dice[dieFaceIdx];
+    if (!face || face === "fame" || face === "stage") {
+      addLog("🔥 Fame", `${cardName}: skipped — pick an amenity die (not fame or stage).`);
+      return;
+    }
+    // Place amenity in the lowest-cost field that has room (first field with < 5 amenities).
+    const pd = (playerDataRef.current || playerData)[pid] || {};
+    const fields = pd.fields || emptyFields();
+    let targetField = 0;
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i] || {};
+      const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+      if (count < 5) { targetField = i; break; }
+    }
+    setPlayerData(p => {
+      const cur = p[pid];
+      let updated = mutateAmenity(cur, targetField, face, +1);
+      if (face === "security" && cur.vpPerSecurity > 0) {
+        logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus (Fame card)");
+        updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
+      }
+      return { ...p, [pid]: updated };
+    });
+    addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
+    if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
+    setFameAmenityPending(null);
+    setTimeout(() => recalcTickets(), 50);
+  };
+
+  // v199.98: fire this player's queued reactive effects (from opponents' recent actions).
+  // Called at the player's turn start. Clears the queue after processing.
+  const fireQueuedReactiveEffects = (pid) => {
+    const queued = pendingReactiveEffectsRef.current[pid] || [];
+    if (queued.length === 0) return;
+    const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+    addLog("🔥 Fame", `${festName}: resolving ${queued.length} queued reactive effect${queued.length === 1 ? "" : "s"} from opponent actions.`);
+    queued.forEach(entry => {
+      setTimeout(() => fireFameCardEffect(pid, entry.card, entry.context), 80);
+    });
+    setPendingReactiveEffects(prev => ({ ...prev, [pid]: [] }));
+  };
+
+  // v199.98: fire this player's season-start Fame cards. Called at the start of each
+  // new season for every player (humans and AI). Simple effects auto-fire; cards that
+  // require choices open a picker modal for humans (AI auto-picks).
+  const fireSeasonStartEffects = (pid) => {
+    if (gameModeRef.current !== "quickYear") return;
+    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "season_start");
+    if (cards.length === 0) return;
+    cards.forEach((c, idx) => {
+      setTimeout(() => fireFameCardEffect(pid, c, { atSeasonStart: true }), 150 + idx * 200);
+    });
+  };
+
   // v199.95: Fame card effect dispatcher. Only the simplest effects (artist draws) are
   // wired in this build; amenity-die, YOU MAY, reactive, season_start, and game_end
   // effects defer to later phases with a TODO log entry.
@@ -3333,9 +3488,159 @@ export default function Headliners() {
         });
         break;
       }
+      case "ss_new_stage": {
+        // Open a new stage if under the 3-stage cap.
+        setPlayerData(p => {
+          const cur = p[pid];
+          const stageCount = (cur.stages || []).length;
+          if (stageCount >= 3) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — already at 3 stages, skipped.`);
+            return p;
+          }
+          const stageName = `Stage ${stageCount + 1}`;
+          const stageColor = "#a78bfa";
+          const updated = {
+            ...cur,
+            stages: [...(cur.stages || []), []],
+            stageArtists: [...(cur.stageArtists || []), []],
+            stageNames: [...(cur.stageNames || []), stageName],
+            stageColors: [...(cur.stageColors || []), stageColor],
+          };
+          return { ...p, [pid]: updated };
+        });
+        addLog("🔥 Fame", `${festName}: "${card.name}" → opened a new stage.`);
+        if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: new stage!`, "#fbbf24");
+        break;
+      }
+      case "ss_draw_2_from_discard": {
+        // Draw 2 artists from the DISCARD pile. If fewer than 2, draw what's there.
+        setDiscardPile(dp => {
+          if (dp.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — discard pile is empty.`);
+            return dp;
+          }
+          const take = Math.min(2, dp.length);
+          const taken = dp.slice(-take); // take from top of discard
+          const remaining = dp.slice(0, dp.length - take);
+          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...taken] } }));
+          addLog("🔥 Fame", `${festName}: "${card.name}" → reclaimed ${taken.map(a => a.name).join(", ")} from discard.`);
+          if (!player?.isAI) showFloatingBonus(`🔥 Reclaimed ${take} from discard`, "#fbbf24");
+          return remaining;
+        });
+        break;
+      }
+      case "ss_discard_n_draw_n": {
+        // "Discard any number of artists, then draw that many from the deck."
+        // Simplified for v199.98: discard the oldest 2 hand cards and draw 2 (both human
+        // and AI). Full picker modal planned for v199.99+.
+        const pd = (playerDataRef.current || playerData)[pid] || {};
+        const hand = pd.hand || [];
+        if (hand.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — hand is empty, skipped.`);
+          return;
+        }
+        const n = Math.min(2, hand.length);
+        const discarded = hand.slice(0, n);
+        const kept = hand.slice(n);
+        setArtistDeck(deck => {
+          const drawn = deck.slice(0, Math.min(n, deck.length));
+          const remainingDeck = deck.slice(drawn.length);
+          setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], hand: [...kept, ...drawn] } }));
+          setDiscardPile(dp => [...dp, ...discarded]);
+          addLog("🔥 Fame", `${festName}: "${card.name}" → cycled ${n} card${n === 1 ? "" : "s"}.`);
+          return remainingDeck;
+        });
+        break;
+      }
+      case "ss_discard_1_gain_missing_cost":
+      case "ss_discard_2_place_any":
+      case "ss_discard_2_amenities_draw_3":
+      case "ss_play_free_artist": {
+        // v199.98 simplified: these require pickers (artist discard, amenity discard, play
+        // choice). Full modal picker coming in v199.99. For now, log a note so playtesters
+        // know the card drew but didn't fully resolve.
+        addLog("🔥 Fame", `${festName}: "${card.name}" — season-start picker not yet implemented (deferred to v199.99+). Card still in your tray.`);
+        break;
+      }
+      case "gain_copy_amenity": {
+        // v199.98: reactive — opponent built an amenity, this player gains a copy.
+        const amenityType = ctx?.amenityType;
+        if (!amenityType || !["campsite", "security", "catering", "portaloo"].includes(amenityType)) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — opponent action wasn't an amenity build, skipped.`);
+          return;
+        }
+        const pd = (playerDataRef.current || playerData)[pid] || {};
+        const fields = pd.fields || emptyFields();
+        let targetField = 0;
+        for (let i = 0; i < fields.length; i++) {
+          const f = fields[i] || {};
+          const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+          if (count < 5) { targetField = i; break; }
+        }
+        setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, amenityType, +1) }));
+        addLog("🔥 Fame", `${festName}: "${card.name}" → gained a ${AMENITY_LABELS[amenityType]} in Field ${targetField + 1}.`);
+        if (!player?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[amenityType]} (reactive)`, "#06b6d4");
+        setTimeout(() => recalcTickets(), 50);
+        break;
+      }
+      case "draw_2_from_pool":
+      case "draw_1_from_pool": {
+        // v199.98: reactive — opponent took artist action, this player draws from the pool.
+        const takeCount = card.effect === "draw_2_from_pool" ? 2 : 1;
+        setArtistPool(prev => {
+          if (prev.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — pool is empty, no draws.`);
+            return prev;
+          }
+          const take = Math.min(takeCount, prev.length);
+          const drawn = prev.slice(0, take);
+          const remaining = prev.slice(take);
+          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...drawn] } }));
+          addLog("🔥 Fame", `${festName}: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")} from the pool.`);
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: +${take} from pool`, "#06b6d4");
+          return remaining;
+        });
+        // Refill the pool after a short delay so next player's turn sees fresh options.
+        setTimeout(() => refillPool(), 100);
+        break;
+      }
+      case "gain_amenity_from_die":
+      case "place_amenity_from_die": {
+        // v199.97: Fame card wants to place a free amenity from the dice. For AI, auto-pick
+        // the first amenity face in the current dice and auto-place. For humans, open the
+        // picker modal.
+        const amenityFaces = ["campsite", "security", "catering", "portaloo"];
+        const availableFace = dice.find(d => amenityFaces.includes(d));
+        if (!availableFace) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no amenity die face available, skipped.`);
+          return;
+        }
+        if (player && player.isAI) {
+          // Auto-pick the first available face.
+          const faceIdx = dice.findIndex(d => amenityFaces.includes(d));
+          const pd = (playerDataRef.current || playerData)[pid] || {};
+          const fields = pd.fields || emptyFields();
+          let targetField = 0;
+          for (let i = 0; i < fields.length; i++) {
+            const f = fields[i] || {};
+            const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+            if (count < 5) { targetField = i; break; }
+          }
+          const face = dice[faceIdx];
+          setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, face, +1) }));
+          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
+          setTimeout(() => recalcTickets(), 50);
+        } else {
+          // Open picker modal for human.
+          setFameAmenityPending({ pid, cardName: card.name });
+          setPoolDrawerOpen(true);  // ensure dice are visible
+          addLog("🔥 Fame", `${festName}: "${card.name}" — pick a die face.`);
+        }
+        break;
+      }
       default: {
         // Not yet wired — log a TODO for the next phase.
-        addLog("🔥 Fame", `${festName}: "${card.name}" effect "${card.effect}" not yet implemented (deferred to v199.96+).`);
+        addLog("🔥 Fame", `${festName}: "${card.name}" effect "${card.effect}" not yet implemented (deferred to v199.98+).`);
         break;
       }
     }
@@ -5515,15 +5820,21 @@ export default function Headliners() {
 
       // Commit both pieces of state separately. Keep playerDataRef in sync for any
       // downstream read that happens before React flushes the setState.
-      // v199.65: fold year-end bonuses into the fresh pd before the final leaderboard
-      // computation (same pattern as the Summer season bonus above).
+      // v199.65/v199.97: fold year-end bonuses + Fame card game-end bonuses into the
+      // fresh pd before the final leaderboard computation.
       const freshWithYE = {};
       players.forEach(p => {
         const pd = currentPD[p.id];
         if (!pd) return;
         const seasonBonus = bonusByPid[p.id] || 0;
         const yeBonus = yeBonusByPid[p.id] || 0;
-        const pdWithBoth = { ...pd, bonusTickets: (pd.bonusTickets || 0) + seasonBonus + yeBonus };
+        // v199.97: compute Fame-card game-end ticket bonuses for this player.
+        const fameEnd = computeFameCardEndGameTickets(p.id);
+        if (fameEnd.total > 0) {
+          logTicketGain(p.id, fameEnd.total, `🔥 Fame cards (game end)`);
+          fameEnd.lines.forEach(line => addLog("🔥 Fame", `${p.festivalName}: ${line}`));
+        }
+        const pdWithBoth = { ...pd, bonusTickets: (pd.bonusTickets || 0) + seasonBonus + yeBonus + fameEnd.total };
         freshWithYE[p.id] = computeTicketsForPlayer(pdWithBoth, 1, p.id);
         if (nextAllTickets[p.id]) {
           nextAllTickets[p.id][1] = {
@@ -5599,6 +5910,11 @@ export default function Headliners() {
         snap[p.id] = { fame: pd.fame != null ? pd.fame : (pd.baseFame || 0) };
       });
       seasonStartSnapshotRef.current = snap;
+      // v199.98: fire each player's season-start Fame cards at the new season boundary.
+      // Deferred by 200ms so the season transition log entries flush first.
+      setTimeout(() => {
+        players.forEach(p => fireSeasonStartEffects(p.id));
+      }, 200);
       // v199: fire new Hotline spins at season boundary. Previous season's agents expire.
       // Deferred by 400ms so the season-end modal is fully closed and the "Season Begins"
       // header is in the log before the spin UI opens.
@@ -5610,6 +5926,8 @@ export default function Headliners() {
       const np = players.find(p => p.id === turnOrder[nextPlayerIdx]);
       addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
       refillPool();
+      // v199.98: fire the new player's queued reactive Fame effects at season boundary too.
+      setTimeout(() => fireQueuedReactiveEffects(turnOrder[nextPlayerIdx]), 150);
       // v198: reset pending-effect / selection state so the new player starts clean,
       // mirroring the state resets at the top of endTurn.
       setTurnAction(null); setSelectedDie(null); setActionTaken(false);
@@ -11375,12 +11693,13 @@ export default function Headliners() {
     if (seasonEndScoring) return;
     if (hotlineSpinPhase !== "idle" && hotlineSpinQueue.length > 0) return;
     if (fameDrawModal) return;
+    if (fameAmenityPending) return;
     // Safety: reset processing flag if somehow stuck
     const safetyTimer = setTimeout(() => { aiProcessing.current = false; }, 5000);
     if (aiProcessing.current) return;
     aiTimer.current = setTimeout(() => aiStep(), 700);
     return () => { if (aiTimer.current) clearTimeout(aiTimer.current); clearTimeout(safetyTimer); };
-  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest, draftIndex, seasonEndScoring, hotlineSpinPhase, hotlineSpinQueue, fameDrawModal]);
+  }, [phase, setupStep, setupIndex, currentPlayerIdx, showTurnStart, actionTaken, noTurnsLeft, pendingEffect, pendingDiceRoll, showHeadliner, showBookedArtist, showCouncilDrawBonus, showYearAnnouncement, preRoundStep, preRoundIndex, freeAmenityPlaced, agentContest, draftIndex, seasonEndScoring, hotlineSpinPhase, hotlineSpinQueue, fameDrawModal, fameAmenityPending]);
 
   // AI objective choices are handled in startGame — no useEffect needed
 
@@ -12288,13 +12607,32 @@ export default function Headliners() {
       // v199.95: fire the matching after-action Fame card triggers for the current player.
       // Deferred so action state resets commit first.
       const trigPid = currentPlayerId;
+      const _selectedDieFace = selectedDie; // amenity type if Build
       setTimeout(() => {
         const cards = (playerFameCardsRef.current[trigPid] || []);
-        if (cards.length === 0) return;
         const triggerType = _wasBuild ? "after_build" : _wasBook ? "after_book" : _wasBrowse ? "after_browse" : null;
-        if (!triggerType) return;
-        cards.filter(c => c.trigger === triggerType).forEach(c => {
-          fireFameCardEffect(trigPid, c, { bookedArtist: _bookedArtist });
+        if (triggerType) {
+          cards.filter(c => c.trigger === triggerType).forEach(c => {
+            fireFameCardEffect(trigPid, c, { bookedArtist: _bookedArtist });
+          });
+        }
+        // v199.98: queue reactive effects for OTHER players whose Fame cards match this
+        // opponent action. Fired at their next turn start.
+        const reactTrigger = _wasBuild ? "opp_build" : _wasBook ? "opp_book" : _wasBrowse ? "opp_browse" : null;
+        if (!reactTrigger) return;
+        players.forEach(p => {
+          if (p.id === trigPid) return; // skip the acting player
+          const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger);
+          if (theirCards.length === 0) return;
+          setPendingReactiveEffects(prev => {
+            const existing = prev[p.id] || [];
+            const additions = theirCards.map(c => ({
+              card: c,
+              context: { amenityType: _selectedDieFace, bookedArtist: _bookedArtist },
+            }));
+            return { ...prev, [p.id]: [...existing, ...additions] };
+          });
+          addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} queued (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}).`);
         });
       }, 120);
       if (newActions <= 0) {
@@ -12503,6 +12841,10 @@ export default function Headliners() {
     setCurrentPlayerIdx(ni);
     const np = players.find(p => p.id === turnOrder[ni]);
     addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
+
+    // v199.98: fire the new player's queued reactive Fame effects (from opponents'
+    // recent actions). Deferred so state transitions commit first.
+    setTimeout(() => fireQueuedReactiveEffects(turnOrder[ni]), 150);
 
     // v130/v142: under tempt mode enforce hand cap of 8. HUMAN players get a picker
     // modal (they choose which cards to discard). AI keeps the auto-cull behavior (rank
@@ -16764,7 +17106,13 @@ export default function Headliners() {
                       card.category === "season_start" ? "#fbbf24" :
                                                          "#c084fc"
                     ) : "rgba(100,116,139,0.3)";
-                    return <div key={i} style={{
+                    // v199.97: YOU MAY cards are clickable buttons when it's the player's
+                    // turn and the card hasn't been used this turn. Other categories render
+                    // as display-only slots.
+                    const isYouMay = card && card.category === "you_may";
+                    const usedThisTurn = card ? isFameCardUsedThisTurn(currentPlayerId, card.instanceId) : false;
+                    const clickable = isYouMay && !usedThisTurn && !actionTaken;
+                    const slotStyle = {
                       display: "flex", flexDirection: "column",
                       padding: 4, borderRadius: 6,
                       background: catBg,
@@ -16773,25 +17121,39 @@ export default function Headliners() {
                       justifyContent: empty ? "center" : "flex-start",
                       gap: 2,
                       transition: "all 0.2s",
-                    }} title={card ? `${card.name} — ${card.desc}` : "Empty slot — gain Fame to draw a card"}>
-                      {empty ? (
-                        <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
-                      ) : (
-                        <>
-                          <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
-                            {card.category === "you_may" ? "You may" :
-                             card.category === "after_build" ? "After Build" :
-                             card.category === "after_browse" ? "After Browse" :
-                             card.category === "after_book" ? "After Book" :
-                             card.category === "reactive" ? "Reactive" :
-                             card.category === "season_start" ? "Season" : "End"}
-                          </div>
-                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
-                          </div>
-                        </>
-                      )}
-                    </div>;
+                      cursor: clickable ? "pointer" : "default",
+                      opacity: card && usedThisTurn ? 0.4 : 1,
+                      boxShadow: clickable ? `0 0 10px ${catBorder}60` : "none",
+                    };
+                    const inner = empty ? (
+                      <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                          {card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
+                           card.category === "after_build" ? "After Build" :
+                           card.category === "after_browse" ? "After Browse" :
+                           card.category === "after_book" ? "After Book" :
+                           card.category === "reactive" ? "Reactive" :
+                           card.category === "season_start" ? "Season" : "End"}
+                        </div>
+                        <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}
+                        </div>
+                      </>
+                    );
+                    const titleText = card
+                      ? `${card.name} — ${card.desc}${isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}`
+                      : "Empty slot — gain Fame to draw a card";
+                    return clickable ? (
+                      <button key={i} onClick={() => activateFameCard(currentPlayerId, card)} style={{ ...slotStyle, color: "inherit", font: "inherit" }} title={titleText}>
+                        {inner}
+                      </button>
+                    ) : (
+                      <div key={i} style={slotStyle} title={titleText}>
+                        {inner}
+                      </div>
+                    );
                   })}
                 </div>
                 <div style={{ fontSize: 9, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>
@@ -17987,6 +18349,44 @@ export default function Headliners() {
                 </div>
               </div>;
             })(), document.body)}
+
+            {/* v199.97: Fame card amenity picker. Opens when a Fame card effect
+                requires a bonus amenity placement (gain_amenity_from_die /
+                place_amenity_from_die). Shows the current dice; click an amenity face
+                to place that amenity in the next available field. */}
+            {fameAmenityPending && fameAmenityPending.pid === currentPlayerId && typeof document !== "undefined" && createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.9)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+              <div style={{ padding: 20, borderRadius: 14, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.25))", border: "2px solid #a78bfa", boxShadow: "0 0 40px rgba(167,139,250,0.3)", maxWidth: 520, width: "100%", textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 4 }}>🔥 Fame Card Effect</div>
+                <h3 style={{ color: "#e9d5ff", fontSize: 16, margin: "4px 0 8px", fontWeight: 800 }}>{fameAmenityPending.cardName}</h3>
+                <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 16px" }}>Click an amenity die to place that amenity in your festival (first available field).</p>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(dice.length, 5)}, 1fr)`, gap: 8, marginBottom: 16 }}>
+                  {dice.map((d, i) => {
+                    const isAmenity = d !== "fame" && d !== "stage";
+                    const label = d === "fame" ? "🔥" : d === "stage" ? "🎪" : AMENITY_ICONS[d];
+                    const sub = d === "fame" ? "Fame" : d === "stage" ? "Stage" : AMENITY_LABELS[d];
+                    return <button
+                      key={i}
+                      onClick={() => { if (isAmenity) pickFameAmenity(i); }}
+                      disabled={!isAmenity}
+                      style={{
+                        padding: 12, borderRadius: 10,
+                        border: `2px solid ${isAmenity ? "#7c3aed" : "rgba(100,116,139,0.4)"}`,
+                        background: isAmenity ? "linear-gradient(135deg, #1e1b4b, #312e81)" : "rgba(30,27,75,0.4)",
+                        color: isAmenity ? "#e9d5ff" : "#64748b",
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        gap: 4, cursor: isAmenity ? "pointer" : "not-allowed",
+                        fontSize: 24, opacity: isAmenity ? 1 : 0.45,
+                      }}
+                      title={isAmenity ? `Place ${sub}` : `${sub} — not an amenity`}
+                    >
+                      <span>{label}</span>
+                      <span style={{ fontSize: 9, opacity: 0.8 }}>{sub}</span>
+                    </button>;
+                  })}
+                </div>
+                <button onClick={() => { addLog("🔥 Fame", `${currentPlayer?.festivalName}: skipped "${fameAmenityPending.cardName}" bonus amenity.`); setFameAmenityPending(null); }} style={{ ...bs, fontSize: 11, padding: "6px 12px", color: "#64748b" }}>Skip (no amenity face available)</button>
+              </div>
+            </div>, document.body)}
 
             {/* v199.95: Fame card draw-3-pick-1 modal. Opens when a human gains Fame
                 (microtrend claim or Fame die). Player picks 1 of 3 drawn cards; the
