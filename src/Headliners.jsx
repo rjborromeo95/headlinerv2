@@ -3441,91 +3441,88 @@ export default function Headliners() {
   //     - allowDeck=true for draw_2_artists (deck+pool)
   //     - allowDeck=false for draw_N_from_pool (pool only, reactive effects)
   const [fameDrawPicker, setFameDrawPicker] = useState(null);
-  // v199.101/v199.103: Fame draw picker handlers. One click = one draw. When remaining
-  // hits 0, the picker auto-closes.
-  // v199.103: in picker.mode === "genre_match", pool picks always keep (player chose a
-  // visible genre match). Deck picks are blind — keep if genre matches picker.bookedArtist,
-  // else discard.
+  // v199.101/v199.103/v199.107: Fame draw picker handlers. One click = one draw.
+  // v199.107 CRITICAL FIX: previous version put side effects (setPlayerData, setFame-
+  // DrawPicker, setTimeout, addLog) INSIDE the setArtistPool/setArtistDeck updater
+  // functions. React can call updater fns multiple times (strict mode, concurrent
+  // features), so each pick was firing its side effects 2x — adding the drawn card to
+  // the player's hand TWICE, scheduling refillPool twice, and in some cases freezing the
+  // game as duplicate state updates fought each other. Now we read current state from
+  // refs, compute next state outside any updater, and only use updaters as pure
+  // transforms (prev -> next).
   const pickFameDrawFromPool = (poolIdx) => {
     if (!fameDrawPicker) return;
     const picker = fameDrawPicker;
-    setArtistPool(prev => {
-      if (poolIdx >= prev.length) return prev;
-      const picked = prev[poolIdx];
-      const remainingPool = prev.filter((_, i) => i !== poolIdx);
-      // Add to player's hand via functional update to avoid stale snapshots.
-      setPlayerData(pd => {
-        const curHand = pd[picker.pid]?.hand || [];
-        return { ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...curHand, picked] } };
-      });
-      const newRemaining = picker.remaining - 1;
-      const newPicked = [...picker.picked, picked.name];
-      if (newRemaining <= 0) {
-        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")} from pool.`);
-        setFameDrawPicker(null);
-        setTimeout(() => refillPool(), 100);
-        // v199.106: auto-close pool drawer when picker finishes.
-        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
-      } else {
-        setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
-      }
-      return remainingPool;
-    });
+    const curPool = artistPoolRef.current || artistPool;
+    if (poolIdx >= curPool.length) return;
+    const picked = curPool[poolIdx];
+    const newPool = curPool.filter((_, i) => i !== poolIdx);
+    const newRemaining = picker.remaining - 1;
+    const newPicked = [...picker.picked, picked.name];
+    // Commit all state changes outside any updater, so each setter runs once.
+    setArtistPool(newPool);
+    setPlayerData(pd => ({ ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...(pd[picker.pid]?.hand || []), picked] } }));
+    if (newRemaining <= 0) {
+      addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")} from pool.`);
+      setFameDrawPicker(null);
+      setTimeout(() => refillPool(), 100);
+      // v199.106/v199.107: auto-close pool drawer. Check ref values since React state
+      // closures are stale by the time the timeout fires.
+      setTimeout(() => {
+        if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+      }, 180);
+    } else {
+      setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
+    }
   };
   const pickFameDrawFromDeck = () => {
     if (!fameDrawPicker) return;
     const picker = fameDrawPicker;
     if (!picker.allowDeck) return;
-    setArtistDeck(deck => {
-      if (deck.length === 0) return deck;
-      const picked = deck[0];
-      const remainingDeck = deck.slice(1);
-      // Genre-match mode: blind draw, keep only if matches booked artist's genres.
-      if (picker.mode === "genre_match" && picker.bookedArtist) {
-        const bookedGenres = Array.isArray(picker.bookedArtist.genre) ? picker.bookedArtist.genre : [picker.bookedArtist.genre].filter(Boolean);
-        const drawnGenres = Array.isArray(picked.genre) ? picked.genre : [picked.genre].filter(Boolean);
-        const matches = drawnGenres.some(g => bookedGenres.includes(g));
-        if (matches) {
-          setPlayerData(pd => {
-            const curHand = pd[picker.pid]?.hand || [];
-            return { ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...curHand, picked] } };
-          });
-          addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, KEPT (genre match with ${picker.bookedArtist.name}).`);
-          showFloatingBonus(`🎸 Kept ${picked.name} (match!)`, "#4ade80");
-        } else {
-          setDiscardPile(dp => [...dp, picked]);
-          addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, DISCARDED (no genre match).`);
-          showFloatingBonus(`⚠️ ${picked.name} — no match`, "#ef4444");
-        }
-        setFameDrawPicker(null);
-        // v199.106: auto-close pool drawer when picker finishes.
-        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
-        return remainingDeck;
-      }
-      // Normal mode: add to hand.
-      setPlayerData(pd => {
-        const curHand = pd[picker.pid]?.hand || [];
-        return { ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...curHand, picked] } };
-      });
-      const newRemaining = picker.remaining - 1;
-      const newPicked = [...picker.picked, picked.name];
-      if (newRemaining <= 0) {
-        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
-        setFameDrawPicker(null);
-        // v199.106: auto-close pool drawer when picker finishes.
-        setTimeout(() => { if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false); }, 150);
+    const curDeck = artistDeckRef.current || artistDeck;
+    if (curDeck.length === 0) return;
+    const picked = curDeck[0];
+    const newDeck = curDeck.slice(1);
+    // Commit deck change outside any updater.
+    setArtistDeck(newDeck);
+    // Genre-match mode: blind draw, keep only if matches booked artist's genres.
+    if (picker.mode === "genre_match" && picker.bookedArtist) {
+      const bookedGenres = Array.isArray(picker.bookedArtist.genre) ? picker.bookedArtist.genre : [picker.bookedArtist.genre].filter(Boolean);
+      const drawnGenres = Array.isArray(picked.genre) ? picked.genre : [picked.genre].filter(Boolean);
+      const matches = drawnGenres.some(g => bookedGenres.includes(g));
+      if (matches) {
+        setPlayerData(pd => ({ ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...(pd[picker.pid]?.hand || []), picked] } }));
+        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, KEPT (genre match with ${picker.bookedArtist.name}).`);
+        showFloatingBonus(`🎸 Kept ${picked.name} (match!)`, "#4ade80");
       } else {
-        setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
+        setDiscardPile(dp => [...dp, picked]);
+        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${picked.name} from deck, DISCARDED (no genre match).`);
+        showFloatingBonus(`⚠️ ${picked.name} — no match`, "#ef4444");
       }
-      return remainingDeck;
-    });
+      setFameDrawPicker(null);
+      setTimeout(() => {
+        if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+      }, 180);
+      return;
+    }
+    // Normal mode: add to hand.
+    const newRemaining = picker.remaining - 1;
+    const newPicked = [...picker.picked, picked.name];
+    setPlayerData(pd => ({ ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...(pd[picker.pid]?.hand || []), picked] } }));
+    if (newRemaining <= 0) {
+      addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
+      setFameDrawPicker(null);
+      setTimeout(() => {
+        if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+      }, 180);
+    } else {
+      setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
+    }
   };
 
   const pickFameAmenity = (dieFaceIdx) => {
     try {
       if (!fameAmenityPending) return;
-      // v199.106: defensive — if the picker's pid doesn't match the current player,
-      // bail (prevents cross-player amenity applications when state is leaked).
       const { pid, cardName } = fameAmenityPending;
       if (pid !== currentPlayerId) {
         setFameAmenityPending(null);
@@ -3536,33 +3533,41 @@ export default function Headliners() {
         addLog("🔥 Fame", `${cardName}: skipped — pick an amenity die (not fame or stage).`);
         return;
       }
+      // v199.107: compute everything OUTSIDE the setPlayerData updater (React can call
+      // updaters multiple times, so side effects inside them duplicate — this was the
+      // cause of the Build + Draw 2 freeze and other duplicate-state bugs).
+      const curPd = (playerDataRef.current || playerData)[pid] || {};
+      if (!curPd || Object.keys(curPd).length === 0) {
+        setFameAmenityPending(null);
+        return;
+      }
+      const fields = curPd.fields || emptyFields();
+      let targetField = 0;
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i] || {};
+        const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+        if (count < 5) { targetField = i; break; }
+      }
+      const secBonus = (face === "security" && curPd.vpPerSecurity > 0) ? curPd.vpPerSecurity : 0;
+      // Commit state changes. The updater function is now pure (no side effects).
       setPlayerData(p => {
         const cur = p[pid];
-        if (!cur) return p; // defensive — player data missing
-        // Place amenity in first field with < 5 amenities, read from the current state.
-        const fields = cur.fields || emptyFields();
-        let targetField = 0;
-        for (let i = 0; i < fields.length; i++) {
-          const f = fields[i] || {};
-          const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-          if (count < 5) { targetField = i; break; }
-        }
+        if (!cur) return p;
         let updated = mutateAmenity(cur, targetField, face, +1);
-        if (face === "security" && cur.vpPerSecurity > 0) {
-          logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus (Fame card)");
-          updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
+        if (secBonus > 0) {
+          updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + secBonus };
         }
-        addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
         return { ...p, [pid]: updated };
       });
-      // v199.103: consume the die face so a second Fame card can't claim it.
       setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
+      // Side effects (logs, floating bonuses, picker clear) run exactly once, outside any updater.
+      if (secBonus > 0) logTicketGain(pid, secBonus, "Security placement bonus (Fame card)");
+      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
       if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
       setFameAmenityPending(null);
-      // v199.106: auto-close pool drawer if no other Fame picker is still active.
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
-      }, 100);
+      }, 120);
       setTimeout(() => recalcTickets(), 50);
     } catch (e) {
       console.error("pickFameAmenity error:", e);
