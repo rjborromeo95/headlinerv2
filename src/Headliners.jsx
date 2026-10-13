@@ -16337,19 +16337,65 @@ export default function Headliners() {
                 background: "linear-gradient(180deg, rgba(76,29,149,0.3), rgba(76,29,149,0.1))",
                 border: "1px solid rgba(251,191,36,0.3)",
                 animation: "slideDownIn 0.18s ease-out",
-                gap: 6,
+                gap: 4,
               }}>
                 <div style={{ fontSize: 8, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, textAlign: "center" }}>Fame Tray</div>
-                <div style={{ display: "flex", justifyContent: "space-around", gap: 2 }}>
+                {/* v199.80: 5-column grid — each star gets a column with optional tier-benefit
+                    indicator at the 2★ and 4★ positions as a stand-in for the future Fame card
+                    system. Benefit text brightens green when that tier is reached, stays dim
+                    grey when not. */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 2, alignItems: "end" }}>
                   {[1,2,3,4,5].map(i => {
                     const filled = i <= fame;
-                    return <span key={i} style={{
-                      fontSize: 22,
-                      color: filled ? "#fbbf24" : "#312e81",
-                      textShadow: filled ? "0 0 6px rgba(251,191,36,0.7)" : "none",
-                      lineHeight: 1,
-                      transition: "all 0.2s",
-                    }}>★</span>;
+                    const isTierStart = i === 2 || i === 4;
+                    const tierReached = isTierStart && fame >= i;
+                    return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                      {/* Tier benefit indicator ABOVE the star (only at tier-start positions) */}
+                      {i === 2 && <div style={{
+                        fontSize: 7, lineHeight: 1.15,
+                        color: tierReached ? "#86efac" : "#475569",
+                        fontWeight: 700,
+                        textAlign: "center",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.2,
+                        padding: "2px 3px",
+                        borderRadius: 4,
+                        background: tierReached ? "rgba(34,197,94,0.12)" : "rgba(71,85,105,0.1)",
+                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.4)" : "rgba(71,85,105,0.25)"}`,
+                        minHeight: 24,
+                        display: "flex", flexDirection: "column", justifyContent: "center",
+                      }} title={tierReached ? "Fame 2-3 tier benefits active" : "Reach Fame 2 to unlock"}>
+                        <div>+1 amen</div>
+                        <div>+1 draw</div>
+                      </div>}
+                      {i === 4 && <div style={{
+                        fontSize: 7, lineHeight: 1.15,
+                        color: tierReached ? "#86efac" : "#475569",
+                        fontWeight: 700,
+                        textAlign: "center",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.2,
+                        padding: "2px 3px",
+                        borderRadius: 4,
+                        background: tierReached ? "rgba(34,197,94,0.12)" : "rgba(71,85,105,0.1)",
+                        border: `1px solid ${tierReached ? "rgba(34,197,94,0.4)" : "rgba(71,85,105,0.25)"}`,
+                        minHeight: 24,
+                        display: "flex", flexDirection: "column", justifyContent: "center",
+                      }} title={tierReached ? "Fame 4-5 tier benefits active" : "Reach Fame 4 to unlock"}>
+                        <div>pool</div>
+                        <div>+ dice</div>
+                      </div>}
+                      {/* Blank spacers at non-tier positions keep the stars aligned to the same baseline. */}
+                      {!isTierStart && <div style={{ minHeight: 24 }} />}
+                      {/* The star itself */}
+                      <span style={{
+                        fontSize: 20,
+                        color: filled ? "#fbbf24" : "#312e81",
+                        textShadow: filled ? "0 0 6px rgba(251,191,36,0.7)" : "none",
+                        lineHeight: 1,
+                        transition: "all 0.2s",
+                      }}>★</span>
+                    </div>;
                   })}
                 </div>
                 <div style={{ fontSize: 8, color: "#64748b", textAlign: "center", fontStyle: "italic" }}>Fame cards (coming soon)</div>
