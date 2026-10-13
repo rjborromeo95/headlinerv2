@@ -10638,13 +10638,27 @@ export default function Headliners() {
       }
 
       if (noTurnsLeft || actionTaken) {
-        // AI: deploy agent before ending turn (free action)
-        if (hasAgent(currentPlayerId) && !actionTaken) {
-          // Don't deploy if turn is ending due to no turns left and no action taken — weird state
-        } else if (hasAgent(currentPlayerId)) {
-          aiDeployAgent(currentPlayerId);
+        // v199.69: defensive check — noTurnsLeft is derived from React state which can lag
+        // behind turnsLeftRef (updated synchronously by endTurn's rebalancer). If the state
+        // says noTurnsLeft but the ref says otherwise, trust the ref — don't skip a turn
+        // the player is actually entitled to. This covers the "some players get only 11
+        // turns in Quick Play" bug where a stale noTurnsLeft was firing endTurn without
+        // the player playing their last turn.
+        if (noTurnsLeft && !actionTaken) {
+          const refTurnsForMe = (turnsLeftRef.current || {})[currentPlayerId] || 0;
+          if (refTurnsForMe > 0) {
+            addLog("⚠️ AI Guard", `${currentPlayer?.festivalName}: noTurnsLeft stale (ref says ${refTurnsForMe} left) — not ending turn, retrying action.`);
+            // Fall through to normal action flow below. Don't end the turn.
+          } else {
+            // Legitimately out of turns and didn't act — end without agent deploy
+            // (original "weird state" rule, preserved).
+            endTurn(); aiProcessing.current = false; return;
+          }
+        } else {
+          // actionTaken is true — turn genuinely done. Deploy agent if available, then end.
+          if (hasAgent(currentPlayerId)) aiDeployAgent(currentPlayerId);
+          endTurn(); aiProcessing.current = false; return;
         }
-        endTurn(); aiProcessing.current = false; return;
       }
 
       // Decide and execute ONE action
@@ -15807,7 +15821,12 @@ export default function Headliners() {
       {showTurnStart && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ ...card, textAlign: "center", maxWidth: 440, animation: "fadeSlideIn 0.3s" }}>
           <h2 style={{ color: "#fbbf24", fontSize: 28, margin: "0 0 8px" }}>🎪 {currentPlayer?.festivalName}</h2>
-          <p style={{ color: "#c4b5fd", fontSize: 16 }}>Year {year} — <strong style={{ color: "#fbbf24" }}>{turnsLeft[currentPlayerId]}</strong> turns left</p>
+          <p style={{ color: "#c4b5fd", fontSize: 16 }}>
+            {gameModeRef.current === "quickYear" && turnsLeft[currentPlayerId] === 1
+              ? <span><strong style={{ color: "#f97316" }}>LAST TURN</strong> — the festival ends after this one.</span>
+              : <>Year {year} — <strong style={{ color: "#fbbf24" }}>{turnsLeft[currentPlayerId]}</strong> turns left</>
+            }
+          </p>
           {(playerObjectives[currentPlayerId] || []).length > 0 && (() => {
             const objs = playerObjectives[currentPlayerId] || [];
             return <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.25)" }}>
@@ -16041,7 +16060,12 @@ export default function Headliners() {
                 <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
                   <span style={{ animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none", color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400 }}>🔥 Fame {pd.fame || 0}</span>
                 </FameBreakdown>
-                <span>🔄 {turnsLeft[p.id] || 0} turns</span>
+                <span>
+                  {gameModeRef.current === "quickYear"
+                    ? ((turnsLeft[p.id] || 0) === 0 ? "✅ Finished" : (turnsLeft[p.id] === 1 ? <span style={{ color: "#f97316", fontWeight: 700 }}>⚠️ Last turn</span> : <>🔄 {turnsLeft[p.id]} turns</>))
+                    : <>🔄 {turnsLeft[p.id] || 0} turns</>
+                  }
+                </span>
                 {(pd.heldDice || 0) > 0 && <span style={{ color: "#fbbf24", fontWeight: 700 }}>🎲 {pd.heldDice} dice</span>}
               </div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{AMENITY_TYPES.map(t => { const c = (pd.amenities?.[t]) || 0; return c > 0 ? <span key={t} style={{ marginRight: 8 }}>{AMENITY_ICONS[t]}×{c}</span> : null; })}</div>
@@ -16531,7 +16555,14 @@ export default function Headliners() {
                   <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
                     <span style={{ color: onFire ? "#fb923c" : "#94a3b8", fontWeight: onFire ? 700 : 400, animation: onFire ? "fameFlicker 0.8s ease-in-out infinite" : "none" }}>🔥{pd.fame||0}</span>
                   </FameBreakdown>
-                  <span>🔄{turnsLeft[p.id]||0}</span>{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
+                  {gameModeRef.current === "quickYear"
+                    ? ((turnsLeft[p.id] || 0) === 0
+                        ? <span style={{ color: "#64748b" }}>✅</span>
+                        : (turnsLeft[p.id] === 1
+                            ? <span style={{ color: "#f97316", fontWeight: 700 }}>⚠️LAST</span>
+                            : <span>🔄{turnsLeft[p.id]}</span>))
+                    : <span>🔄{turnsLeft[p.id]||0}</span>
+                  }{(pd.heldDice||0) > 0 && <span style={{ color: "#fbbf24" }}>🎲{pd.heldDice}</span>}{(() => { const aLeft = getAgentActionsLeft(p.id); return <span style={{ color: aLeft > 0 ? "#93c5fd" : "#475569" }} title={aLeft > 0 ? `${aLeft} agent action${aLeft === 1 ? "" : "s"} left this year` : "Agent exhausted until next year"}>🕵️{aLeft}</span>; })()}
                 </div>
                 {temptMode && (temptPlacements[p.id] || []).length > 0 && <div style={{ marginTop: 3, padding: "2px 5px", borderRadius: 5, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>💫 tempting {(temptPlacements[p.id] || []).map(x => x.artistName).join(" & ")}</div>}
                 {(() => {
@@ -16702,7 +16733,10 @@ export default function Headliners() {
           <div style={{ marginBottom: 10, textAlign: "center" }}>
             <h2 style={{ color: "#fbbf24", fontSize: isMobile ? 22 : 20, margin: 0 }}>{currentPlayer?.festivalName}'s Turn</h2>
             <p style={{ color: "#8b5cf6", fontSize: isMobile ? 13 : 12, margin: "4px 0" }}>
-              {turnsLeft[currentPlayerId]} turns remaining
+              {gameModeRef.current === "quickYear" && turnsLeft[currentPlayerId] === 1
+                ? <strong style={{ color: "#f97316", fontSize: isMobile ? 14 : 13, letterSpacing: 1 }}>⚠️ LAST TURN</strong>
+                : <>{turnsLeft[currentPlayerId]} turns remaining</>
+              }
               {gameModeRef.current === "quickYear" && (
                 <span style={{ marginLeft: 10, color: actionsLeftThisTurn > 0 ? "#fbbf24" : "#64748b", fontWeight: 700 }}>
                   · ⚡ {actionsLeftThisTurn}/{QUICKYEAR_ACTIONS_PER_TURN} action{actionsLeftThisTurn === 1 ? "" : "s"} left
