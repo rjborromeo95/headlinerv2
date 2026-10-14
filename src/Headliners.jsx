@@ -21368,6 +21368,14 @@ export default function Headliners() {
               setFameCardUsedThisTurn({}); setQuickYearTurnsTaken(0);
               playerFameCardsRef.current = {}; pendingReactiveEffectsRef.current = {};
               pendingAfterTriggersRef.current = {}; quickYearTurnsTakenRef.current = 0;
+              // v199.125: reset AI "already resolved this step" locks. Without this,
+              // the new game's setupIndex=0:draftArtist key could match a leftover lock
+              // from the previous game, making the AI setup useEffect short-circuit and
+              // never auto-draft. Same for the per-turn lock.
+              aiSetupResolvedRef.current = null;
+              aiTurnStartResolvedRef.current = null;
+              aiProcessing.current = false;
+              playersNeedingSeasonStartRef.current = {};
             }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
