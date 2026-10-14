@@ -536,7 +536,7 @@ const FAME_CARDS = [
   { id: "FM_PEEK_REARRANGE",   name: "Peek + Rearrange",         category: "you_may",      trigger: "any_time",    effect: "peek_rearrange_deck",            copies: 1, desc: "On your turn (any time): look at the top 3 artists of the deck and re-arrange them in any order." },
   { id: "FM_REFRESH_DIE",      name: "Refresh Die",              category: "you_may",      trigger: "any_time",    effect: "refresh_die",                    copies: 3, desc: "On your turn (any time): refresh the amenity die." },
   // THIS FAME CARD — passive bonus Fame on draw
-  { id: "FM_SELF_2FAME",       name: "+2 Fame Card",             category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, desc: "This Fame card provides 2 Fame instead of 1 — you gain +1 bonus Fame the moment you pick it." },
+  { id: "FM_SELF_2FAME",       name: "+2 Fame Card",             category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "This Fame card is worth 2 Fame: it adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
   // AFTER BUILD
   { id: "FM_BUILD_AMENITY",    name: "After Build +1 Amenity",   category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",          copies: 1, desc: "After you take the Build action: gain another amenity from the die." },
   { id: "FM_BUILD_AM_OR_DRAW", name: "After Build Amenity or Draw",  category: "after_build",  trigger: "after_build", effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you take the Build action: gain another amenity OR draw 1 artist." },
@@ -3241,10 +3241,12 @@ export default function Headliners() {
   // in a later phase (v199.98). For now, if an AI gains Fame we auto-pick a random one.
   const drawFameCardsForPlayer = (pid, source) => {
     if (gameModeRef.current !== "quickYear") return;
-    // Hard cap at 5 cards per player — mirrors the Fame cap.
+    // v199.120: cap uses weighted slot sum (not card count). The "+2 Fame Card"
+    // declares slotWeight: 2, so it counts as 2 slots when checking the 5-slot tray cap.
     const current = (playerFameCardsRef.current[pid] || []);
-    if (current.length >= 5) {
-      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (5/5). ${source || "Fame gain"} skipped.`);
+    const usedSlots = current.reduce((n, c) => n + (c.slotWeight || 1), 0);
+    if (usedSlots >= 5) {
+      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (${usedSlots}/5). ${source || "Fame gain"} skipped.`);
       return;
     }
     const player = players.find(pl => pl.id === pid);
@@ -3979,11 +3981,15 @@ export default function Headliners() {
         }
         break;
       }
+      case "ss_open_stage":
       case "ss_new_stage": {
         // v199.108 BUG FIX: previous version pushed EMPTY ARRAY to stages (should be
         // { fameRequired: 0 } object) and had side effects inside the updater. Also had
         // no visible stage name because stages require a proper name from STAGE_NAMES to
         // render in the festival. Fixed to match the game's actual stage opener.
+        // v199.119 BUG FIX: the catalog uses effect name "ss_open_stage", but the case
+        // was only "ss_new_stage" — so the switch never matched and FM_SS_NEW_STAGE
+        // silently did nothing. Both names now dispatch here.
         const pdNow = (playerDataRef.current || playerData)[pid] || {};
         const stageCount = (pdNow.stages || []).length;
         if (stageCount >= 3) {
@@ -4355,13 +4361,28 @@ export default function Headliners() {
         break;
       }
       case "self_grants_bonus_fame": {
-        // v199.111/v199.115: "This Fame Card provides 2 Fame instead of 1". Grants +1
-        // bonus Fame immediately when picked. v199.115: fix same bug as ss_gain_1_fame —
-        // logFameGain alone doesn't update baseFame; we need to set it ourselves.
+        // v199.111/v199.115/v199.120: "+2 Fame Card" — occupies 2 tray slots AND adds +1
+        // bonus Fame to baseFame (making the Fame event that drew it net +2). v199.120:
+        // does NOT trigger another Fame card draw (no cascade). We inline the needed
+        // bits of logFameGain (ledger, legendary check, floating bonus) but SKIP the
+        // drawFameCardsForPlayer cascade that logFameGain normally triggers in Quick Play.
         if (!ctx?.onDraw) return; // only fires at pick-time
         const CAP = typeof FAME_CAP_QUICKYEAR !== "undefined" ? FAME_CAP_QUICKYEAR : 5;
-        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + 1) } }));
-        logFameGain(pid, 1, `"${card.name}" bonus Fame`);
+        const amount = 1;
+        const y = yearRef.current || year || 1;
+        // 1. Increment baseFame directly.
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + amount) } }));
+        // 2. Record to Fame ledger so the hover tooltip + stats show the bonus.
+        setFameLog(prev => ({
+          ...prev,
+          [pid]: [...(prev[pid] || []), { source: `"${card.name}" bonus Fame`, amount, year: y }]
+        }));
+        // 3. Legendary + season stats.
+        if (typeof bumpSeasonStat === "function") bumpSeasonStat(pid, "fameGained", amount);
+        if (typeof checkLegendaryContracts === "function") setTimeout(() => checkLegendaryContracts(pid), 60);
+        // 4. Visual feedback + ticket recalc. NO drawFameCardsForPlayer — that's the
+        // cascade suppression per playtest spec: this card is a self-contained +2 Fame
+        // event, not a stepping stone to further Fame draws.
         if (!player?.isAI) showFloatingBonus("🔥 +1 bonus Fame!", "#fcd34d");
         setTimeout(() => recalcTickets(), 50);
         break;
@@ -17709,7 +17730,7 @@ export default function Headliners() {
                 to the same Fame tray UX the owner sees. */}
             {gameMode === "quickYear" && (playerFameCards[viewingPlayerId] || []).length > 0 && (
               <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(76,29,149,0.3), rgba(45,16,96,0.15))", border: "1px solid rgba(167,139,250,0.4)" }}>
-                <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 8, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).length}/5</div>
+                <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 8, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
                   {[0,1,2,3,4].map(i => {
                     const card = (playerFameCards[viewingPlayerId] || [])[i];
@@ -17749,7 +17770,7 @@ export default function Headliners() {
                         <>
                           <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
                             {card.category === "you_may" ? "You may" :
-                             card.category === "self_bonus" ? "Bonus" :
+                             card.category === "self_bonus" ? ((card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : "Bonus") :
                              card.category === "after_build" ? "After Build" :
                              card.category === "after_browse" ? "After Browse" :
                              card.category === "after_book" ? "After Book" :
@@ -18121,7 +18142,7 @@ export default function Headliners() {
                 animation: "slideRightIn 0.18s ease-out",
                 gap: 10,
               }}>
-                <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray · {(playerFameCards[currentPlayerId] || []).length}/5</div>
+                <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray · {(playerFameCards[currentPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
                 {/* v199.102: pending-trigger banner. If the player has after-action cards
                     with pending triggers, prompt them to click. Without this, players
                     sometimes miss the glow. */}
@@ -18196,7 +18217,7 @@ export default function Headliners() {
                         <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
                           {afterActionClickable ? "Fire!" :
                            card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
-                           card.category === "self_bonus" ? "Bonus" :
+                           card.category === "self_bonus" ? ((card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : "Bonus") :
                            card.category === "after_build" ? "After Build" :
                            card.category === "after_browse" ? "After Browse" :
                            card.category === "after_book" ? "After Book" :
