@@ -3939,24 +3939,22 @@ export default function Headliners() {
   const _fireFameCardEffectInner = (pid, card, ctx, player, festName) => {
     switch (card.effect) {
       case "draw_2_artists": {
-        // v199.101: humans see a picker (pool OR deck, any combination of 2); AI
-        // auto-pulls 2 from the deck.
+        // v199.101/v199.124: humans see a picker (pool OR deck, any combination of 2);
+        // AI auto-pulls 2 from the deck. v199.124: NO side effects inside setArtistDeck
+        // updater — React can call updaters multiple times (strict mode / concurrent
+        // features), causing duplicate setPlayerData calls → infinite re-render loop.
         if (player?.isAI) {
-          setArtistDeck(deck => {
-            if (deck.length === 0) {
-              addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty, no draws.`);
-              return deck;
-            }
-            const take = Math.min(2, deck.length);
-            const drawn = deck.slice(0, take);
-            const remaining = deck.slice(take);
-            setPlayerData(pd => {
-              const curHand = pd[pid]?.hand || [];
-              return { ...pd, [pid]: { ...pd[pid], hand: [...curHand, ...drawn] } };
-            });
-            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")}.`);
-            return remaining;
-          });
+          const curDeck = artistDeckRef.current || artistDeck;
+          if (curDeck.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty, no draws.`);
+            return;
+          }
+          const take = Math.min(2, curDeck.length);
+          const drawn = curDeck.slice(0, take);
+          const remaining = curDeck.slice(take);
+          setArtistDeck(remaining);
+          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...drawn] } }));
+          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")}.`);
         } else {
           setFameDrawPicker({ pid, cardName: card.name, remaining: 2, picked: [], allowDeck: true });
           setPoolDrawerOpen(true);
@@ -3974,25 +3972,25 @@ export default function Headliners() {
           return;
         }
         if (player && player.isAI) {
+          // v199.124: lift side effects out of updater to prevent duplicate state updates.
           const bookedGenres = Array.isArray(bookedArtist.genre) ? bookedArtist.genre : [bookedArtist.genre].filter(Boolean);
-          setArtistDeck(deck => {
-            if (deck.length === 0) {
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — deck is empty.`);
-              return deck;
-            }
-            const drawn = deck[0];
-            const remaining = deck.slice(1);
-            const drawnGenres = Array.isArray(drawn.genre) ? drawn.genre : [drawn.genre].filter(Boolean);
-            const matches = drawnGenres.some(g => bookedGenres.includes(g));
-            if (matches) {
-              setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → kept ${drawn.name} (genre match with ${bookedArtist.name}).`);
-            } else {
-              setDiscardPile(dp => [...dp, drawn]);
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name}, no genre match, discarded.`);
-            }
-            return remaining;
-          });
+          const curDeck = artistDeckRef.current || artistDeck;
+          if (curDeck.length === 0) {
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — deck is empty.`);
+            return;
+          }
+          const drawn = curDeck[0];
+          const remaining = curDeck.slice(1);
+          setArtistDeck(remaining);
+          const drawnGenres = Array.isArray(drawn.genre) ? drawn.genre : [drawn.genre].filter(Boolean);
+          const matches = drawnGenres.some(g => bookedGenres.includes(g));
+          if (matches) {
+            setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → kept ${drawn.name} (genre match with ${bookedArtist.name}).`);
+          } else {
+            setDiscardPile(dp => [...dp, drawn]);
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name}, no genre match, discarded.`);
+          }
         } else {
           setFameDrawPicker({
             pid, cardName: card.name, remaining: 1, picked: [], allowDeck: true,
@@ -4347,32 +4345,31 @@ export default function Headliners() {
         const takeCount = card.effect === "draw_2_from_pool" ? 2 : 1;
         const allowDeck = card.effect === "draw_1_artist"; // new variant: pool or deck
         if (player?.isAI) {
+          // v199.124: lift side effects out of state updaters to avoid duplicate updates
+          // when React calls the updater multiple times (strict mode / concurrent features).
           if (allowDeck) {
-            // AI: pull from deck (simplest).
-            setArtistDeck(deck => {
-              if (deck.length === 0) {
-                addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — deck is empty.`);
-                return deck;
-              }
-              const drawn = deck[0];
-              const remaining = deck.slice(1);
-              setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name} from deck.`);
-              return remaining;
-            });
+            const curDeck = artistDeckRef.current || artistDeck;
+            if (curDeck.length === 0) {
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — deck is empty.`);
+              return;
+            }
+            const drawn = curDeck[0];
+            const remaining = curDeck.slice(1);
+            setArtistDeck(remaining);
+            setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name} from deck.`);
           } else {
-            setArtistPool(prev => {
-              if (prev.length === 0) {
-                addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — pool is empty, no draws.`);
-                return prev;
-              }
-              const take = Math.min(takeCount, prev.length);
-              const drawn = prev.slice(0, take);
-              const remaining = prev.slice(take);
-              setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...drawn] } }));
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")} from the pool.`);
-              return remaining;
-            });
+            const curPool = artistPoolRef.current || artistPool;
+            if (curPool.length === 0) {
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — pool is empty, no draws.`);
+              return;
+            }
+            const take = Math.min(takeCount, curPool.length);
+            const drawn = curPool.slice(0, take);
+            const remaining = curPool.slice(take);
+            setArtistPool(remaining);
+            setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...drawn] } }));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")} from the pool.`);
             setTimeout(() => refillPool(), 100);
           }
         } else {
