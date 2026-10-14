@@ -19071,13 +19071,27 @@ export default function Headliners() {
                   transition: "left 0.2s ease-out",
                 }}>
                   <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
-                    {handCards.map((a, i) => a.isFavour
+                    {handCards.map((a, i) => {
+                      // v199.116: Quick Play is 1 action per turn (Build/Browse/Book).
+                      // Cashing a Favour IS that one action. If the player already took
+                      // their action this turn, the Favour is NOT clickable (no cash +
+                      // play on top of a Build/Browse/Book). Classic mode is unaffected.
+                      const qyActionAlreadyTaken = gameModeRef.current === "quickYear" && (actionTaken || actionsLeftRef.current <= 0);
+                      const favourDisabled = !!favourPlayMode || qyActionAlreadyTaken;
+                      return a.isFavour
                       ? <ArtistCard key={`a-${i}`} artist={a} small
-                          disabled={!!favourPlayMode}
+                          disabled={favourDisabled}
                           onClick={() => {
                             // v199.114: defensive — guard against stale state and bad data.
                             try {
                               if (favourPlayMode) return;
+                              // v199.116: block Favour cash if the player has already used
+                              // their Quick Play action this turn.
+                              if (qyActionAlreadyTaken) {
+                                addLog(currentPlayer?.festivalName || "?", `Can't cash a Favour — already took your action this turn.`);
+                                showFloatingBonus("Action already used this turn", "#ef4444");
+                                return;
+                              }
                               if (!a || !a.isFavour || !a.genre) {
                                 console.warn("Favour click: invalid artist", a);
                                 return;
@@ -19101,8 +19115,8 @@ export default function Headliners() {
                           genreMatchGlow={hasGenreMatchBonusAvailable(a, currentPD)}
                           disabled={actionTaken || turnAction !== "artist" || artistAction === "pickStage"}
                           onClick={() => artistAction === null && !actionTaken && handleBookFromHand(i)}
-                        />
-                    )}
+                        />;
+                    })}
                   </div>
                   {/* v199.46: Dedicated Principles row — separate from the hand so artist
                       flow and principle-spending flow don't visually overlap. */}
