@@ -3569,6 +3569,10 @@ export default function Headliners() {
       if (secBonus > 0) logTicketGain(pid, secBonus, "Security placement bonus (Fame card)");
       addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
       if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[face]}`, "#4ade80");
+      // v199.110: Fame-placed amenities should also qualify for Council Incentive
+      // microtrends. Deferred so the setPlayerData commit flushes first (otherwise
+      // claimAmenityMicrotrend's own setPlayerData races with ours).
+      setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
       setFameAmenityPending(null);
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
@@ -3591,9 +3595,8 @@ export default function Headliners() {
     const player = players.find(pl => pl.id === pid);
     const festName = player?.festivalName || "?";
     const idx = handIndices[0];
-    // Capture the discarded artist in the updater so we have its data for subsequent
-    // steps (needs analysis, amenity placement).
     let discardedArtist = null;
+    let placedType = null; // v199.110: capture for microtrend check
     setPlayerData(p => {
       const cur = p[pid] || {};
       const curHand = cur.hand || [];
@@ -3602,8 +3605,6 @@ export default function Headliners() {
       const newHand = curHand.filter((_, i) => i !== idx);
       return { ...p, [pid]: { ...cur, hand: newHand } };
     });
-    // Defer the amenity gain by one tick so the hand update commits + we can read
-    // fresh pd for the needs analysis.
     setTimeout(() => {
       if (!discardedArtist) return;
       setDiscardPile(dp => [...dp, discardedArtist]);
@@ -3621,6 +3622,7 @@ export default function Headliners() {
           return p;
         }
         const biggest = needs.sort((a, b) => (b.required - b.have) - (a.required - a.have))[0];
+        placedType = biggest.type;
         const fields = cur.fields || emptyFields();
         let targetField = 0;
         for (let i = 0; i < fields.length; i++) {
@@ -3633,6 +3635,8 @@ export default function Headliners() {
         if (!player?.isAI) showFloatingBonus(`🔥 Discarded ${discardedArtist.name}, +1 ${AMENITY_LABELS[biggest.type]}`, "#fbbf24");
         return { ...p, [pid]: updated };
       });
+      // v199.110: Fame-placed amenity triggers Council Incentive check (for the type actually placed).
+      setTimeout(() => { if (placedType) claimAmenityMicrotrend(pid, placedType); }, 80);
       setTimeout(() => recalcTickets(), 30);
     }, 60);
   };
@@ -3666,6 +3670,8 @@ export default function Headliners() {
         if (!player?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[amenityType]}`, "#fbbf24");
         return { ...p, [pid]: updated };
       });
+      // v199.110: Fame-placed amenity triggers Council Incentive check.
+      setTimeout(() => claimAmenityMicrotrend(pid, amenityType), 80);
       setTimeout(() => recalcTickets(), 30);
     }, 60);
   };
@@ -4045,6 +4051,8 @@ export default function Headliners() {
         setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, amenityType, +1) }));
         addLog("🔥 Fame", `${festName}: "${card.name}" → gained a ${AMENITY_LABELS[amenityType]} in Field ${targetField + 1}.`);
         if (!player?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[amenityType]} (reactive)`, "#06b6d4");
+        // v199.110: Fame-placed amenity should also qualify for Council Incentive microtrends.
+        setTimeout(() => claimAmenityMicrotrend(pid, amenityType), 50);
         setTimeout(() => recalcTickets(), 50);
         break;
       }
@@ -4101,6 +4109,8 @@ export default function Headliners() {
           // v199.103: consume the die face so a second AI Fame card can't claim the same face.
           setDice(prev => prev.filter((_, i) => i !== faceIdx));
           addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
+          // v199.110: Fame-placed amenity should also qualify for Council Incentive microtrends.
+          setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
           setTimeout(() => recalcTickets(), 50);
         } else {
           // Open picker modal for human.
