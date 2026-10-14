@@ -3250,44 +3250,45 @@ export default function Headliners() {
       return;
     }
     const player = players.find(pl => pl.id === pid);
-    // Draw top 3 from deck. If the deck is low, reshuffle discard into it.
-    setFameDeck(prev => {
-      let deck = [...prev];
-      if (deck.length < 3) {
-        // Reshuffle discard back in.
-        const disc = fameDiscardPile;
-        if (disc.length > 0) {
-          deck = [...deck, ...disc];
-          for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
-          setFameDiscardPile([]);
-          addLog("🔥 Fame", "Fame deck reshuffled.");
-        }
+    // v199.128: NO side effects inside setFameDeck updater (was causing React error #185
+    // via duplicate updater runs). Read refs, compute flat, commit each state separately.
+    let deck = [...(fameDeckRef.current || fameDeck)];
+    let discardCleared = false;
+    if (deck.length < 3) {
+      const disc = fameDiscardPileRef.current || fameDiscardPile;
+      if (disc.length > 0) {
+        deck = [...deck, ...disc];
+        for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+        discardCleared = true;
       }
-      if (deck.length === 0) {
-        addLog("🔥 Fame", `${player?.festivalName || "?"}: Fame deck is exhausted. Draw skipped.`);
-        return prev;
+    }
+    if (deck.length === 0) {
+      addLog("🔥 Fame", `${player?.festivalName || "?"}: Fame deck is exhausted. Draw skipped.`);
+      return;
+    }
+    const take = Math.min(3, deck.length);
+    const choices = deck.slice(0, take);
+    const remaining = deck.slice(take);
+    // Commit deck + discard-clear first, flat.
+    setFameDeck(remaining);
+    if (discardCleared) {
+      setFameDiscardPile([]);
+      addLog("🔥 Fame", "Fame deck reshuffled.");
+    }
+    // Then open modal or auto-pick.
+    if (player && player.isAI) {
+      const pickIdx = Math.floor(Math.random() * choices.length);
+      const picked = choices[pickIdx];
+      const discards = choices.filter((_, i) => i !== pickIdx);
+      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+      setFameDiscardPile(d => [...d, ...discards]);
+      addLog("🔥 Fame", `${player.festivalName}: drew Fame card "${picked.name}" (auto-pick).`);
+      if (picked.trigger === "on_draw") {
+        setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
       }
-      const take = Math.min(3, deck.length);
-      const choices = deck.slice(0, take);
-      const remaining = deck.slice(take);
-      // Open the modal (human) or auto-pick (AI).
-      if (player && player.isAI) {
-        // AI heuristic placeholder for v199.95: pick a random card. Smarter in v199.98.
-        const pickIdx = Math.floor(Math.random() * choices.length);
-        const picked = choices[pickIdx];
-        const discards = choices.filter((_, i) => i !== pickIdx);
-        setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
-        setFameDiscardPile(d => [...d, ...discards]);
-        addLog("🔥 Fame", `${player.festivalName}: drew Fame card "${picked.name}" (auto-pick).`);
-        // v199.111: fire on_draw triggers for AI too.
-        if (picked.trigger === "on_draw") {
-          setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
-        }
-      } else {
-        setFameDrawModal({ pid, choices });
-      }
-      return remaining;
-    });
+    } else {
+      setFameDrawModal({ pid, choices });
+    }
   };
   const pickFameCard = (pid, cardIdx) => {
     if (!fameDrawModal || fameDrawModal.pid !== pid) return;
@@ -3692,33 +3693,31 @@ export default function Headliners() {
     setTimeout(() => {
       if (!discardedArtist) return;
       setDiscardPile(dp => [...dp, discardedArtist]);
-      setPlayerData(p => {
-        const cur = p[pid] || {};
-        const am = cur.amenities || {};
-        const needs = [
-          { type: "campsite", required: discardedArtist.campCost || 0, have: am.campsite || 0 },
-          { type: "security", required: discardedArtist.securityCost || 0, have: am.security || 0 },
-          { type: "catering", required: discardedArtist.cateringCost || 0, have: am.catering || 0 },
-          { type: "portaloo", required: discardedArtist.portalooCost || 0, have: am.portaloo || 0 },
-        ].filter(n => n.required > n.have);
-        if (needs.length === 0) {
-          addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discardedArtist.name}, but no missing cost amenities to gain.`);
-          return p;
-        }
-        const biggest = needs.sort((a, b) => (b.required - b.have) - (a.required - a.have))[0];
+      // v199.128: compute outcome from ref-fresh state, then commit setPlayerData flat.
+      const curPrePd = (playerDataRef.current || playerData)[pid] || {};
+      const preAm = curPrePd.amenities || {};
+      const preNeeds = [
+        { type: "campsite", required: discardedArtist.campCost || 0, have: preAm.campsite || 0 },
+        { type: "security", required: discardedArtist.securityCost || 0, have: preAm.security || 0 },
+        { type: "catering", required: discardedArtist.cateringCost || 0, have: preAm.catering || 0 },
+        { type: "portaloo", required: discardedArtist.portalooCost || 0, have: preAm.portaloo || 0 },
+      ].filter(n => n.required > n.have);
+      if (preNeeds.length === 0) {
+        addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discardedArtist.name}, but no missing cost amenities to gain.`);
+      } else {
+        const biggest = preNeeds.sort((a, b) => (b.required - b.have) - (a.required - a.have))[0];
         placedType = biggest.type;
-        const fields = cur.fields || emptyFields();
+        const preFields = curPrePd.fields || emptyFields();
         let targetField = 0;
-        for (let i = 0; i < fields.length; i++) {
-          const f = fields[i] || {};
+        for (let i = 0; i < preFields.length; i++) {
+          const f = preFields[i] || {};
           const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
           if (count < 5) { targetField = i; break; }
         }
-        const updated = mutateAmenity(cur, targetField, biggest.type, +1);
+        setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid] || {}, targetField, biggest.type, +1) }));
         addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discardedArtist.name}, gained ${AMENITY_LABELS[biggest.type]} in Field ${targetField + 1}.`);
         if (!player?.isAI) showFloatingBonus(`🔥 Discarded ${discardedArtist.name}, +1 ${AMENITY_LABELS[biggest.type]}`, "#fbbf24");
-        return { ...p, [pid]: updated };
-      });
+      }
       // v199.110: Fame-placed amenity triggers Council Incentive check (for the type actually placed).
       setTimeout(() => { if (placedType) claimAmenityMicrotrend(pid, placedType); }, 80);
       setTimeout(() => recalcTickets(), 30);
@@ -3740,20 +3739,18 @@ export default function Headliners() {
     setTimeout(() => {
       if (discardedArtists.length < 2) return;
       setDiscardPile(dp => [...dp, ...discardedArtists]);
-      setPlayerData(p => {
-        const cur = p[pid] || {};
-        const fields = cur.fields || emptyFields();
-        let targetField = 0;
-        for (let i = 0; i < fields.length; i++) {
-          const f = fields[i] || {};
-          const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-          if (count < 5) { targetField = i; break; }
-        }
-        const updated = mutateAmenity(cur, targetField, amenityType, +1);
-        addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discardedArtists.map(a => a.name).join(" + ")}, placed ${AMENITY_LABELS[amenityType]} in Field ${targetField + 1}.`);
-        if (!player?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[amenityType]}`, "#fbbf24");
-        return { ...p, [pid]: updated };
-      });
+      // v199.128: lift addLog/showFloatingBonus out of updater (compute flat first).
+      const prePd = (playerDataRef.current || playerData)[pid] || {};
+      const preFields = prePd.fields || emptyFields();
+      let targetField = 0;
+      for (let i = 0; i < preFields.length; i++) {
+        const f = preFields[i] || {};
+        const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+        if (count < 5) { targetField = i; break; }
+      }
+      setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid] || {}, targetField, amenityType, +1) }));
+      addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discardedArtists.map(a => a.name).join(" + ")}, placed ${AMENITY_LABELS[amenityType]} in Field ${targetField + 1}.`);
+      if (!player?.isAI) showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[amenityType]}`, "#fbbf24");
       // v199.110: Fame-placed amenity triggers Council Incentive check.
       setTimeout(() => claimAmenityMicrotrend(pid, amenityType), 80);
       setTimeout(() => recalcTickets(), 30);
@@ -5157,6 +5154,13 @@ export default function Headliners() {
   const [fameDrawModal, setFameDrawModal] = useState(null);
   const playerFameCardsRef = useRef({});
   useEffect(() => { playerFameCardsRef.current = playerFameCards; }, [playerFameCards]);
+  // v199.128: refs so drawFameCardsForPlayer can read latest deck/discard without stale
+  // closures and without nesting setters inside a setFameDeck updater (that pattern caused
+  // React error #185 — see v199.124/126 fixes).
+  const fameDeckRef = useRef([]);
+  const fameDiscardPileRef = useRef([]);
+  useEffect(() => { fameDeckRef.current = fameDeck; }, [fameDeck]);
+  useEffect(() => { fameDiscardPileRef.current = fameDiscardPile; }, [fameDiscardPile]);
   const [showYearAnnouncement, setShowYearAnnouncement] = useState(false);
 
   const [viewingPlayerId, setViewingPlayerId] = useState(null);
@@ -10378,10 +10382,52 @@ export default function Headliners() {
         return;
       }
     }
+    // v199.128: lift all side effects (setFirstFullLineup, addLog, showFloatingBonus)
+    // out of the setPlayerData updater. React can call updater functions multiple times
+    // (strict mode / concurrent features) — side effects inside fire multiple times too,
+    // producing duplicate logs, duplicate bonus tickets, and cascading updates that trip
+    // React error #185.
+    // Precompute everything using ref-fresh state, then commit.
+    const preCurPrev = playerDataRef.current || playerData;
+    const prePd0 = { ...(preCurPrev[pid] || {}) };
+    const preSa0 = [...(prePd0.stageArtists || (prePd0.stages || []).map(() => []))];
+    // Secondary race-safe guards (dupe check already done synchronously above).
+    let willBook = (preSa0[stageIdx] || []).length < 3;
+    if (willBook) {
+      const allBookedThisPlayer = preSa0.flat().map(a => a.name);
+      if (allBookedThisPlayer.includes(artist.name)) willBook = false;
+    }
+    if (willBook) {
+      for (const [otherId, otherPd] of Object.entries(preCurPrev)) {
+        if (parseInt(otherId) === pid) continue;
+        const otherBooked = (otherPd.stageArtists || []).flat().map(a => a.name);
+        if (otherBooked.includes(artist.name)) { willBook = false; break; }
+      }
+    }
+    let pattyBonus = 0; let pattyLogMsg = null;
+    let isFullLineup = false; let firstLineupBonus = 0; let firstLineupLog = null;
+    if (willBook) {
+      const existingOnStage = preSa0[stageIdx] || [];
+      const newStageContent = [...existingOnStage, artist];
+      isFullLineup = newStageContent.length === 3;
+      if (artist._pattyPromises && existingOnStage.length > 0) {
+        const myGenres = (artist.genre || "").split(",").map(g => g.trim().toLowerCase()).filter(Boolean);
+        const stageGenres = new Set();
+        existingOnStage.forEach(ex => (ex.genre || "").split(",").map(g => g.trim().toLowerCase()).filter(Boolean).forEach(g => stageGenres.add(g)));
+        if (myGenres.some(g => stageGenres.has(g))) {
+          pattyBonus = 4;
+          pattyLogMsg = `${players.find(p => p.id === pid)?.festivalName}: +4 🎟️ for genre-matching ${artist.name} to ${(prePd0.stageNames || [])[stageIdx] || `Stage ${stageIdx + 1}`}`;
+        }
+      }
+      if (isFullLineup && !firstFullLineup) {
+        firstLineupBonus = 5;
+        firstLineupLog = `${players.find(p => p.id === pid)?.festivalName} released the first full lineup! +5 tickets!`;
+      }
+    }
+    // Commit state ONCE, no side effects inside.
     setPlayerData(prev => {
       const pd = { ...prev[pid] };
       const sa = [...(pd.stageArtists || pd.stages.map(() => []))];
-      // Defensive guard in case of race with another concurrent state update.
       if ((sa[stageIdx] || []).length >= 3) return prev;
       const allBookedThisPlayer = sa.flat().map(a => a.name);
       if (allBookedThisPlayer.includes(artist.name)) { console.warn("Duplicate artist blocked (same player race):", artist.name); return prev; }
@@ -10390,39 +10436,24 @@ export default function Headliners() {
         const otherBooked = (otherPd.stageArtists || []).flat().map(a => a.name);
         if (otherBooked.includes(artist.name)) { console.warn("Duplicate artist blocked (other player race):", artist.name); return prev; }
       }
-      // v199.6: Patty Promises check — artist was flagged with _pattyPromises when the
-      // tempt was won (dispatcher sets this). If this play genre-matches an existing artist
-      // on the stage, award +4 bonus tickets. We check genre overlap against OTHER artists
-      // already on this stage (not including the current artist being added).
       const existingOnStage = sa[stageIdx] || [];
       sa[stageIdx] = [...existingOnStage, artist];
-      const isFullLineup = sa[stageIdx].length === 3;
       pd.stageArtists = sa;
-      if (artist._pattyPromises && existingOnStage.length > 0) {
-        const myGenres = (artist.genre || "").split(",").map(g => g.trim().toLowerCase()).filter(Boolean);
-        const stageGenres = new Set();
-        existingOnStage.forEach(ex => (ex.genre || "").split(",").map(g => g.trim().toLowerCase()).filter(Boolean).forEach(g => stageGenres.add(g)));
-        const genreMatch = myGenres.some(g => stageGenres.has(g));
-        if (genreMatch) {
-          pd.bonusTickets = (pd.bonusTickets || 0) + 4;
-          addLog("📜 Patty Promises", `${players.find(p => p.id === pid)?.festivalName}: +4 🎟️ for genre-matching ${artist.name} to ${(pd.stageNames || [])[stageIdx] || `Stage ${stageIdx + 1}`}`);
-          showFloatingBonus("📜 +4 🎟️ Patty!", "#fcd34d");
-        }
-      }
-      if (isFullLineup && !firstFullLineup) {
-        pd.bonusTickets = (pd.bonusTickets || 0) + 5;
-        setFirstFullLineup(true);
-        addLog("🎪 FIRST!", `${players.find(p => p.id === pid)?.festivalName} released the first full lineup! +5 tickets!`);
-        showFloatingBonus("+5 🎟️ First Lineup!", "#4ade80");
-      }
-      // v165: full-lineup Fame bonus removed as part of the fame-sources prune. The +5
-      // ticket first-lineup bonus above still fires — this only removes the fame.
-      // v199.21: sync playerDataRef immediately so synchronous callers below (e.g.
-      // checkLegendaryContracts) see the artist on the stage.
+      pd.bonusTickets = (pd.bonusTickets || 0) + pattyBonus + firstLineupBonus;
       const result = { ...prev, [pid]: pd };
       playerDataRef.current = result;
       return result;
     });
+    // Fire side effects AFTER commit, flat.
+    if (pattyBonus > 0) {
+      addLog("📜 Patty Promises", pattyLogMsg);
+      showFloatingBonus("📜 +4 🎟️ Patty!", "#fcd34d");
+    }
+    if (firstLineupBonus > 0) {
+      setFirstFullLineup(true);
+      addLog("🎪 FIRST!", firstLineupLog);
+      showFloatingBonus("+5 🎟️ First Lineup!", "#4ade80");
+    }
 
     const pd = playerData[pid];
     const sa = pd.stageArtists || pd.stages.map(() => []);
@@ -16657,16 +16688,21 @@ export default function Headliners() {
 
         const placeBonusAmenity = (aType, fieldIdx) => {
           if (!aType || fieldIdx == null) return;
+          // v199.128: lift logTicketGain + addLog out of updater (compute flat).
+          const preCur = (playerDataRef.current || playerData)[pid] || {};
+          const secBonus = (aType === "security" && (preCur.vpPerSecurity || 0) > 0) ? preCur.vpPerSecurity : 0;
           setPlayerData(p => {
             const cur = p[pid];
             let updated = mutateAmenity(cur, fieldIdx, aType, +1);
-            if (aType === "security" && cur.vpPerSecurity > 0) {
-              logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus");
-              updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
-              addLog("Effect", `+${cur.vpPerSecurity} 🎟️ tickets from security build!`);
+            if (secBonus > 0) {
+              updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + secBonus };
             }
             return { ...p, [pid]: updated };
           });
+          if (secBonus > 0) {
+            logTicketGain(pid, secBonus, "Security placement bonus");
+            addLog("Effect", `+${secBonus} 🎟️ tickets from security build!`);
+          }
           addLog("Effect", `Built bonus ${AMENITY_LABELS[aType]} in Field ${fieldIdx + 1}`);
           sfx.placeAmenity();
           // v198.3: bonus amenities (from Fame spend, artist effects, council rewards)
