@@ -3778,20 +3778,20 @@ export default function Headliners() {
       });
       return { ...p, [pid]: cur };
     });
-    // Draw 3 artists from the deck, functional updates throughout.
+    // v199.126: lift side effects out of setArtistDeck updater (same anti-pattern that
+    // caused React error #185 in AI auto-fire paths). Read from ref, compute, commit flat.
     setTimeout(() => {
-      setArtistDeck(deck => {
-        const take = Math.min(3, deck.length);
-        const drawn = deck.slice(0, take);
-        const remaining = deck.slice(take);
-        setPlayerData(p => {
-          const cur = p[pid] || {};
-          return { ...p, [pid]: { ...cur, hand: [...(cur.hand || []), ...drawn] } };
-        });
-        addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${amenityTypes.map(t => AMENITY_LABELS[t]).join(" + ")}, drew ${drawn.map(a => a.name).join(", ")}.`);
-        if (!player?.isAI) showFloatingBonus(`🔥 Cycled 2 amenities for ${take} artists`, "#fbbf24");
-        return remaining;
+      const curDeck = artistDeckRef.current || artistDeck;
+      const take = Math.min(3, curDeck.length);
+      const drawn = curDeck.slice(0, take);
+      const remaining = curDeck.slice(take);
+      setArtistDeck(remaining);
+      setPlayerData(p => {
+        const cur = p[pid] || {};
+        return { ...p, [pid]: { ...cur, hand: [...(cur.hand || []), ...drawn] } };
       });
+      addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${amenityTypes.map(t => AMENITY_LABELS[t]).join(" + ")}, drew ${drawn.map(a => a.name).join(", ")}.`);
+      if (!player?.isAI) showFloatingBonus(`🔥 Cycled 2 amenities for ${take} artists`, "#fbbf24");
       setTimeout(() => recalcTickets(), 30);
     }, 60);
   };
@@ -3814,18 +3814,18 @@ export default function Headliners() {
         return;
       }
       setDiscardPile(dp => [...dp, ...discarded]);
-      setArtistDeck(deck => {
-        const take = Math.min(discarded.length, deck.length);
-        const drawn = deck.slice(0, take);
-        const remainingDeck = deck.slice(take);
-        setPlayerData(p => {
-          const cur = p[pid] || {};
-          return { ...p, [pid]: { ...cur, hand: [...(cur.hand || []), ...drawn] } };
-        });
-        addLog("🔥 Fame", `${festName}: "${cardName}" → cycled ${discarded.length} card${discarded.length === 1 ? "" : "s"} (drew ${drawn.map(a => a.name).join(", ")}).`);
-        if (!player?.isAI) showFloatingBonus(`🔥 Cycled ${discarded.length}`, "#fbbf24");
-        return remainingDeck;
+      // v199.126: lift side effects out of setArtistDeck updater.
+      const curDeck = artistDeckRef.current || artistDeck;
+      const take = Math.min(discarded.length, curDeck.length);
+      const drawn = curDeck.slice(0, take);
+      const remainingDeck = curDeck.slice(take);
+      setArtistDeck(remainingDeck);
+      setPlayerData(p => {
+        const cur = p[pid] || {};
+        return { ...p, [pid]: { ...cur, hand: [...(cur.hand || []), ...drawn] } };
       });
+      addLog("🔥 Fame", `${festName}: "${cardName}" → cycled ${discarded.length} card${discarded.length === 1 ? "" : "s"} (drew ${drawn.map(a => a.name).join(", ")}).`);
+      if (!player?.isAI) showFloatingBonus(`🔥 Cycled ${discarded.length}`, "#fbbf24");
     }, 60);
   };
 
@@ -4039,19 +4039,19 @@ export default function Headliners() {
       }
       case "ss_draw_2_from_discard": {
         // Draw 2 artists from the DISCARD pile. If fewer than 2, draw what's there.
-        setDiscardPile(dp => {
-          if (dp.length === 0) {
-            addLog("🔥 Fame", `${festName}: "${card.name}" — discard pile is empty.`);
-            return dp;
-          }
-          const take = Math.min(2, dp.length);
-          const taken = dp.slice(-take); // take from top of discard
-          const remaining = dp.slice(0, dp.length - take);
-          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...taken] } }));
-          addLog("🔥 Fame", `${festName}: "${card.name}" → reclaimed ${taken.map(a => a.name).join(", ")} from discard.`);
-          if (!player?.isAI) showFloatingBonus(`🔥 Reclaimed ${take} from discard`, "#fbbf24");
-          return remaining;
-        });
+        // v199.126: lift side effects out of setDiscardPile updater.
+        const curDiscard = discardPileRef.current || discardPile;
+        if (curDiscard.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — discard pile is empty.`);
+          return;
+        }
+        const take = Math.min(2, curDiscard.length);
+        const taken = curDiscard.slice(-take); // take from top of discard
+        const remaining = curDiscard.slice(0, curDiscard.length - take);
+        setDiscardPile(remaining);
+        setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...taken] } }));
+        addLog("🔥 Fame", `${festName}: "${card.name}" → reclaimed ${taken.map(a => a.name).join(", ")} from discard.`);
+        if (!player?.isAI) showFloatingBonus(`🔥 Reclaimed ${take} from discard`, "#fbbf24");
         break;
       }
       case "ss_discard_n_draw_n": {
@@ -15247,36 +15247,36 @@ export default function Headliners() {
       addLog(currentPlayer.festivalName, "🔁 Pool refresh — nothing to refresh (all artists have agents)");
       return;
     }
-    setArtistDeck(prevDeck => {
-      const inUse = new Set([...toKeep.map(a => a.name), ...toReplace.map(a => a.name)]);
-      const fresh = [];
-      const remaining = [];
-      for (const a of prevDeck) {
-        if (fresh.length < needed && !inUse.has(a.name)) fresh.push(a);
-        else remaining.push(a);
-      }
-      // Replaced artists go to the discard, fresh ones fill the gaps.
-      setDiscardPile(prev => [...prev, ...toReplace]);
-      setArtistPool([...toKeep, ...fresh]);
-      return remaining;
-    });
+    // v199.126: lift side effects out of setArtistDeck updater.
+    const prevDeck = artistDeckRef.current || artistDeck;
+    const inUse = new Set([...toKeep.map(a => a.name), ...toReplace.map(a => a.name)]);
+    const fresh = [];
+    const remaining = [];
+    for (const a of prevDeck) {
+      if (fresh.length < needed && !inUse.has(a.name)) fresh.push(a);
+      else remaining.push(a);
+    }
+    setArtistDeck(remaining);
+    setDiscardPile(prev => [...prev, ...toReplace]);
+    setArtistPool([...toKeep, ...fresh]);
     showFloatingBonus("🔁 Pool refreshed!", "#c4b5fd");
     // v199.109: log entry is handled by activateFameCard (which calls this).
   };
 
   const refillPoolTo5 = () => {
-    setArtistDeck(prevDeck => {
-      const needed = 5 - artistPool.length;
-      if (needed <= 0 || prevDeck.length === 0) return prevDeck;
-      const inUse = getInUseNames();
-      const toAdd = []; const remaining = [];
-      for (const a of prevDeck) {
-        if (toAdd.length < needed && !inUse.has(a.name)) toAdd.push(a);
-        else remaining.push(a);
-      }
-      if (toAdd.length > 0) setArtistPool(prev => [...prev, ...toAdd]);
-      return remaining;
-    });
+    // v199.126: lift setArtistPool out of setArtistDeck updater.
+    const curPool = artistPoolRef.current || artistPool;
+    const prevDeck = artistDeckRef.current || artistDeck;
+    const needed = 5 - curPool.length;
+    if (needed <= 0 || prevDeck.length === 0) return;
+    const inUse = getInUseNames();
+    const toAdd = []; const remaining = [];
+    for (const a of prevDeck) {
+      if (toAdd.length < needed && !inUse.has(a.name)) toAdd.push(a);
+      else remaining.push(a);
+    }
+    setArtistDeck(remaining);
+    if (toAdd.length > 0) setArtistPool(prev => [...prev, ...toAdd]);
   };
 
   const nextPreRound = () => {
