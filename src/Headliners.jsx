@@ -4159,25 +4159,39 @@ export default function Headliners() {
         break;
       }
       case "ss_play_headliner": {
-        // v199.113: play a headliner (isHeadliner || fame >= 5) you can afford on an available stage.
+        // v199.113/v199.117: "Headliner" in this game is POSITIONAL — the 3rd/top slot
+        // of a stage. Any artist can play as a headliner. The gating is on the STAGE
+        // (must have exactly 2 artists already so the next slot is the headliner slot)
+        // AND affordability (hand filter). Previous version wrongly filtered by Fame
+        // tier, excluding affordable low-Fame artists even when a stage was ready for
+        // a headliner. Fixed per playtest: Rebecca Black (1 Fame) was blocked from
+        // headlining The Cavern (2 artists) despite being affordable.
         const pd = (playerDataRef.current || playerData)[pid] || {};
         const hand = pd.hand || [];
         const stages = pd.stageArtists || [];
-        const emptyStageIndices = stages.map((sa, i) => (Array.isArray(sa) && sa.length < 3) ? i : -1).filter(i => i >= 0);
-        if (emptyStageIndices.length === 0) {
-          addLog("🔥 Fame", `${festName}: "${card.name}" — no stage slots open, skipped.`);
+        const headlinerSlotStages = stages
+          .map((sa, i) => (Array.isArray(sa) && sa.length === 2) ? i : -1)
+          .filter(i => i >= 0);
+        if (headlinerSlotStages.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no stage ready for a headliner (need a stage with exactly 2 artists). Skipped.`);
           return;
         }
-        const headliners = hand.map((a, i) => ({ a, i })).filter(x => (x.a.isHeadliner || (x.a.fame || 0) >= 5) && canAffordArtistWithRewards(x.a, pd, pid));
-        if (headliners.length === 0) {
-          addLog("🔥 Fame", `${festName}: "${card.name}" — no affordable headliner in hand, skipped.`);
+        const affordable = hand.map((a, i) => ({ a, i })).filter(x => x.a && !x.a.isFavour && canAffordArtistWithRewards(x.a, pd, pid));
+        if (affordable.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no affordable artist in hand to headline. Skipped.`);
           return;
         }
         if (player?.isAI) {
-          const best = headliners.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
-          resolvePlayFreeArtist(pid, best.i, emptyStageIndices[0], card.name);
+          // AI: highest-tickets affordable, play on the first headliner-ready stage.
+          const best = affordable.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
+          resolvePlayFreeArtist(pid, best.i, headlinerSlotStages[0], card.name);
         } else {
-          setFameSeasonPicker({ pid, cardName: card.name, cardEffect: card.effect, step: "pick_artist_to_play", pickedArtistIdx: null, affordableIndices: headliners.map(x => x.i), emptyStageIndices });
+          setFameSeasonPicker({
+            pid, cardName: card.name, cardEffect: card.effect,
+            step: "pick_artist_to_play", pickedArtistIdx: null,
+            affordableIndices: affordable.map(x => x.i),
+            emptyStageIndices: headlinerSlotStages,
+          });
         }
         break;
       }
