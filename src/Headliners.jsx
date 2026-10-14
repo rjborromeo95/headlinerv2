@@ -3528,6 +3528,8 @@ export default function Headliners() {
     if (newRemaining <= 0) {
       addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")} from pool.`);
       setFameDrawPicker(null);
+      // v199.121: for OR-choice cards, also close the amenity picker that opened alongside.
+      if (picker.choiceMode) setFameAmenityPending(null);
       setTimeout(() => refillPool(), 100);
       // v199.106/v199.107: auto-close pool drawer. Check ref values since React state
       // closures are stale by the time the timeout fires.
@@ -3580,6 +3582,8 @@ export default function Headliners() {
     if (newRemaining <= 0) {
       addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
       setFameDrawPicker(null);
+      // v199.121: for OR-choice cards, also close the amenity picker that opened alongside.
+      if (picker.choiceMode) setFameAmenityPending(null);
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
       }, 180);
@@ -3636,6 +3640,14 @@ export default function Headliners() {
       // microtrends. Deferred so the setPlayerData commit flushes first (otherwise
       // claimAmenityMicrotrend's own setPlayerData races with ours).
       setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
+      // v199.121 BUG FIX: for OR-choice cards (gain_amenity_or_draw_1_artist), the
+      // amenity picker and draw picker open together, with the first interaction
+      // supposed to close both. Previously only the amenity picker closed on this
+      // branch — the draw picker stayed open, letting the player ALSO take an artist.
+      // Now we clear both pickers when choiceMode is set.
+      if (fameAmenityPending && fameAmenityPending.choiceMode) {
+        setFameDrawPicker(null);
+      }
       setFameAmenityPending(null);
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
