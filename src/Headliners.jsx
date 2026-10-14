@@ -10166,11 +10166,20 @@ export default function Headliners() {
   //   - Favour card is sent to the discard pile (reshuffles into deck when deck empties)
   //   - The artist play fires normal consequences (play effects, genre tracking, etc.)
   function playFavouredArtist(pid, favourHandIdx, poolIdx, stageIdx) {
+    try {
+      return _playFavouredArtistInner(pid, favourHandIdx, poolIdx, stageIdx);
+    } catch (e) {
+      console.error("playFavouredArtist error:", e);
+      addLog("🎴 Favour", `⚠️ Favour play failed (${e?.message || "unknown error"}). Modal closed.`);
+      setFavourPlayMode(null);
+    }
+  }
+  function _playFavouredArtistInner(pid, favourHandIdx, poolIdx, stageIdx) {
     const pd = (playerDataRef.current || playerData)[pid] || {};
     const favour = (pd.hand || [])[favourHandIdx];
     const artist = artistPool[poolIdx];
-    if (!favour || !favour.isFavour) return;
-    if (!artist || artist.isFavour) return;
+    if (!favour || !favour.isFavour) { setFavourPlayMode(null); return; }
+    if (!artist || artist.isFavour) { setFavourPlayMode(null); return; }
     const artistGenres = (artist.genre || "").split(",").map(g => g.trim());
     if (!artistGenres.includes(favour.genre)) return;
     // Fame tier gate — Favour does NOT bypass Fame.
@@ -13489,23 +13498,25 @@ export default function Headliners() {
             }
           }
         }
-        // v199.98: queue reactive effects for OTHER players whose Fame cards match this
-        // opponent action. Fired at their next turn start.
+        // v199.114: fire reactive effects IMMEDIATELY when the opponent action completes,
+        // so human players get a picker BETWEEN turns rather than at their next turn start.
+        // AI gate blocks on fameDrawPicker, so the AI's turn pauses while the human picks.
+        // AI reactive owners auto-fire silently.
         const reactTrigger = _wasBuild ? "opp_build" : _wasBook ? "opp_book" : _wasBrowse ? "opp_browse" : null;
         if (!reactTrigger) return;
-        players.forEach(p => {
+        players.forEach((p, pIdx) => {
           if (p.id === trigPid) return; // skip the acting player
           const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger);
           if (theirCards.length === 0) return;
-          setPendingReactiveEffects(prev => {
-            const existing = prev[p.id] || [];
-            const additions = theirCards.map(c => ({
-              card: c,
-              context: { amenityType: _selectedDieFace, bookedArtist: _bookedArtist },
-            }));
-            return { ...prev, [p.id]: [...existing, ...additions] };
+          // Stagger multiple cards so pickers resolve sequentially (second one opens
+          // after first is dismissed). Base offset by player index so multiple reactors
+          // don't all open pickers at the exact same tick.
+          theirCards.forEach((c, cIdx) => {
+            setTimeout(() => {
+              fireFameCardEffect(p.id, c, { amenityType: _selectedDieFace, bookedArtist: _bookedArtist });
+            }, 150 + pIdx * 100 + cIdx * 400);
           });
-          addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} queued (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}).`);
+          addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} firing (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}).`);
         });
       }, 120);
       if (newActions <= 0) {
@@ -18756,7 +18767,8 @@ export default function Headliners() {
                           picker is active with allowDeck. v199.105: Fame-pick mode replaces
                           the previous modal UI; pick directly from the top tray. */}
                       {(() => {
-                        const fameDeckActive = !!fameDrawPicker && fameDrawPicker.pid === currentPlayerId && fameDrawPicker.allowDeck && artistDeck.length > 0;
+                        // v199.114: reactive pickers belong to a non-current player; don't gate by pid.
+                        const fameDeckActive = !!fameDrawPicker && fameDrawPicker.allowDeck && artistDeck.length > 0;
                         const deckClickable = canBrowseDeck || fameDeckActive;
                         const fameHighlight = fameDeckActive;
                         return <div
@@ -18794,9 +18806,11 @@ export default function Headliners() {
                         const agentsOnThis = getPlacementsOnArtist(a.name).map(x => [x.pid, x.placement]);
                         const claimedByOther = isAgentClaimedByOther(a.name, currentPlayerId);
                         const browseClickable = canBrowsePool && !claimedByOther;
-                        // v199.105/v199.106: Fame draw picker — pool cards are clickable from
-                        // the top tray when the picker is active for current player.
-                        const famePoolActive = !!fameDrawPicker && fameDrawPicker.pid === currentPlayerId && !claimedByOther;
+                        // v199.105/v199.106/v199.114: Fame draw picker — pool cards are
+                        // clickable from the top tray when the picker is active. Reactive
+                        // pickers fire mid-opponent-turn and belong to a DIFFERENT player,
+                        // so we don't gate by currentPlayerId — the handler enforces pid.
+                        const famePoolActive = !!fameDrawPicker && !claimedByOther;
                         return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
                           <ArtistCard artist={a} showCost small
                             affordable={browseClickable || famePoolActive ? true : canBookArtistAnywhere(a, currentPD)}
@@ -19004,8 +19018,25 @@ export default function Headliners() {
                       ? <ArtistCard key={`a-${i}`} artist={a} small
                           disabled={!!favourPlayMode}
                           onClick={() => {
-                            if (favourPlayMode) return;
-                            setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
+                            // v199.114: defensive — guard against stale state and bad data.
+                            try {
+                              if (favourPlayMode) return;
+                              if (!a || !a.isFavour || !a.genre) {
+                                console.warn("Favour click: invalid artist", a);
+                                return;
+                              }
+                              // Make sure the artist at this hand index is still a Favour
+                              // (hand could have changed between render and click).
+                              const curHand = (playerDataRef.current || playerData)[currentPlayerId]?.hand || [];
+                              if (!curHand[i] || !curHand[i].isFavour || curHand[i].genre !== a.genre) {
+                                console.warn("Favour click: hand changed, aborting", { i, a, now: curHand[i] });
+                                return;
+                              }
+                              setFavourPlayMode({ pid: currentPlayerId, handIdx: i, genre: a.genre, chosenArtist: null, chosenPoolIdx: null });
+                            } catch (e) {
+                              console.error("Favour click error:", e);
+                              setFavourPlayMode(null);
+                            }
                           }}
                         />
                       : <ArtistCard key={`a-${i}`} artist={a} showCost small
@@ -19504,46 +19535,61 @@ export default function Headliners() {
                 the screen. Players click directly on dice (for amenity cards), pool
                 artists (highlighted amber), or the deck slot in the top tray. The modal
                 is gone — pool drawer auto-opens when the picker starts. */}
-            {fameDrawPicker && fameDrawPicker.pid === currentPlayerId && typeof document !== "undefined" && createPortal(
-              <div style={{
-                position: "fixed",
-                top: 12, left: "50%", transform: "translateX(-50%)",
-                zIndex: 9480,
-                padding: "10px 16px",
-                borderRadius: 12,
-                background: "linear-gradient(135deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
-                border: "2px solid #fbbf24",
-                boxShadow: "0 0 24px rgba(251,191,36,0.5)",
-                display: "flex", alignItems: "center", gap: 14,
-                maxWidth: "90vw",
-                animation: "fadeSlideIn 0.25s",
-                backdropFilter: "blur(6px)",
-              }}>
-                <div style={{ fontSize: 20 }}>🔥</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: "#fcd34d", fontWeight: 800, letterSpacing: 0.5 }}>Fame Card: {fameDrawPicker.cardName}</div>
-                  <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>
-                    {fameDrawPicker.mode === "genre_match" && fameDrawPicker.bookedArtist ? (
-                      <>Pick from pool (any — kept) or deck (blind — kept only if matches <b style={{ color: "#fbbf24" }}>{(Array.isArray(fameDrawPicker.bookedArtist.genre) ? fameDrawPicker.bookedArtist.genre : [fameDrawPicker.bookedArtist.genre]).filter(Boolean).join(" / ")}</b>)</>
-                    ) : fameDrawPicker.allowDeck ? (
-                      `Click ${fameDrawPicker.remaining} more from the pool or deck above.`
-                    ) : (
-                      `Click ${fameDrawPicker.remaining} more from the pool above.`
-                    )}
-                    {fameDrawPicker.picked.length > 0 && <span style={{ color: "#a78bfa", fontStyle: "italic" }}> · Drew: {fameDrawPicker.picked.join(", ")}</span>}
+            {fameDrawPicker && typeof document !== "undefined" && (() => {
+              // v199.114: picker now shown for ANY player (reactive effects fire mid-
+              // opponent-turn and belong to a non-current player). Banner shows WHO the
+              // picker is for when cross-player, so the right person comes to the device.
+              const pickerPlayer = players.find(pl => pl.id === fameDrawPicker.pid);
+              const isCrossPlayer = fameDrawPicker.pid !== currentPlayerId;
+              const pickerPlayerIsAI = pickerPlayer?.isAI;
+              // AI reactive owners resolve themselves — no banner needed.
+              if (pickerPlayerIsAI) return null;
+              return createPortal(
+                <div style={{
+                  position: "fixed",
+                  top: 12, left: "50%", transform: "translateX(-50%)",
+                  zIndex: 9480,
+                  padding: "10px 16px",
+                  borderRadius: 12,
+                  background: isCrossPlayer
+                    ? "linear-gradient(135deg, rgba(6,78,99,0.95), rgba(8,51,68,0.95))"
+                    : "linear-gradient(135deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
+                  border: `2px solid ${isCrossPlayer ? "#06b6d4" : "#fbbf24"}`,
+                  boxShadow: `0 0 24px ${isCrossPlayer ? "rgba(6,182,212,0.5)" : "rgba(251,191,36,0.5)"}`,
+                  display: "flex", alignItems: "center", gap: 14,
+                  maxWidth: "90vw",
+                  animation: "fadeSlideIn 0.25s",
+                  backdropFilter: "blur(6px)",
+                }}>
+                  <div style={{ fontSize: 20 }}>{isCrossPlayer ? "⚡" : "🔥"}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: isCrossPlayer ? "#67e8f9" : "#fcd34d", fontWeight: 800, letterSpacing: 0.5 }}>
+                      {isCrossPlayer ? `${pickerPlayer?.festivalName || "?"} reacts: ${fameDrawPicker.cardName}` : `Fame Card: ${fameDrawPicker.cardName}`}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>
+                      {isCrossPlayer && <span style={{ color: "#67e8f9", fontWeight: 700 }}>Pass the device to {pickerPlayer?.festivalName}. </span>}
+                      {fameDrawPicker.mode === "genre_match" && fameDrawPicker.bookedArtist ? (
+                        <>Pick from pool (any — kept) or deck (blind — kept only if matches <b style={{ color: "#fbbf24" }}>{(Array.isArray(fameDrawPicker.bookedArtist.genre) ? fameDrawPicker.bookedArtist.genre : [fameDrawPicker.bookedArtist.genre]).filter(Boolean).join(" / ")}</b>)</>
+                      ) : fameDrawPicker.allowDeck ? (
+                        `Click ${fameDrawPicker.remaining} from the pool or deck above.`
+                      ) : (
+                        `Click ${fameDrawPicker.remaining} from the pool above.`
+                      )}
+                      {fameDrawPicker.picked.length > 0 && <span style={{ color: "#a78bfa", fontStyle: "italic" }}> · Drew: {fameDrawPicker.picked.join(", ")}</span>}
+                    </div>
                   </div>
-                </div>
-                <button
-                  onClick={() => {
-                    addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: skipped remaining draws from "${fameDrawPicker.cardName}".`);
-                    setFameDrawPicker(null);
-                  }}
-                  style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#cbd5e1", border: "1px solid #475569", background: "rgba(30,27,75,0.6)" }}
-                >
-                  Skip
-                </button>
-              </div>, document.body
-            )}
+                  <button
+                    onClick={() => {
+                      addLog("🔥 Fame", `${pickerPlayer?.festivalName || "?"}: skipped remaining draws from "${fameDrawPicker.cardName}".`);
+                      setFameDrawPicker(null);
+                    }}
+                    style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#cbd5e1", border: "1px solid #475569", background: "rgba(30,27,75,0.6)" }}
+                  >
+                    Skip
+                  </button>
+                </div>, document.body
+              );
+            })()}
 
             {/* v199.99: Fame card season-start picker. Opens for humans when a
                 season-start card requires a choice (discard artists / discard amenities /
