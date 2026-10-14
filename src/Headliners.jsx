@@ -522,58 +522,83 @@ const FAME_VP = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
 // reactive (fire at next turn start if opp did X), season_start (one-shot per season),
 // game_end (ticket scoring at final tally).
 // ═══════════════════════════════════════════════════════════════════
-// v199.113: catalog revised. YOU MAY adds deck-peek-rearrange. AFTER BUILD adds
-// "take any amenity" (no die constraint). SEASON_START fully rewritten (new: play
-// headliner, +1 Fame, place 2 amenities, draw till hand full; dropped: discard variants).
-// GAME_END swaps +2/catering + +1/fame for +1/low-fame-artist + +3/sec-cat pair.
+// v199.130: catalog revised. Added YOU MAY cycle-microtrend. Removed season_start
+// "reclaim 2 from discard". Card names rewritten to be EFFECT-only (badge carries the
+// trigger, so no more "After Browse — After Browse Amenity or Draw" doubling).
 // Totals:
-//   YOU MAY: 6 · SELF BONUS: 1 · after_build: 5 · after_browse: 4 ·
-//   after_book: 4 · reactive: 3 · season_start: 8 · game_end: 6
+//   YOU MAY: 7 · SELF BONUS: 1 · after_build: 5 · after_browse: 4 ·
+//   after_book: 4 · reactive: 3 · season_start: 7 · game_end: 6
 //   Total deck: 37 instances.
 const FAME_CARDS = [
-  // YOU MAY — manual activation, 0 action cost
-  { id: "FM_REFRESH_POOL",     name: "Refresh Pool",             category: "you_may",      trigger: "any_time",    effect: "refresh_pool",                   copies: 2, desc: "On your turn (any time): refresh the artist pool." },
-  { id: "FM_PEEK_REARRANGE",   name: "Peek + Rearrange",         category: "you_may",      trigger: "any_time",    effect: "peek_rearrange_deck",            copies: 1, desc: "On your turn (any time): look at the top 3 artists of the deck and re-arrange them in any order." },
-  { id: "FM_REFRESH_DIE",      name: "Refresh Die",              category: "you_may",      trigger: "any_time",    effect: "refresh_die",                    copies: 3, desc: "On your turn (any time): refresh the amenity die." },
-  // THIS FAME CARD — passive bonus Fame on draw
-  { id: "FM_SELF_2FAME",       name: "+2 Fame Card",             category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "This Fame card is worth 2 Fame: it adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
-  // AFTER BUILD
-  { id: "FM_BUILD_AMENITY",    name: "After Build +1 Amenity",   category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",          copies: 1, desc: "After you take the Build action: gain another amenity from the die." },
-  { id: "FM_BUILD_AM_OR_DRAW", name: "After Build Amenity or Draw",  category: "after_build",  trigger: "after_build", effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you take the Build action: gain another amenity OR draw 1 artist." },
-  { id: "FM_BUILD_DRAW2_KEEP1",name: "After Build Draw 2 Keep 1",category: "after_build",  trigger: "after_build", effect: "draw_2_keep_1",                  copies: 1, desc: "After you take the Build action: draw 2 artists, keep 1, discard the other." },
-  { id: "FM_BUILD_DRAW2",      name: "After Build Draw 2",       category: "after_build",  trigger: "after_build", effect: "draw_2_artists",                 copies: 1, desc: "After you take the Build action: draw 2 artists." },
-  { id: "FM_BUILD_ANY_AMEN",   name: "After Build Any Amenity",  category: "after_build",  trigger: "after_build", effect: "take_any_amenity",               copies: 1, desc: "After you take the Build action: take any amenity of your choice (not limited to the die)." },
-  // AFTER BROWSE
-  { id: "FM_BROWSE_AMENITY",   name: "After Browse +1 Amenity",  category: "after_browse", trigger: "after_browse", effect: "gain_amenity_from_die",         copies: 1, desc: "After you take the Browse action: gain an amenity from the die." },
-  { id: "FM_BROWSE_AM_OR_DRAW",name: "After Browse Amenity or Draw", category: "after_browse", trigger: "after_browse", effect: "gain_amenity_or_draw_1_artist", copies: 1, desc: "After you take the Browse action: gain an amenity OR draw 1 artist." },
-  { id: "FM_BROWSE_DRAW3_KEEP1",name: "After Browse Draw 3 Keep 1",category: "after_browse",trigger: "after_browse", effect: "draw_3_keep_1",                copies: 1, desc: "After you take the Browse action: draw 3 artists, keep 1, discard the others." },
-  { id: "FM_BROWSE_DISCARD_FAME",name: "After Browse Discard 2 → +1 Fame", category: "after_browse", trigger: "after_browse", effect: "discard_2_hand_gain_1_fame",    copies: 1, desc: "After you take the Browse action: discard 2 artists from your hand to gain 1 Fame." },
-  // AFTER BOOK (Buy Artist)
-  { id: "FM_BOOK_DRAW_GENRE",  name: "After Book Draw Genre",    category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",       copies: 1, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
-  { id: "FM_BOOK_ANOTHER",     name: "After Book Play Another",  category: "after_book",   trigger: "after_book",  effect: "book_another_stage",             copies: 1, desc: "After you book an artist: play another artist (that you can afford) on a different stage, free." },
-  { id: "FM_BOOK_AM_OR_DRAW",  name: "After Book Amenity or Draw",   category: "after_book",   trigger: "after_book",  effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you book an artist: gain an amenity OR draw 1 artist." },
-  { id: "FM_BOOK_PLACE_AM",    name: "After Book +1 Amenity",    category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an amenity from the amenity die." },
-  // WHEN ANOTHER PLAYER (reactive, fires at your next turn start)
-  { id: "FM_REACT_BUILD",      name: "Opp Build → Copy Amenity", category: "reactive",     trigger: "opp_build",   effect: "gain_copy_amenity",              copies: 1, desc: "When another player builds an amenity, gain a copy of that amenity." },
-  { id: "FM_REACT_BOOK",       name: "Opp Book → Draw 1",        category: "reactive",     trigger: "opp_book",    effect: "draw_1_artist",                  copies: 1, desc: "When another player books an artist, draw 1 artist." },
-  { id: "FM_REACT_BROWSE",     name: "Opp Browse → Draw 1",      category: "reactive",     trigger: "opp_browse",  effect: "draw_1_artist",                  copies: 1, desc: "When another player browses the pool, draw an artist." },
-  // ON SEASON START — one-shot per season
-  { id: "FM_SS_PLAY_HEADLINER",name: "Season: Play Headliner",   category: "season_start", trigger: "season_start", effect: "ss_play_headliner",             copies: 1, desc: "Season start: play a headliner you can afford on a stage (if available)." },
-  { id: "FM_SS_GAIN_1_FAME",   name: "Season: +1 Fame",          category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
-  { id: "FM_SS_PLACE_AMEN",    name: "Season: Place 1 Amenity",  category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
-  { id: "FM_SS_DRAW_TO_FULL",  name: "Season: Fill Hand",        category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
-  { id: "FM_SS_NEW_STAGE",     name: "Season: Open Stage",       category: "season_start", trigger: "season_start", effect: "ss_open_stage",                 copies: 1, desc: "Season start: open a new stage (max 3 total)." },
-  { id: "FM_SS_CYCLE",         name: "Season: Discard N, Draw N",category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
-  { id: "FM_SS_RECLAIM",       name: "Season: Reclaim 2",        category: "season_start", trigger: "season_start", effect: "ss_draw_2_from_discard",        copies: 1, desc: "Season start: draw 2 artists from the discard." },
-  { id: "FM_SS_PLAY_FREE",     name: "Season: Free Play",        category: "season_start", trigger: "season_start", effect: "ss_play_free_artist",           copies: 1, desc: "Season start: play an artist (that you can afford) on an empty stage." },
-  // GAME END — ticket scoring (revised)
-  { id: "FM_END_6",            name: "End +6 Tickets",           category: "game_end",     trigger: "game_end",     effect: "end_6",                         copies: 1, desc: "Game end: sell 6 tickets." },
-  { id: "FM_END_LOW_FAME",     name: "End +1/Low-Fame Played",   category: "game_end",     trigger: "game_end",     effect: "end_per_low_fame_artist",       copies: 1, desc: "Game end: sell 1 ticket for every artist you have played that costs less than 2 Fame." },
-  { id: "FM_END_PAIR_SP",      name: "End +3/Sec+Port pair",     category: "game_end",     trigger: "game_end",     effect: "end_pair_sec_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of security and portaloos." },
-  { id: "FM_END_PAIR_CP",      name: "End +3/Cat+Port pair",     category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
-  { id: "FM_END_STAGE",        name: "End +2/Stage",             category: "game_end",     trigger: "game_end",     effect: "end_per_stage_2",               copies: 1, desc: "Game end: sell 2 tickets per stage." },
-  { id: "FM_END_PAIR_CS",      name: "End +3/Sec+Cat pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_sec",              copies: 1, desc: "Game end: sell 3 tickets for every pair of security and catering vans." },
+  // YOU MAY — manual activation, 0 action cost. Category badge renders "YOU MAY" so
+  // names here are the EFFECT only.
+  { id: "FM_REFRESH_POOL",     name: "Refresh Pool",              category: "you_may",      trigger: "any_time",    effect: "refresh_pool",                   copies: 2, desc: "On your turn (any time): refresh the artist pool." },
+  { id: "FM_PEEK_REARRANGE",   name: "Peek + Rearrange Deck",     category: "you_may",      trigger: "any_time",    effect: "peek_rearrange_deck",            copies: 1, desc: "On your turn (any time): look at the top 3 artists of the deck and re-arrange them in any order." },
+  { id: "FM_REFRESH_DIE",      name: "Refresh Die",               category: "you_may",      trigger: "any_time",    effect: "refresh_die",                    copies: 3, desc: "On your turn (any time): refresh the amenity die." },
+  // v199.130: new YOU MAY card. Cycle the active microtrend to the next one. Lets a player
+  // who can't meet the current microtrend force the next one — and potentially claim it
+  // the same turn.
+  { id: "FM_CYCLE_MICROTREND", name: "Cycle Microtrend",          category: "you_may",      trigger: "any_time",    effect: "cycle_microtrend",               copies: 1, desc: "On your turn (any time): discard the current microtrend and reveal the next one." },
+  // THIS FAME CARD — passive bonus Fame on draw. Badge renders "THIS FAME CARD".
+  { id: "FM_SELF_2FAME",       name: "Counts as 2 Fame",          category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "Adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
+  // AFTER BUILD — badge renders "AFTER BUILD ACTION".
+  { id: "FM_BUILD_AMENITY",    name: "Gain 1 Amenity",            category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",          copies: 1, desc: "After you take the Build action: gain another amenity from the die." },
+  { id: "FM_BUILD_AM_OR_DRAW", name: "Gain Amenity or Draw Artist", category: "after_build", trigger: "after_build", effect: "gain_amenity_or_draw_1_artist", copies: 1, desc: "After you take the Build action: gain another amenity OR draw 1 artist." },
+  { id: "FM_BUILD_DRAW2_KEEP1",name: "Draw 2, Keep 1",            category: "after_build",  trigger: "after_build", effect: "draw_2_keep_1",                  copies: 1, desc: "After you take the Build action: draw 2 artists, keep 1, discard the other." },
+  { id: "FM_BUILD_DRAW2",      name: "Draw 2 Artists",            category: "after_build",  trigger: "after_build", effect: "draw_2_artists",                 copies: 1, desc: "After you take the Build action: draw 2 artists." },
+  { id: "FM_BUILD_ANY_AMEN",   name: "Any Amenity (Free Choice)", category: "after_build",  trigger: "after_build", effect: "take_any_amenity",               copies: 1, desc: "After you take the Build action: take any amenity of your choice (not limited to the die)." },
+  // AFTER BROWSE — badge renders "AFTER BROWSE ACTION".
+  { id: "FM_BROWSE_AMENITY",   name: "Gain 1 Amenity",            category: "after_browse", trigger: "after_browse", effect: "gain_amenity_from_die",         copies: 1, desc: "After you take the Browse action: gain an amenity from the die." },
+  { id: "FM_BROWSE_AM_OR_DRAW",name: "Gain Amenity or Draw Artist", category: "after_browse", trigger: "after_browse", effect: "gain_amenity_or_draw_1_artist", copies: 1, desc: "After you take the Browse action: gain an amenity OR draw 1 artist." },
+  { id: "FM_BROWSE_DRAW3_KEEP1",name: "Draw 3, Keep 1",           category: "after_browse", trigger: "after_browse", effect: "draw_3_keep_1",                 copies: 1, desc: "After you take the Browse action: draw 3 artists, keep 1, discard the others." },
+  { id: "FM_BROWSE_DISCARD_FAME",name: "Discard 2 → +1 Fame",     category: "after_browse", trigger: "after_browse", effect: "discard_2_hand_gain_1_fame",    copies: 1, desc: "After you take the Browse action: discard 2 artists from your hand to gain 1 Fame." },
+  // AFTER BOOK — badge renders "AFTER BOOK ACTION".
+  { id: "FM_BOOK_DRAW_GENRE",  name: "Draw Genre-Match",          category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",       copies: 1, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
+  { id: "FM_BOOK_ANOTHER",     name: "Play Another Artist Free",  category: "after_book",   trigger: "after_book",  effect: "book_another_stage",             copies: 1, desc: "After you book an artist: play another artist (that you can afford) on a different stage, free." },
+  { id: "FM_BOOK_AM_OR_DRAW",  name: "Gain Amenity or Draw Artist", category: "after_book", trigger: "after_book",  effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you book an artist: gain an amenity OR draw 1 artist." },
+  { id: "FM_BOOK_PLACE_AM",    name: "Gain 1 Amenity",            category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an amenity from the amenity die." },
+  // REACTIVE — badge renders per-trigger label ("WHEN OPPONENT BUILDS" etc.).
+  { id: "FM_REACT_BUILD",      name: "Copy Amenity",              category: "reactive",     trigger: "opp_build",   effect: "gain_copy_amenity",              copies: 1, desc: "When another player builds an amenity, gain a copy of that amenity." },
+  { id: "FM_REACT_BOOK",       name: "Draw 1 Artist",             category: "reactive",     trigger: "opp_book",    effect: "draw_1_artist",                  copies: 1, desc: "When another player books an artist, draw 1 artist." },
+  { id: "FM_REACT_BROWSE",     name: "Draw 1 Artist",             category: "reactive",     trigger: "opp_browse",  effect: "draw_1_artist",                  copies: 1, desc: "When another player browses the pool, draw 1 artist." },
+  // ON SEASON START — badge renders "AT SEASON START".
+  { id: "FM_SS_PLAY_HEADLINER",name: "Play a Headliner",          category: "season_start", trigger: "season_start", effect: "ss_play_headliner",             copies: 1, desc: "Season start: play a headliner you can afford on a stage (if available)." },
+  { id: "FM_SS_GAIN_1_FAME",   name: "Gain +1 Fame",              category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
+  { id: "FM_SS_PLACE_AMEN",    name: "Place 1 Amenity",           category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
+  { id: "FM_SS_DRAW_TO_FULL",  name: "Draw Until Hand Full",      category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
+  { id: "FM_SS_NEW_STAGE",     name: "Open a New Stage",          category: "season_start", trigger: "season_start", effect: "ss_open_stage",                 copies: 1, desc: "Season start: open a new stage (max 3 total)." },
+  { id: "FM_SS_CYCLE",         name: "Discard N → Draw N",        category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
+  // v199.130: FM_SS_RECLAIM (Reclaim 2 from discard) removed as requested.
+  { id: "FM_SS_PLAY_FREE",     name: "Play Any Artist Free",      category: "season_start", trigger: "season_start", effect: "ss_play_free_artist",           copies: 1, desc: "Season start: play an artist (that you can afford) on an empty stage." },
+  // GAME END — badge renders "AT GAME END".
+  { id: "FM_END_6",            name: "+6 Tickets",                category: "game_end",     trigger: "game_end",     effect: "end_6",                         copies: 1, desc: "Game end: sell 6 tickets." },
+  { id: "FM_END_LOW_FAME",     name: "+1 per Low-Fame Played",    category: "game_end",     trigger: "game_end",     effect: "end_per_low_fame_artist",       copies: 1, desc: "Game end: sell 1 ticket for every artist you have played that costs less than 2 Fame." },
+  { id: "FM_END_PAIR_SP",      name: "+3 per Sec+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_sec_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of security and portaloos." },
+  { id: "FM_END_PAIR_CP",      name: "+3 per Cat+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
+  { id: "FM_END_STAGE",        name: "+2 per Stage",              category: "game_end",     trigger: "game_end",     effect: "end_per_stage_2",               copies: 1, desc: "Game end: sell 2 tickets per stage." },
+  { id: "FM_END_PAIR_CS",      name: "+3 per Sec+Cat Pair",       category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_sec",              copies: 1, desc: "Game end: sell 3 tickets for every pair of security and catering vans." },
 ];
+// v199.130: centralized trigger-aware category label used by every Fame card render site
+// (draw modal, own tray, opponent tray). Keeps the badge language consistent and avoids
+// duplicate wording like "After Browse — After Browse Amenity or Draw".
+const fameCardCategoryLabel = (card) => {
+  if (!card) return "";
+  switch (card.category) {
+    case "you_may": return "You May";
+    case "self_bonus": return "This Fame Card";
+    case "after_build": return "After Build Action";
+    case "after_browse": return "After Browse Action";
+    case "after_book": return "After Book Action";
+    case "reactive":
+      if (card.trigger === "opp_build") return "When Opponent Builds";
+      if (card.trigger === "opp_book") return "When Opponent Books";
+      if (card.trigger === "opp_browse") return "When Opponent Browses";
+      return "When Opponent…";
+    case "season_start": return "At Season Start";
+    case "game_end": return "At Game End";
+    default: return "";
+  }
+};
 // Expand to deck instances (each unique × copies).
 function buildFameDeck() {
   const deck = [];
@@ -3447,6 +3472,33 @@ export default function Headliners() {
           // counts as "used" once they commit.
           fireFameCardEffect(pid, card, {});
           break;
+        case "cycle_microtrend": {
+          // v199.130: discard the current active microtrend and promote the forecast
+          // (next) to active. Pop a fresh forecast of the same kind. The player's
+          // action is NOT consumed — they can still Build/Browse/Book this turn and
+          // (if the new microtrend is one they can meet) immediately claim it.
+          const curActive = microtrends[0];
+          if (!curActive) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no active microtrend to cycle.`);
+            break;
+          }
+          const forecast = nextAmenityMicrotrend || nextGenreMicrotrend;
+          try {
+            const newActive = forecast || (curActive.kind === "amenity" ? popAmenityFromBag(curActive) : popGenreFromBag(curActive));
+            const newForecast = newActive.kind === "amenity" ? popAmenityFromBag(newActive) : popGenreFromBag(newActive);
+            setMicrotrends([newActive]);
+            if (newActive.kind === "amenity") { setNextAmenityMicrotrend(newForecast); setNextGenreMicrotrend(null); }
+            else                              { setNextGenreMicrotrend(newForecast);   setNextAmenityMicrotrend(null); }
+            const describe = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
+            addLog("🔥 Fame", `${festName}: "${card.name}" — microtrend cycled. New trend: ${describe(newActive)} (next: ${describe(newForecast)}).`);
+            if (!player?.isAI) showFloatingBonus(`🔥 Microtrend cycled: ${describe(newActive)}`, "#f59e0b");
+            markFameCardUsedThisTurn(pid, card.instanceId);
+          } catch (err) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — couldn't cycle microtrend (bag exhausted).`);
+            console.warn("cycle_microtrend failed", err);
+          }
+          break;
+        }
       }
       return;
     }
@@ -3868,8 +3920,8 @@ export default function Headliners() {
     });
     setTimeout(() => {
       if (!playedArtist) return;
-      addLog("🔥 Fame", `${festName}: "${cardName}" → played ${playedArtist.name} on Stage ${stageIdx + 1}.`);
-      if (!player?.isAI) showFloatingBonus(`🔥 Played ${playedArtist.name} free!`, "#fbbf24");
+      addLog("🔥 Fame", `${festName}: "${cardName}" → played ${playedArtist.name} on Stage ${stageIdx + 1} (no action spent — amenity/Fame costs still met).`);
+      if (!player?.isAI) showFloatingBonus(`🔥 Played ${playedArtist.name} — no action used`, "#fbbf24");
       recalcTickets();
     }, 60);
   };
@@ -17841,16 +17893,10 @@ export default function Headliners() {
                       ) : (
                         <>
                           <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
-                            {card.category === "you_may" ? "You may" :
-                             card.category === "self_bonus" ? ((card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : "Bonus") :
-                             card.category === "after_build" ? "After Build" :
-                             card.category === "after_browse" ? "After Browse" :
-                             card.category === "after_book" ? "After Book" :
-                             card.category === "reactive" ? "Reactive" :
-                             card.category === "season_start" ? "Season" : "End"}
+                            {card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : fameCardCategoryLabel(card)}
                           </div>
                           <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
-                            <div>{card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}</div>
+                            <div>{card.name}</div>
                             {card.category === "game_end" && (() => {
                               const tally = computeFameCardEndTally(viewingPlayerId, card);
                               return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
@@ -18298,15 +18344,11 @@ export default function Headliners() {
                         <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
                           {afterActionClickable ? "Fire!" :
                            card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
-                           card.category === "self_bonus" ? ((card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : "Bonus") :
-                           card.category === "after_build" ? "After Build" :
-                           card.category === "after_browse" ? "After Browse" :
-                           card.category === "after_book" ? "After Book" :
-                           card.category === "reactive" ? "Reactive" :
-                           card.category === "season_start" ? "Season" : "End"}
+                           card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" :
+                           fameCardCategoryLabel(card)}
                         </div>
                         <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
-                          <div>{card.name.replace(/^(After [A-Z][a-z]+ )/i, "").replace(/^End /, "")}</div>
+                          <div>{card.name}</div>
                           {/* v199.106: live game-end tally for END cards. */}
                           {card.category === "game_end" && (() => {
                             const tally = computeFameCardEndTally(currentPlayerId, card);
@@ -20060,14 +20102,7 @@ export default function Headliners() {
                                      card.category === "reactive" ? "#06b6d4" :
                                      card.category === "season_start" ? "#fbbf24" :
                                      "#c084fc";
-                    const catLabel = card.category === "you_may" ? "You May" :
-                                     card.category === "self_bonus" ? "🔥 Bonus Fame" :
-                                     card.category === "after_build" ? "After Build" :
-                                     card.category === "after_browse" ? "After Browse" :
-                                     card.category === "after_book" ? "After Book" :
-                                     card.category === "reactive" ? "When Opponent…" :
-                                     card.category === "season_start" ? "Season Start" :
-                                     "Game End";
+                    const catLabel = fameCardCategoryLabel(card);
                     return <button
                       key={idx}
                       onClick={() => pickFameCard(fameDrawModal.pid, idx)}
