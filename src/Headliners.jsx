@@ -3463,6 +3463,14 @@ export default function Headliners() {
   const [pendingReactiveEffects, setPendingReactiveEffects] = useState({});
   const pendingReactiveEffectsRef = useRef({});
   useEffect(() => { pendingReactiveEffectsRef.current = pendingReactiveEffects; }, [pendingReactiveEffects]);
+  // v199.115: track which players still need their season_start Fame cards fired this
+  // season. Marked at season transition; cleared when each player's season_start fires
+  // at THEIR turn start. Fixes the issue where multiple players' season_start pickers
+  // tried to open at the same moment (first player's picker got clobbered or didn't
+  // render because they weren't current).
+  const [playersNeedingSeasonStart, setPlayersNeedingSeasonStart] = useState({});
+  const playersNeedingSeasonStartRef = useRef({});
+  useEffect(() => { playersNeedingSeasonStartRef.current = playersNeedingSeasonStart; }, [playersNeedingSeasonStart]);
   // v199.99: Season-start Fame card picker. Covers DISCARD_1, DISCARD_2, DISCARD_AM,
   // PLAY_FREE. Shape depends on step:
   //   { pid, cardName, cardEffect, step, selectedIndices?: [], pickedArtistIdx?: n }
@@ -3814,9 +3822,13 @@ export default function Headliners() {
     setTimeout(() => {
       if (discarded.length < 2) return;
       setDiscardPile(dp => [...dp, ...discarded]);
+      // v199.115: increment baseFame alongside logFameGain for correct Fame counter.
+      const CAP = typeof FAME_CAP_QUICKYEAR !== "undefined" ? FAME_CAP_QUICKYEAR : 5;
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + 1) } }));
       logFameGain(pid, 1, `"${cardName}" trade-in`);
       addLog("🔥 Fame", `${festName}: "${cardName}" → discarded ${discarded.map(a => a.name).join(" + ")}, gained +1 Fame.`);
       if (!player?.isAI) showFloatingBonus(`🔥 +1 Fame (traded 2 artists)`, "#fcd34d");
+      setTimeout(() => recalcTickets(), 30);
     }, 60);
   };
 
@@ -3865,6 +3877,24 @@ export default function Headliners() {
     cards.forEach((c, idx) => {
       setTimeout(() => fireFameCardEffect(pid, c, { atSeasonStart: true }), 150 + idx * 200);
     });
+  };
+  // v199.115: if this player has pending season_start firing (marked at season start),
+  // fire now and clear the flag. Called at turn transitions so each player's firing
+  // happens on THEIR turn, not simultaneously at the moment of season transition.
+  const fireSeasonStartIfPending = (pid) => {
+    if (gameModeRef.current !== "quickYear") return;
+    if (!playersNeedingSeasonStartRef.current[pid]) return;
+    // Clear the flag immediately so a cascade of state updates doesn't re-trigger.
+    setPlayersNeedingSeasonStart(prev => {
+      const next = { ...prev };
+      delete next[pid];
+      return next;
+    });
+    playersNeedingSeasonStartRef.current = { ...playersNeedingSeasonStartRef.current };
+    delete playersNeedingSeasonStartRef.current[pid];
+    // Defer the actual firing by 300ms so the "turn begins" log entry + any UI state
+    // transitions complete first.
+    setTimeout(() => fireSeasonStartEffects(pid), 300);
   };
 
   // v199.95/v199.106: Fame card effect dispatcher. Wrapped in try-catch so a single
@@ -4152,10 +4182,17 @@ export default function Headliners() {
         break;
       }
       case "ss_gain_1_fame": {
-        // v199.113: straight +1 Fame at season start. Triggers normal Fame draw cascade.
+        // v199.113/v199.115: straight +1 Fame at season start.
+        // v199.115 BUG FIX: previously only called logFameGain, which triggers a Fame
+        // CARD draw but doesn't actually increment pd.baseFame. So the player's Fame
+        // counter stayed the same — meaning they couldn't play high-Fame artists even
+        // after the "+1 Fame" card said they gained Fame. Now we increment baseFame.
+        const CAP = typeof FAME_CAP_QUICKYEAR !== "undefined" ? FAME_CAP_QUICKYEAR : 5;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + 1) } }));
         logFameGain(pid, 1, `"${card.name}" season bonus`);
         addLog("🔥 Fame", `${festName}: "${card.name}" → +1 Fame.`);
         if (!player?.isAI) showFloatingBonus("🔥 +1 Fame (season)", "#fcd34d");
+        setTimeout(() => recalcTickets(), 50);
         break;
       }
       case "ss_place_2_amenities": {
@@ -4304,13 +4341,15 @@ export default function Headliners() {
         break;
       }
       case "self_grants_bonus_fame": {
-        // v199.111: "This Fame Card provides 2 Fame instead of 1". Grants +1 bonus
-        // Fame immediately when the card is picked, so the Fame-gain event that drew
-        // it effectively yields +2. Also triggers another Fame card draw (per the usual
-        // Fame-gain cascade). Guard against infinite recursion with the onDraw context.
+        // v199.111/v199.115: "This Fame Card provides 2 Fame instead of 1". Grants +1
+        // bonus Fame immediately when picked. v199.115: fix same bug as ss_gain_1_fame —
+        // logFameGain alone doesn't update baseFame; we need to set it ourselves.
         if (!ctx?.onDraw) return; // only fires at pick-time
+        const CAP = typeof FAME_CAP_QUICKYEAR !== "undefined" ? FAME_CAP_QUICKYEAR : 5;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + 1) } }));
         logFameGain(pid, 1, `"${card.name}" bonus Fame`);
         if (!player?.isAI) showFloatingBonus("🔥 +1 bonus Fame!", "#fcd34d");
+        setTimeout(() => recalcTickets(), 50);
         break;
       }
       case "draw_2_keep_1":
@@ -6730,14 +6769,15 @@ export default function Headliners() {
         snap[p.id] = { fame: pd.fame != null ? pd.fame : (pd.baseFame || 0) };
       });
       seasonStartSnapshotRef.current = snap;
-      // v199.98/v199.101: fire each player's season-start Fame cards at the new season
-      // boundary. Deferred by 400ms so the season transition log entries + any lingering
-      // action state (booking, picker modals) have time to flush. The extra 200ms
-      // (previously 200) prevents a race where fireSeasonStartEffects reads stale state
-      // mid-booking and crashes.
-      setTimeout(() => {
-        players.forEach(p => fireSeasonStartEffects(p.id));
-      }, 400);
+      // v199.98/v199.101/v199.115: fire each player's season-start Fame cards at the
+      // start of THEIR first turn in the new season (not all at once). Previously fired
+      // all players simultaneously, which caused picker clobbering + non-current-player
+      // pickers never rendered. Now we mark everyone as "needs firing" here; each
+      // player's firing is triggered at their turn start by the pending-firing check.
+      const needsMap = {};
+      players.forEach(p => { needsMap[p.id] = true; });
+      setPlayersNeedingSeasonStart(needsMap);
+      playersNeedingSeasonStartRef.current = needsMap;
       // v199: fire new Hotline spins at season boundary. Previous season's agents expire.
       // Deferred by 400ms so the season-end modal is fully closed and the "Season Begins"
       // header is in the log before the spin UI opens.
@@ -6751,6 +6791,9 @@ export default function Headliners() {
       refillPool();
       // v199.98: fire the new player's queued reactive Fame effects at season boundary too.
       setTimeout(() => fireQueuedReactiveEffects(turnOrder[nextPlayerIdx]), 150);
+      // v199.115: fire pending season_start Fame cards for this player, if any.
+      // Marked at season transition; fires on each player's first turn in the new season.
+      fireSeasonStartIfPending(turnOrder[nextPlayerIdx]);
       // v198: reset pending-effect / selection state so the new player starts clean,
       // mirroring the state resets at the top of endTurn.
       setTurnAction(null); setSelectedDie(null); setActionTaken(false);
@@ -8537,8 +8580,15 @@ export default function Headliners() {
   }
 
   function refillPool(overridePool) {
+    // v199.115: use refs so setTimeout-deferred calls see current state. Previous
+    // version read artistPool/artistDeck/discardPile from closure, which could be stale
+    // after Fame draws (e.g., reactive took 1 from pool → setTimeout(refillPool, 100)
+    // ran with the OLD 5-card pool closure, "refilled" from 5 to 5 = no-op, leaving the
+    // actual pool at 4). Now we read from refs captured right before the pull.
     const inUse = getInUseNames();
-    let deck = [...artistDeck]; let disc = [...discardPile]; let pool = overridePool ? [...overridePool] : [...artistPool];
+    let deck = [...(artistDeckRef.current || artistDeck)];
+    let disc = [...(discardPileRef.current || discardPile)];
+    let pool = overridePool ? [...overridePool] : [...(artistPoolRef.current || artistPool)];
     pool.forEach(a => inUse.add(a.name));
     while (pool.length < 5) {
       if (deck.length === 0 && disc.length > 0) {
@@ -8552,6 +8602,10 @@ export default function Headliners() {
       inUse.add(card.name);
     }
     setArtistDeck(deck); setDiscardPile(disc); setArtistPool(pool);
+    // Update refs immediately so subsequent reads see the fresh pool.
+    artistDeckRef.current = deck;
+    discardPileRef.current = disc;
+    artistPoolRef.current = pool;
   }
 
   // Get names of artists that have agents on them (protected from refresh)
@@ -13498,27 +13552,28 @@ export default function Headliners() {
             }
           }
         }
-        // v199.114: fire reactive effects IMMEDIATELY when the opponent action completes,
-        // so human players get a picker BETWEEN turns rather than at their next turn start.
-        // AI gate blocks on fameDrawPicker, so the AI's turn pauses while the human picks.
-        // AI reactive owners auto-fire silently.
-        const reactTrigger = _wasBuild ? "opp_build" : _wasBook ? "opp_book" : _wasBrowse ? "opp_browse" : null;
-        if (!reactTrigger) return;
+        // v199.115: queue reactive effects — fired separately BEFORE the Fame modal,
+        // see below. The after-trigger queueing (for the acting player's own cards)
+        // continues to happen here inside the 120ms setTimeout.
+      }, 120);
+      // v199.115: fire reactive effects for OTHER players IMMEDIATELY (0-20ms), BEFORE
+      // the acting player's Fame draw modal opens (80ms via logFameGain). This lets the
+      // reactive player draw their artist first, then the acting player sees their
+      // Fame modal. Previously fired at 120+ms, so Fame modal opened on top of reactive.
+      const reactTrigger = _wasBuild ? "opp_build" : _wasBook ? "opp_book" : _wasBrowse ? "opp_browse" : null;
+      if (reactTrigger) {
         players.forEach((p, pIdx) => {
-          if (p.id === trigPid) return; // skip the acting player
+          if (p.id === trigPid) return;
           const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger);
           if (theirCards.length === 0) return;
-          // Stagger multiple cards so pickers resolve sequentially (second one opens
-          // after first is dismissed). Base offset by player index so multiple reactors
-          // don't all open pickers at the exact same tick.
           theirCards.forEach((c, cIdx) => {
             setTimeout(() => {
               fireFameCardEffect(p.id, c, { amenityType: _selectedDieFace, bookedArtist: _bookedArtist });
-            }, 150 + pIdx * 100 + cIdx * 400);
+            }, 20 + pIdx * 30 + cIdx * 300);
           });
           addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} firing (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}).`);
         });
-      }, 120);
+      }
       if (newActions <= 0) {
         // Both actions used — mark actionTaken so End Turn button appears.
         setActionTaken(true);
@@ -13753,6 +13808,8 @@ export default function Headliners() {
     // v199.98: fire the new player's queued reactive Fame effects (from opponents'
     // recent actions). Deferred so state transitions commit first.
     setTimeout(() => fireQueuedReactiveEffects(turnOrder[ni]), 150);
+    // v199.115: fire pending season_start Fame cards for this player, if any.
+    fireSeasonStartIfPending(turnOrder[ni]);
 
     // v130/v142: under tempt mode enforce hand cap of 8. HUMAN players get a picker
     // modal (they choose which cards to discard). AI keeps the auto-cull behavior (rank
@@ -21208,7 +21265,7 @@ export default function Headliners() {
               // v199.104: reset all Fame card system state so Fame starts fresh in the new game.
               setFameDeck([]); setFameDiscardPile([]); setPlayerFameCards({});
               setFameDrawModal(null); setFameAmenityPending(null); setFameSeasonPicker(null);
-              setFameDrawPicker(null); setFameKeepOnePicker(null); setFameFreeAmenityPicker(null); setFameDeckPeekPicker(null); setPendingReactiveEffects({}); setPendingAfterTriggers({});
+              setFameDrawPicker(null); setFameKeepOnePicker(null); setFameFreeAmenityPicker(null); setFameDeckPeekPicker(null); setPendingReactiveEffects({}); setPendingAfterTriggers({}); setPlayersNeedingSeasonStart({});
               setFameCardUsedThisTurn({}); setQuickYearTurnsTaken(0);
               playerFameCardsRef.current = {}; pendingReactiveEffectsRef.current = {};
               pendingAfterTriggersRef.current = {}; quickYearTurnsTakenRef.current = 0;
