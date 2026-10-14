@@ -3437,6 +3437,15 @@ export default function Headliners() {
           if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: dice refreshed`, "#fbbf24");
           markFameCardUsedThisTurn(pid, card.instanceId);
           break;
+        case "peek_rearrange_deck":
+          // v199.122 BUG FIX: FM_PEEK_REARRANGE is a YOU MAY card but the switch above
+          // only handled refresh_pool/refresh_die — the peek effect silently did nothing
+          // when clicked. Now we delegate to the dispatcher, which opens the deck peek
+          // picker modal. markFameCardUsedThisTurn is called from the peek picker's
+          // click handler (when the player finishes rearranging), so this card only
+          // counts as "used" once they commit.
+          fireFameCardEffect(pid, card, {});
+          break;
       }
       return;
     }
@@ -17744,8 +17753,16 @@ export default function Headliners() {
               <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(76,29,149,0.3), rgba(45,16,96,0.15))", border: "1px solid rgba(167,139,250,0.4)" }}>
                 <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 8, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
-                  {[0,1,2,3,4].map(i => {
-                    const card = (playerFameCards[viewingPlayerId] || [])[i];
+                  {(() => {
+                    // v199.122: let +2 Fame Card span 2 cells.
+                    const _cards = playerFameCards[viewingPlayerId] || [];
+                    const _used = _cards.reduce((n, c) => n + (c.slotWeight || 1), 0);
+                    const _emptyN = Math.max(0, 5 - _used);
+                    return [
+                      ..._cards.map((c, idx) => ({ card: c, keyIdx: `c-${idx}` })),
+                      ...Array.from({ length: _emptyN }, (_, idx) => ({ card: null, keyIdx: `e-${idx}` })),
+                    ];
+                  })().map(({ card, keyIdx }, i) => {
                     const empty = !card;
                     const catBg = card ? (
                       card.category === "you_may"      ? "linear-gradient(180deg, #78350f, #431407)"  :
@@ -17767,7 +17784,8 @@ export default function Headliners() {
                       card.category === "season_start" ? "#fbbf24" :
                                                          "#c084fc"
                     ) : "rgba(100,116,139,0.3)";
-                    return <div key={i} style={{
+                    const _spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
+                    return <div key={keyIdx} style={{
                       display: "flex", flexDirection: "column",
                       padding: 4, borderRadius: 6,
                       background: catBg,
@@ -17775,6 +17793,7 @@ export default function Headliners() {
                       minHeight: 72,
                       justifyContent: empty ? "center" : "flex-start",
                       gap: 2,
+                      ..._spanStyle,
                     }} title={card ? `${card.name} — ${card.desc}` : "Empty slot"}>
                       {empty ? (
                         <span style={{ fontSize: 20, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
@@ -18176,8 +18195,17 @@ export default function Headliners() {
                     shows the card name + a short effect summary. Empty slots are dim stars
                     (fame not yet earned). Max 5 cards. */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, alignItems: "stretch" }}>
-                  {[0,1,2,3,4].map(i => {
-                    const card = (playerFameCards[currentPlayerId] || [])[i];
+                  {(() => {
+                    // v199.122: build slot array that lets +2 Fame Card span 2 cells.
+                    const _cards = playerFameCards[currentPlayerId] || [];
+                    const _used = _cards.reduce((n, c) => n + (c.slotWeight || 1), 0);
+                    const _emptyN = Math.max(0, 5 - _used);
+                    const _slots = [
+                      ..._cards.map((c, idx) => ({ card: c, keyIdx: `c-${idx}` })),
+                      ...Array.from({ length: _emptyN }, (_, idx) => ({ card: null, keyIdx: `e-${idx}` })),
+                    ];
+                    return _slots;
+                  })().map(({ card, keyIdx }, i) => {
                     const empty = !card;
                     const catBg = card ? (
                       card.category === "you_may"      ? "linear-gradient(180deg, #78350f, #431407)"  :
@@ -18249,12 +18277,13 @@ export default function Headliners() {
                     const titleText = card
                       ? `${card.name} — ${card.desc}${afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}${card.category === "game_end" ? ` · currently worth ${computeFameCardEndTally(currentPlayerId, card)} 🎟️` : ""}`
                       : "Empty slot — gain Fame to draw a card";
+                    const spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
                     return clickable ? (
-                      <button key={i} onClick={() => activateFameCard(currentPlayerId, card)} style={{ ...slotStyle, color: "inherit", font: "inherit" }} title={titleText}>
+                      <button key={keyIdx} onClick={() => activateFameCard(currentPlayerId, card)} style={{ ...slotStyle, ...spanStyle, color: "inherit", font: "inherit" }} title={titleText}>
                         {inner}
                       </button>
                     ) : (
-                      <div key={i} style={slotStyle} title={titleText}>
+                      <div key={keyIdx} style={{ ...slotStyle, ...spanStyle }} title={titleText}>
                         {inner}
                       </div>
                     );
