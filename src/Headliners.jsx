@@ -12356,7 +12356,8 @@ export default function Headliners() {
           }
           bookArtistToStage(artist, stageIdx, currentPlayerId);
           addLog("🤖 AI", `Booked ${artist.name}`);
-          completeAction();
+          // v199.123: pass actionKind so reactive Fame cards (FM_REACT_BOOK) fire.
+          completeAction({ actionKind: "book", bookedArtist: artist, bookedStageIdx: stageIdx });
         } else {
           addLog("🤖 AI", "Booking failed — fallback to amenity");
           const cd2 = dice.length > 0 ? dice : rollDice();
@@ -12497,7 +12498,8 @@ export default function Headliners() {
           }
           applyDrawArtistsBonus(currentPlayerId);
         }
-        completeAction();
+        // v199.123: pass actionKind so reactive Fame cards (FM_REACT_BROWSE) fire.
+        completeAction({ actionKind: "browse" });
         refillPool();
         scheduleNext(500); return;
       }
@@ -12613,7 +12615,8 @@ export default function Headliners() {
       addLog("🤖 AI", `Built ${AMENITY_LABELS[amenityType]} in F${fIdx + 1}`);
       checkSecurityVPBonus(currentPlayerId, amenityType);
       claimAmenityMicrotrend(currentPlayerId, amenityType);
-      completeAction();
+      // v199.123: pass actionKind + amenityType so reactive Fame cards (FM_REACT_BUILD) fire.
+      completeAction({ actionKind: "build", amenityType });
       scheduleNext(500); return;
     }
 
@@ -13554,16 +13557,23 @@ export default function Headliners() {
   // (build/browse/buy/favour). In Quick Play, decrements actionsLeftThisTurn and only
   // ends the turn when actions hit 0. Classic (not in use currently, but preserved for
   // future compatibility) treats each action as a full turn as before.
-  const completeAction = () => {
+  const completeAction = (opts = {}) => {
     if (gameModeRef.current === "quickYear") {
       // v199.95: capture which action JUST completed so we can fire the matching
       // after-action Fame card triggers before state resets wipe this info.
-      const _wasBuild = turnAction === "pickAmenity";
-      const _wasBook = turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && selectedArtist;
-      const _wasBrowse = turnAction === "artist" && artistAction === "draw2";
-      const _bookedArtist = _wasBook ? selectedArtist?.artist : null;
+      // v199.123: AI paths bypass turnAction and must pass opts explicitly:
+      //   { actionKind: "build" | "book" | "browse", amenityType?, bookedArtist?, bookedStageIdx? }
+      // Human paths still infer from turnAction (opts undefined). This fixes reactive
+      // Fame cards (FM_REACT_BUILD etc.) not firing when the opponent is an AI — the
+      // AI's build didn't set turnAction, so _wasBuild was false, so no reactive queue.
+      const _wasBuild = opts.actionKind === "build" || (opts.actionKind == null && turnAction === "pickAmenity");
+      const _wasBook = opts.actionKind === "book" || (opts.actionKind == null && turnAction === "artist" && (artistAction === null || artistAction === "bookHand" || artistAction === "pickStage") && selectedArtist);
+      const _wasBrowse = opts.actionKind === "browse" || (opts.actionKind == null && turnAction === "artist" && artistAction === "draw2");
+      const _bookedArtist = opts.bookedArtist !== undefined ? opts.bookedArtist : (_wasBook ? selectedArtist?.artist : null);
       // v199.112: capture booked stage so FM_BOOK_ANOTHER (book on different stage) knows which to exclude.
-      const _bookedStageIdx = _wasBook ? selectedStageIdx : null;
+      const _bookedStageIdx = opts.bookedStageIdx !== undefined ? opts.bookedStageIdx : (_wasBook ? selectedStageIdx : null);
+      // v199.123: AI amenity type for reactive context (so FM_REACT_BUILD knows which amenity to copy).
+      const _amenityTypeForOpts = opts.amenityType !== undefined ? opts.amenityType : null;
       const newActions = Math.max(0, actionsLeftRef.current - 1);
       setActionsLeftThisTurn(newActions);
       actionsLeftRef.current = newActions;
@@ -13583,7 +13593,9 @@ export default function Headliners() {
       // tray; player clicks to activate. For AI: auto-fire as before (keeps the game
       // flowing without needing human input on AI turns).
       const trigPid = currentPlayerId;
-      const _selectedDieFace = selectedDie; // amenity type if Build
+      // v199.123: fall back to opts.amenityType when selectedDie isn't set (AI build path
+      // doesn't go through the normal die-selection UI).
+      const _selectedDieFace = selectedDie || _amenityTypeForOpts;
       const trigPlayer = players.find(pl => pl.id === trigPid);
       setTimeout(() => {
         const cards = (playerFameCardsRef.current[trigPid] || []);
