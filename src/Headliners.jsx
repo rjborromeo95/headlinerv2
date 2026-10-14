@@ -3509,6 +3509,11 @@ export default function Headliners() {
     const newRemaining = picker.remaining - 1;
     const newPicked = [...picker.picked, picked.name];
     setPlayerData(pd => ({ ...pd, [picker.pid]: { ...pd[picker.pid], hand: [...(pd[picker.pid]?.hand || []), picked] } }));
+    // v199.109: Favour sub-log for consistency with normal Browse draw.
+    if (picked.isFavour) {
+      addLog(currentPlayer?.festivalName || "?", `drew a ${picked.genre} Favour → to hand`);
+      showFloatingBonus(`🎴 ${picked.genre} Favour!`, "#fcd34d");
+    }
     if (newRemaining <= 0) {
       addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${picker.cardName}" → drew ${newPicked.join(", ")}.`);
       setFameDrawPicker(null);
@@ -12524,13 +12529,11 @@ export default function Headliners() {
   };
   // v199.52: Fame 4+ once-per-turn dice re-roll. Costs no action — pure Fame-tier perk.
   const handleFameDiceRefresh = () => {
-    // v199.95/v199.105: this is now called ONLY by the Fame REFRESH_DIE card activation
-    // (the old Fame 4+ tier perk UI was removed in v199.95). All gates removed — the
-    // Fame card has its own per-turn tracking via fameCardUsedThisTurn, and multiple
-    // card copies should each be usable in a single turn (each counts separately).
+    // v199.95/v199.105/v199.109: called ONLY by the Fame REFRESH_DIE card activation.
+    // Log entry is handled by activateFameCard (which calls this). No log here to
+    // avoid the duplicate "refreshed amenity dice" + "activated 'Refresh Die'" pair.
     const fresh = rollDice();
     setDice(fresh);
-    addLog(currentPlayer?.festivalName || "?", `🔥 Fame card — refreshed amenity dice`);
     showFloatingBonus("🎲 Dice refreshed!", "#fbbf24");
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
@@ -12658,6 +12661,15 @@ export default function Headliners() {
       goalReq1Claimed: JSON.parse(JSON.stringify(goalReq1Claimed)),
       activeGoals: JSON.parse(JSON.stringify(activeGoals)),
       goalClaimsRef: { ...goalClaimsRef.current },
+      // v199.109: snapshot Fame card state so undo properly rewinds Fame triggers
+      // consumed during the action. Without this, undoing a Build that fired its
+      // after-action triggers would leave the triggers permanently consumed even
+      // though the Build itself was rewound.
+      playerFameCards: JSON.parse(JSON.stringify(playerFameCards)),
+      fameDeck: JSON.parse(JSON.stringify(fameDeck)),
+      fameDiscardPile: JSON.parse(JSON.stringify(fameDiscardPile)),
+      pendingAfterTriggers: JSON.parse(JSON.stringify(pendingAfterTriggers)),
+      fameCardUsedThisTurn: { ...fameCardUsedThisTurn },
     });
   };
 
@@ -12674,6 +12686,22 @@ export default function Headliners() {
     if (undoSnapshot.goalReq1Claimed) setGoalReq1Claimed(undoSnapshot.goalReq1Claimed);
     if (undoSnapshot.activeGoals) setActiveGoals(undoSnapshot.activeGoals);
     if (undoSnapshot.goalClaimsRef) goalClaimsRef.current = undoSnapshot.goalClaimsRef;
+    // v199.109: restore Fame card state so undo rewinds Fame triggers that fired
+    // during the action. Also force-close any orphaned Fame pickers.
+    if (undoSnapshot.playerFameCards) {
+      setPlayerFameCards(undoSnapshot.playerFameCards);
+      playerFameCardsRef.current = undoSnapshot.playerFameCards;
+    }
+    if (undoSnapshot.fameDeck) setFameDeck(undoSnapshot.fameDeck);
+    if (undoSnapshot.fameDiscardPile) setFameDiscardPile(undoSnapshot.fameDiscardPile);
+    if (undoSnapshot.pendingAfterTriggers) {
+      setPendingAfterTriggers(undoSnapshot.pendingAfterTriggers);
+      pendingAfterTriggersRef.current = undoSnapshot.pendingAfterTriggers;
+    }
+    if (undoSnapshot.fameCardUsedThisTurn) setFameCardUsedThisTurn(undoSnapshot.fameCardUsedThisTurn);
+    setFameAmenityPending(null);
+    setFameDrawPicker(null);
+    setFameDrawModal(null);
     setActionTaken(false);
     setTurnAction(null);
     setSelectedArtist(null);
@@ -14741,7 +14769,7 @@ export default function Headliners() {
       return remaining;
     });
     showFloatingBonus("🔁 Pool refreshed!", "#c4b5fd");
-    addLog(currentPlayer.festivalName, `🔁 Refreshed ${needed} pool artist${needed === 1 ? "" : "s"} (Fame card)`);
+    // v199.109: log entry is handled by activateFameCard (which calls this).
   };
 
   const refillPoolTo5 = () => {
