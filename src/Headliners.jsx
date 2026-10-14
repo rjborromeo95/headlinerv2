@@ -560,7 +560,7 @@ const FAME_CARDS = [
   // ON SEASON START — one-shot per season
   { id: "FM_SS_PLAY_HEADLINER",name: "Season: Play Headliner",   category: "season_start", trigger: "season_start", effect: "ss_play_headliner",             copies: 1, desc: "Season start: play a headliner you can afford on a stage (if available)." },
   { id: "FM_SS_GAIN_1_FAME",   name: "Season: +1 Fame",          category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
-  { id: "FM_SS_PLACE_2_AMEN",  name: "Season: Place 2 Amenities",category: "season_start", trigger: "season_start", effect: "ss_place_2_amenities",          copies: 1, desc: "Season start: place 2 amenities of your choice." },
+  { id: "FM_SS_PLACE_AMEN",    name: "Season: Place 1 Amenity",  category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
   { id: "FM_SS_DRAW_TO_FULL",  name: "Season: Fill Hand",        category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
   { id: "FM_SS_NEW_STAGE",     name: "Season: Open Stage",       category: "season_start", trigger: "season_start", effect: "ss_open_stage",                 copies: 1, desc: "Season start: open a new stage (max 3 total)." },
   { id: "FM_SS_CYCLE",         name: "Season: Discard N, Draw N",category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
@@ -4234,33 +4234,29 @@ export default function Headliners() {
         setTimeout(() => recalcTickets(), 50);
         break;
       }
+      case "ss_place_amenity":
       case "ss_place_2_amenities": {
-        // v199.113: place 2 amenities of player's choice. Human: open free picker with remaining=2.
+        // v199.127: reduced from 2 amenities to 1. Old effect name kept as a case label
+        // so any legacy card data from prior saves still routes here.
         if (player?.isAI) {
-          // AI: place 2 of its least-common amenity type.
           const pdNow = (playerDataRef.current || playerData)[pid] || {};
           const am = pdNow.amenities || {};
           const types = ["campsite", "security", "catering", "portaloo"];
-          for (let i = 0; i < 2; i++) {
-            const curAm = ((playerDataRef.current || playerData)[pid] || {}).amenities || am;
-            const sorted = types.sort((a, b) => (curAm[a] || 0) - (curAm[b] || 0));
-            const chosenType = sorted[0];
-            const pdCur = (playerDataRef.current || playerData)[pid] || {};
-            const fields = pdCur.fields || emptyFields();
-            let targetField = 0;
-            for (let j = 0; j < fields.length; j++) {
-              const f = fields[j] || {};
-              const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-              if (count < 5) { targetField = j; break; }
-            }
-            setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, chosenType, +1) }));
-            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[chosenType]} (${i + 1}/2).`);
-            // eslint-disable-next-line no-loop-func
-            setTimeout(() => claimAmenityMicrotrend(pid, chosenType), 50 + i * 20);
+          const sorted = [...types].sort((a, b) => (am[a] || 0) - (am[b] || 0));
+          const chosenType = sorted[0];
+          const fields = pdNow.fields || emptyFields();
+          let targetField = 0;
+          for (let j = 0; j < fields.length; j++) {
+            const f = fields[j] || {};
+            const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+            if (count < 5) { targetField = j; break; }
           }
+          setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, chosenType, +1) }));
+          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[chosenType]}.`);
+          setTimeout(() => claimAmenityMicrotrend(pid, chosenType), 50);
           setTimeout(() => recalcTickets(), 100);
         } else {
-          setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 2 });
+          setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 1 });
         }
         break;
       }
