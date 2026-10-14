@@ -3864,27 +3864,36 @@ export default function Headliners() {
         break;
       }
       case "ss_new_stage": {
-        // Open a new stage if under the 3-stage cap.
-        setPlayerData(p => {
-          const cur = p[pid];
-          const stageCount = (cur.stages || []).length;
-          if (stageCount >= 3) {
-            addLog("🔥 Fame", `${festName}: "${card.name}" — already at 3 stages, skipped.`);
-            return p;
-          }
-          const stageName = `Stage ${stageCount + 1}`;
-          const stageColor = "#a78bfa";
-          const updated = {
-            ...cur,
-            stages: [...(cur.stages || []), []],
-            stageArtists: [...(cur.stageArtists || []), []],
-            stageNames: [...(cur.stageNames || []), stageName],
-            stageColors: [...(cur.stageColors || []), stageColor],
+        // v199.108 BUG FIX: previous version pushed EMPTY ARRAY to stages (should be
+        // { fameRequired: 0 } object) and had side effects inside the updater. Also had
+        // no visible stage name because stages require a proper name from STAGE_NAMES to
+        // render in the festival. Fixed to match the game's actual stage opener.
+        const pdNow = (playerDataRef.current || playerData)[pid] || {};
+        const stageCount = (pdNow.stages || []).length;
+        if (stageCount >= 3) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — already at 3 stages, skipped.`);
+          return;
+        }
+        const usedNames = pdNow.stageNames || [];
+        const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+        const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage ${stageCount + 1}`;
+        const sColor = (typeof STAGE_COLORS !== "undefined" ? STAGE_COLORS : ["#a78bfa"])[stageCount % (typeof STAGE_COLORS !== "undefined" ? STAGE_COLORS.length : 1)];
+        setPlayerData(prev => {
+          const cur = prev[pid] || {};
+          return {
+            ...prev,
+            [pid]: {
+              ...cur,
+              stages: [...(cur.stages || []), { fameRequired: 0 }],
+              stageArtists: [...(cur.stageArtists || []), []],
+              stageNames: [...(cur.stageNames || []), sName],
+              stageColors: [...(cur.stageColors || []), sColor],
+            },
           };
-          return { ...p, [pid]: updated };
         });
-        addLog("🔥 Fame", `${festName}: "${card.name}" → opened a new stage.`);
-        if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: new stage!`, "#fbbf24");
+        addLog("🔥 Fame", `${festName}: "${card.name}" → opened "${sName}"!`);
+        if (!player?.isAI) showFloatingBonus(`🎪 Opened ${sName}!`, "#fbbf24");
+        setTimeout(() => recalcTickets(), 50);
         break;
       }
       case "ss_draw_2_from_discard": {
