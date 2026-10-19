@@ -2908,6 +2908,12 @@ export default function Headliners() {
   const [quickYearHistory, setQuickYearHistory] = useState({});
   const quickYearHistoryRef = useRef({});
   useEffect(() => { quickYearHistoryRef.current = quickYearHistory; }, [quickYearHistory]);
+  // v199.132: track each player's running END-card ticket total across seasons so we can
+  // apply the per-season DELTA at every season close (rather than dumping the full total
+  // at Summer only). Keys: pid → cumulative End-card tickets granted so far. The delta
+  // added at each close = currentTally − snapshot. End of game total still matches the
+  // single Summer calculation, but now accumulates in the per-season leaderboard columns.
+  const fameCardEndSnapshotRef = useRef({});
   // v199: Hotline state. hotlineAgents = { pid: agentObj }, cleared at each season boundary.
   // hotlineUsed = { pid: boolean }, tracks whether that pid's agent has been consumed via
   // their one tempt this season. hotlineSpinQueue = ordered list of pids still waiting to
@@ -6278,29 +6284,50 @@ export default function Headliners() {
   // Barry, Wanda, Marla) create catch-up moments; Hotline is now the primary variance lever.
   const runQuickYearSeasonEnd = (season, isGameEnd, nextPlayerIdx) => {
     const currentPD = playerDataRef.current || playerData;
+    // v199.132: compute per-player END-card ticket DELTA for this season (currentTally
+    // − snapshot from last close). Apply the delta to bonusTickets so it flows into the
+    // next recalcTickets pass. This replaces the old "dump full total at Summer" model
+    // with incremental per-season scoring that matches what the player actually built.
+    const endSnap = { ...(fameCardEndSnapshotRef.current || {}) };
+    const endDeltas = {}; // pid → delta this season
+    const endLinesLog = {}; // pid → [line, ...] for per-card logging at Summer
+    players.forEach(p => {
+      const tally = computeFameCardEndGameTickets(p.id);
+      const prev = endSnap[p.id] || 0;
+      const delta = (tally.total || 0) - prev;
+      endDeltas[p.id] = delta;
+      endLinesLog[p.id] = tally.lines || [];
+      endSnap[p.id] = tally.total || 0;
+    });
+    fameCardEndSnapshotRef.current = endSnap;
+    // Apply the deltas to bonusTickets, then compute seasonScores from the UPDATED pd.
+    const pdWithEndDeltas = { ...currentPD };
+    players.forEach(p => {
+      const d = endDeltas[p.id] || 0;
+      if (d !== 0) {
+        const cur = pdWithEndDeltas[p.id] || {};
+        pdWithEndDeltas[p.id] = { ...cur, bonusTickets: (cur.bonusTickets || 0) + d };
+        logTicketGain(p.id, d, `🔥 Fame end cards (${season} close)`);
+      }
+    });
+    playerDataRef.current = pdWithEndDeltas;
+    setPlayerData(pdWithEndDeltas);
     const seasonScores = players.map(p => {
-      const pd = currentPD[p.id] || {};
-      // Campsites: sum campsite amenity counts across all fields.
+      const pd = pdWithEndDeltas[p.id] || {};
       const fields = pd.fields || [];
       const campsiteCount = fields.reduce((sum, f) => sum + (f?.amenities?.campsite || 0), 0);
-      // Artists on stages: sum lengths of all stageArtists sub-arrays. Includes headliners,
-      // openers — anything booked to a stage this game that's still there.
       const stages = pd.stageArtists || [];
       const artistCount = stages.reduce((sum, s) => sum + (Array.isArray(s) ? s.length : 0), 0);
-      // v199.60: per-season base income (1/campsite + 1/artist) REMOVED. Scoring now
-      // comes only from Legendary payouts (×2 per matching-genre artist for winners)
-      // and token conversions (×2 per shared/summer token). Season close is a status
-      // breakpoint, not a scoring moment.
       return {
         pid: p.id,
         name: p.festivalName,
         isAI: p.isAI,
         campsites: campsiteCount,
         artists: artistCount,
-        bonus: 0,
+        // v199.132: bonus here is the END-card ticket delta credited THIS season.
+        bonus: endDeltas[p.id] || 0,
       };
     });
-    // No bonus to apply — the per-season income path is zeroed out.
 
     setTimeout(() => recalcTickets(), 50);
 
@@ -6308,18 +6335,32 @@ export default function Headliners() {
     // its own entry with fame (current), fameDelta (change this season), tickets scored
     // this season, artists played this season, and cumulative totals.
     const histUpdate = { ...(quickYearHistoryRef.current || {}) };
+    const seasonOrder = ["autumn", "winter", "spring", "summer"];
+    const prevSeason = seasonOrder[seasonOrder.indexOf(season) - 1] || null;
     seasonScores.forEach(s => {
       const pd = (playerDataRef.current || playerData)[s.pid] || {};
       const fame = pd.fame != null ? pd.fame : (pd.baseFame || 0);
       const snapFame = (seasonStartSnapshotRef.current[s.pid]?.fame) ?? 0;
       const stages = pd.stageArtists || [];
       const totalArtists = stages.reduce((sum, st) => sum + (Array.isArray(st) ? st.length : 0), 0);
-      const totalTickets = (pd.tickets || 0);
+      // v199.132: compute totalTickets AFTER the bonus delta has been applied (recalc fires
+      // in 50ms, so we approximate by including the delta here — true tickets settles after
+      // next render but the snapshot is close enough for the per-season display).
+      const bonusAdded = s.bonus || 0;
+      const totalTickets = (pd.tickets || 0) + bonusAdded;
+      // v199.132: ticketsThisSeason is the REAL delta — current total minus previous
+      // season's recorded totalTickets. Captures everything that changed this season
+      // (new campsites, new artists on stages, END-card progress, bonus tickets from
+      // events). Falls back to s.bonus for autumn (no prior season) or if snapshot is
+      // missing.
+      const prevSnap = prevSeason ? (histUpdate[s.pid] || {})[prevSeason] : null;
+      const prevTotal = prevSnap ? (prevSnap.totalTickets || 0) : 0;
+      const ticketsThisSeason = Math.max(0, totalTickets - prevTotal);
       const artistsThisSeason = (seasonCountersRef.current[s.pid]?.plays) || 0;
       histUpdate[s.pid] = { ...(histUpdate[s.pid] || {}) };
       histUpdate[s.pid][season] = {
         fame, fameDelta: fame - snapFame,
-        ticketsThisSeason: s.bonus || 0,
+        ticketsThisSeason,
         artistsThisSeason,
         totalFame: fame,
         totalTickets,
@@ -6792,13 +6833,15 @@ export default function Headliners() {
         if (!pd) return;
         const seasonBonus = bonusByPid[p.id] || 0;
         const yeBonus = yeBonusByPid[p.id] || 0;
-        // v199.97: compute Fame-card game-end ticket bonuses for this player.
+        // v199.132: END-card tickets were ALREADY added incrementally in runQuickYearSeasonEnd
+        // (per-season delta applied to bonusTickets each close). The log breakdown below is
+        // the final per-card total so players can still see which card contributed what.
+        // We do NOT add fameEnd.total to pdWithBoth — that would double-count.
         const fameEnd = computeFameCardEndGameTickets(p.id);
         if (fameEnd.total > 0) {
-          logTicketGain(p.id, fameEnd.total, `🔥 Fame cards (game end)`);
-          fameEnd.lines.forEach(line => addLog("🔥 Fame", `${p.festivalName}: ${line}`));
+          fameEnd.lines.forEach(line => addLog("🔥 Fame", `${p.festivalName}: ${line} (totalled across all seasons)`));
         }
-        const pdWithBoth = { ...pd, bonusTickets: (pd.bonusTickets || 0) + seasonBonus + yeBonus + fameEnd.total };
+        const pdWithBoth = { ...pd, bonusTickets: (pd.bonusTickets || 0) + seasonBonus + yeBonus };
         freshWithYE[p.id] = computeTicketsForPlayer(pdWithBoth, 1, p.id);
         if (nextAllTickets[p.id]) {
           nextAllTickets[p.id][1] = {
@@ -21356,8 +21399,8 @@ export default function Headliners() {
                             <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, fontSize: 9, marginBottom: 3 }}>{QUICKYEAR_SEASON_EMOJI[sKey]} {QUICKYEAR_SEASON_LABELS[sKey]}</div>
                             {sData ? (
                               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                                <div style={{ color: "#86efac", fontWeight: 700 }}>🎟️ +{sData.ticketsThisSeason}</div>
-                                <div style={{ color: "#c4b5fd" }}>🎤 +{sData.artistsThisSeason}</div>
+                                <div style={{ color: "#86efac", fontWeight: 700 }}>🎟️ +{sData.ticketsThisSeason} <span style={{ color: "#64748b", fontWeight: 500 }}>({sData.totalTickets || 0})</span></div>
+                                <div style={{ color: "#c4b5fd" }}>🎤 +{sData.artistsThisSeason} <span style={{ color: "#64748b" }}>({sData.totalArtists || 0})</span></div>
                                 <div style={{ color: sData.fameDelta > 0 ? "#86efac" : sData.fameDelta < 0 ? "#f87171" : "#64748b" }}>
                                   🔥 {sData.fameDelta > 0 ? `+${sData.fameDelta}` : sData.fameDelta < 0 ? sData.fameDelta : "—"} <span style={{ color: "#64748b" }}>({sData.fame})</span>
                                 </div>
@@ -21372,7 +21415,7 @@ export default function Headliners() {
                   </div>
                 );
               })}
-              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Each season column shows tickets scored, artists played, and Fame change (ending value in parens). Winner = highest ticket count at festival close.</p>
+              <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Each season shows the change this season with the running total in parens: tickets, artists played, and Fame. Winner = highest ticket count at festival close.</p>
             </div>
           ) : (
             <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
@@ -21443,6 +21486,8 @@ export default function Headliners() {
               aiTurnStartResolvedRef.current = null;
               aiProcessing.current = false;
               playersNeedingSeasonStartRef.current = {};
+              // v199.132: clear per-season END-card snapshot so game 2 starts fresh.
+              fameCardEndSnapshotRef.current = {};
             }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
