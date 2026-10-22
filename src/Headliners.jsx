@@ -9310,7 +9310,11 @@ export default function Headliners() {
   };
 
   // Apply a sub-effect string. Returns true if recognised and applied.
+  // v199.137: fully wrapped in try/catch so a parse error or missing helper can't
+  // bubble up and crash React (which can then re-mount components in a loop, surfacing
+  // as #185 "Max update depth exceeded").
   const applyArtistSubEffect = (pid, artist, stageIdx, text) => {
+    try {
     if (!text) return false;
     const raw = text.trim();
     const t = raw.toLowerCase().replace(/\.$/, "").trim();
@@ -9497,6 +9501,11 @@ export default function Headliners() {
     }
 
     return false;
+    } catch (err) {
+      console.error("applyArtistSubEffect error for", artist?.name, text, err);
+      addLog("🎸 Artist Effect", `${artist?.name || "?"}: effect "${text}" failed (${err.message}). Skipped.`);
+      return true;
+    }
   };
 
   // v199.134: resolve the "Play another artist from <source>" effect. For humans, open the
@@ -9545,7 +9554,9 @@ export default function Headliners() {
   };
 
   // Fire the new-style artist effect. Returns true if handled; false to fall through.
+  // v199.137: try/catch so a parsing or helper error doesn't crash React.
   const fireNewArtistEffect = (artist, pid, stageIdx, slotIdx) => {
+    try {
     const eff = (artist.effect || "").trim();
     if (!eff) return false;
     const festival = players.find(p => p.id === pid)?.festivalName || "?";
@@ -9667,6 +9678,11 @@ export default function Headliners() {
 
     // Not recognised — fall through to legacy dispatcher
     return false;
+    } catch (err) {
+      console.error("fireNewArtistEffect error for", artist?.name, err);
+      addLog("🎸 Artist Effect", `${artist?.name || "?"}: effect handler failed (${err.message}). Skipped.`);
+      return true; // mark as handled so legacy dispatcher doesn't ALSO try
+    }
   };
 
   function applyEffect(artist, pid, times = 1, stageIdx = -1, viaAgent = false, viaTempt = false, prevArtist = null, prevArtistPid = null, slotCount = 0) {
