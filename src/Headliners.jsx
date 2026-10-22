@@ -12248,15 +12248,17 @@ export default function Headliners() {
       if (pe.type === "placeSpecific" || (pe.type === "placeAmenity" && pe.chosenType)) {
         const aType = pe.amenityType || pe.chosenType;
         const fieldIdx = aiPickFieldForAmenity(pd, aType, year || 1, gameModeRef.current === "quickYear" ? (playerPrinciplesRef.current[currentPlayerId] || []) : null);
+        // v199.136: lift logTicketGain out of setPlayerData updater (anti-pattern that
+        // causes React error #185 under strict mode / concurrent updates).
+        const preCur = (playerDataRef.current || playerData)[pid] || {};
+        const secBonus = (aType === "security" && (preCur.vpPerSecurity || 0) > 0) ? preCur.vpPerSecurity : 0;
         setPlayerData(p => {
           const cur = p[pid];
           let updated = mutateAmenity(cur, fieldIdx, aType, +1);
-          if (aType === "security" && cur.vpPerSecurity > 0) {
-            logTicketGain(pid, cur.vpPerSecurity, "Security placement bonus");
-            updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + cur.vpPerSecurity };
-          }
+          if (secBonus > 0) updated = { ...updated, bonusTickets: (updated.bonusTickets || 0) + secBonus };
           return { ...p, [pid]: updated };
         });
+        if (secBonus > 0) logTicketGain(pid, secBonus, "Security placement bonus");
         addLog("🤖 AI", `Placed bonus ${AMENITY_LABELS[aType]} in F${fieldIdx + 1}`);
         // v198.3: AI bonus amenity counts toward Quick Play season objectives (mirrors human path).
         const metricKey = { campsite: "campsitesBuilt", portaloo: "portaloosBuilt", catering: "cateringBuilt", security: "securityBuilt" }[aType];
@@ -15450,17 +15452,16 @@ export default function Headliners() {
     // Build per-(field, amenity) loss counts using each decision's chosen field
     const lossesByField = decisions.filter(d => d.decision === "lose"); // [{amenity, lostFromField}, ...]
     // Mutate player data: VP, dice returned, amenity counters reduced
+    // v199.136: lift logTicketGain out of setPlayerData updater.
     setPlayerData(p => {
       const cur = p[pid];
       let updated = cur;
       lossesByField.forEach(d => {
         const fIdx = d.lostFromField != null ? d.lostFromField : 0;
-        // Only decrement if the field actually has the amenity (defensive)
         if ((updated.fields?.[fIdx]?.[d.amenity] || 0) > 0) {
           updated = mutateAmenity(updated, fIdx, d.amenity, -1);
         }
       });
-      logTicketGain(pid, vpFromStars, "Star dice roll");
       return { ...p, [pid]: {
         ...updated,
         bonusTickets: (updated.bonusTickets || 0) + vpFromStars,
@@ -15468,6 +15469,7 @@ export default function Headliners() {
         heldDice: 0,
       } };
     });
+    if (vpFromStars) logTicketGain(pid, vpFromStars, "Star dice roll");
     // Return dice to pool
     setDicePool(pool => pool + faces.length);
     // Track avoided count for "+tickets per neg star avoided" effects
@@ -18197,13 +18199,13 @@ export default function Headliners() {
                 {selected.map(si => <button key={si} onClick={() => {
                   const ticketGain = handCards[si].tickets || 0;
                   const toDiscard = selected.map(x => handCards[x]);
+                  // v199.136: lift logTicketGain out of setPlayerData updater.
                   setPlayerData(p => {
                     const nh = [...p[pid].hand];
-                    // Remove from end first to avoid index shift
                     selected.sort((a, b) => b - a).forEach(x => nh.splice(x, 1));
-                    logTicketGain(pid, ticketGain, `${pe.artistName} effect (discard)`);
                     return { ...p, [pid]: { ...p[pid], hand: nh, bonusTickets: (p[pid].bonusTickets || 0) + ticketGain } };
                   });
+                  logTicketGain(pid, ticketGain, `${pe.artistName} effect (discard)`);
                   setDiscardPile(prev => [...prev, ...toDiscard]);
                   addLog("Effect", `Discarded ${toDiscard.map(a=>a.name).join(", ")} → +${ticketGain} tickets (${handCards[si].name})`);
                   showFloatingBonus(`+${ticketGain} 🎟️`, "#fbbf24");
@@ -18226,6 +18228,7 @@ export default function Headliners() {
               {owned.length === 0 ? <p style={{ color: "#f87171", fontSize: 12 }}>You have no amenities to discard.</p> :
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {owned.map(t => <button key={t} onClick={() => {
+                    // v199.136: lift logTicketGain out of setPlayerData updater.
                     setPlayerData(p => {
                       const cur = p[pid];
                       const fields = cur.fields || emptyFields();
@@ -18235,9 +18238,9 @@ export default function Headliners() {
                         if (c > bestCount) { bestCount = c; bestIdx = f; }
                       }
                       const updated = bestCount > 0 ? mutateAmenity(cur, bestIdx, t, -1) : cur;
-                      logTicketGain(pid, pe.ticketReward, `${pe.artistName} effect (discard for tickets)`);
                       return { ...p, [pid]: { ...updated, bonusTickets: (cur.bonusTickets || 0) + pe.ticketReward } };
                     });
+                    logTicketGain(pid, pe.ticketReward, `${pe.artistName} effect (discard for tickets)`);
                     addLog("Effect", `Discarded ${AMENITY_LABELS[t]} → +${pe.ticketReward} tickets`);
                     showFloatingBonus(`+${pe.ticketReward} 🎟️`, "#fbbf24");
                     setPendingEffect(null); setPendingEffectPid(null); setTimeout(() => recalcTickets(), 50);
