@@ -1056,11 +1056,17 @@ function TicketBreakdown({ pd, pid, ticketsLog, ALL_GENRES, year, councilQualifi
   const campsites = (am.campsite || 0) * 2;
   if (campsites > 0) rows.push({ label: "⛺ Campsites", amount: campsites });
   // v199.133: HEADLINER DOUBLES — slot 2 artist's tickets+VP count double.
-  (pd.stageArtists || []).forEach(sa => sa.forEach((a, slotIdx) => {
-    const base = (a.tickets || 0) + (a.vp || 0);
-    const contrib = slotIdx === 2 ? base * 2 : base;
-    if (contrib > 0) rows.push({ label: `🎤 ${a.name}${slotIdx === 2 ? " ★ (headliner ×2)" : ""}`, amount: contrib });
-  }));
+  // v199.140: defensive null-check so a corrupted stage entry (e.g. an undefined slot)
+  // can't crash the tooltip. Also guard outer sa against non-array values.
+  (pd.stageArtists || []).forEach(sa => {
+    if (!Array.isArray(sa)) return;
+    sa.forEach((a, slotIdx) => {
+      if (!a || typeof a !== "object") return;
+      const base = (a.tickets || 0) + (a.vp || 0);
+      const contrib = slotIdx === 2 ? base * 2 : base;
+      if (contrib > 0) rows.push({ label: `🎤 ${a.name || "Unknown"}${slotIdx === 2 ? " ★ (headliner ×2)" : ""}`, amount: contrib });
+    });
+  });
   (pd.councils || []).forEach((c, i) => {
     if (!c || c.reward?.type !== "tickets") return;
     if (!councilQualifies(c, (pd.fields || [])[i], y)) return;
@@ -1552,21 +1558,24 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {[0, 1, 2].map(slot => {
-                const a = sa[slot];
-                if (!a) return <div key={slot} style={{ padding: "3px 6px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: "1px dashed #4c1d9540", color: "#4c1d95", fontSize: 9, textAlign: "center" }}>Empty</div>;
+                // v199.140: hard guard — sa might be non-array in some edge cases, and
+                // a slot entry might be undefined (even in the middle of the array if a
+                // previous resolve passed an invalid handIdx). Render Empty for both.
+                const a = (Array.isArray(sa) ? sa[slot] : null);
+                if (!a || typeof a !== "object") return <div key={slot} style={{ padding: "3px 6px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: "1px dashed #4c1d9540", color: "#4c1d95", fontSize: 9, textAlign: "center" }}>Empty</div>;
                 const isHeadliner = slot === 2;
-                const guests = (a.specialGuests || []);
+                const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
                 // v199.133: Headliner doubles ticket display; v199.134: show +N special
                 // guests chip under the host name.
                 const displayTickets = isHeadliner ? (a.tickets || 0) * 2 : (a.tickets || 0);
                 return (
                   <div key={slot}>
-                    <div style={{ padding: "3px 6px", borderRadius: 6, background: genreGradient(a.genre), color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", gap: 4, border: isHeadliner ? "1px solid #fbbf24" : "1px solid transparent" }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isHeadliner ? "★ " : ""}{a.name}</span>
+                    <div style={{ padding: "3px 6px", borderRadius: 6, background: genreGradient(a.genre || ""), color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", gap: 4, border: isHeadliner ? "1px solid #fbbf24" : "1px solid transparent" }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isHeadliner ? "★ " : ""}{a.name || "Unknown"}</span>
                       <span style={{ flexShrink: 0 }}>🎟️{displayTickets}{isHeadliner ? "×2" : ""}</span>
                     </div>
                     {guests.length > 0 && (
-                      <div title={`Special Guests: ${guests.map(g => g.name).join(", ")}`} style={{ padding: "1px 6px", borderRadius: 4, marginTop: 1, background: "linear-gradient(90deg, rgba(236,72,153,0.25), rgba(190,24,93,0.15))", border: "1px dashed #f472b6", color: "#fce7f3", fontSize: 8, fontWeight: 600, textAlign: "center", transformOrigin: "top center", animation: "specialGuestTuck 0.45s ease-out" }}>
+                      <div title={`Special Guests: ${guests.map(g => g && g.name).filter(Boolean).join(", ")}`} style={{ padding: "1px 6px", borderRadius: 4, marginTop: 1, background: "linear-gradient(90deg, rgba(236,72,153,0.25), rgba(190,24,93,0.15))", border: "1px dashed #f472b6", color: "#fce7f3", fontSize: 8, fontWeight: 600, textAlign: "center", transformOrigin: "top center", animation: "specialGuestTuck 0.45s ease-out" }}>
                         🎸 +{guests.length} Special Guest{guests.length === 1 ? "" : "s"} (+{guests.length} 🎟️ at close)
                       </div>
                     )}
@@ -4020,21 +4029,42 @@ export default function Headliners() {
     const player = players.find(pl => pl.id === pid);
     const festName = player?.festivalName || "?";
     let playedArtist = null;
+    // v199.139/v199.140: sync playerDataRef inside the updater (matches bookArtistToStage)
+    // so the applyEffect call below reads the up-to-date stage with the new artist on it.
+    // v199.140: strict index/stage guards — null, undefined, negative, non-integer, or
+    // out-of-range handIdx/stageIdx all bail without mutating state. Previously the loose
+    // `handIdx >= curHand.length` check let `null`/`undefined` slip through (both coerce to
+    // 0 in `>=` comparison), causing `curHand[undefined] = undefined` to be added to the
+    // stage, corrupting it and crashing later renders with `undefined.something`.
     setPlayerData(p => {
       const cur = p[pid] || {};
       const curHand = cur.hand || [];
-      if (handIdx >= curHand.length) return p;
-      playedArtist = curHand[handIdx];
+      const curStages = cur.stageArtists || [];
+      // Validate indices.
+      if (!Number.isInteger(handIdx) || handIdx < 0 || handIdx >= curHand.length) return p;
+      if (!Number.isInteger(stageIdx) || stageIdx < 0 || stageIdx >= curStages.length) return p;
+      const candidate = curHand[handIdx];
+      if (!candidate || typeof candidate !== "object") return p; // never add non-objects to a stage
+      playedArtist = candidate;
       const newHand = curHand.filter((_, i) => i !== handIdx);
-      const stageArtists = [...(cur.stageArtists || [])];
+      const stageArtists = [...curStages];
       stageArtists[stageIdx] = [...(stageArtists[stageIdx] || []), playedArtist];
-      return { ...p, [pid]: { ...cur, hand: newHand, stageArtists } };
+      const result = { ...p, [pid]: { ...cur, hand: newHand, stageArtists } };
+      playerDataRef.current = result;
+      return result;
     });
     setTimeout(() => {
       if (!playedArtist) return;
       addLog("🔥 Fame", `${festName}: "${cardName}" → played ${playedArtist.name} on Stage ${stageIdx + 1} (no action spent — amenity/Fame costs still met).`);
       if (!player?.isAI) showFloatingBonus(`🔥 Played ${playedArtist.name} — no action used`, "#fbbf24");
       recalcTickets();
+      // v199.139: fire the played artist's effect too. Previously skipped (originally
+      // intentional to prevent effect-chains), but that silently dropped the effects of
+      // most artists played via Fame cards or Play-Another effects — e.g. Grimes landing
+      // in a middle slot wouldn't fire "If Middle Slot: Place an amenity of your choice".
+      // Chain-triggering effects are allowed to chain; hand size + stage slot limits bound
+      // runaway chains naturally.
+      try { applyEffect(playedArtist, pid, 1, stageIdx, false, false, null, null, (((playerDataRef.current || playerData)[pid] || {}).stageArtists || [])[stageIdx]?.length || 0); } catch (err) { console.error("resolvePlayFreeArtist applyEffect error", err); }
     }, 60);
   };
 
@@ -7126,10 +7156,15 @@ export default function Headliners() {
     // v199.133: HEADLINER DOUBLES — artist in slot index 2 (3rd slot) doubles their base
     // tickets + VP. Effect bonuses, bonusTickets, Patty Promises, Legendary payouts etc.
     // are NOT doubled (they flow through bonusTickets which is additive here).
-    (pd.stageArtists || []).forEach(sa => sa.forEach((a, slotIdx) => {
-      const base = (a.tickets || 0) + (a.vp || 0);
-      t += slotIdx === 2 ? base * 2 : base;
-    }));
+    // v199.140: defensive — ignore non-array stage entries and non-object slot entries.
+    (pd.stageArtists || []).forEach(sa => {
+      if (!Array.isArray(sa)) return;
+      sa.forEach((a, slotIdx) => {
+        if (!a || typeof a !== "object") return;
+        const base = (a.tickets || 0) + (a.vp || 0);
+        t += slotIdx === 2 ? base * 2 : base;
+      });
+    });
     t += pd.bonusTickets || 0;
     // Council ticket bonuses (year-scaled, applies if field qualifies in current year)
     const councils = pd.councils || [];
