@@ -15002,7 +15002,12 @@ export default function Headliners() {
     const newPool = curPool.filter((_, i) => i !== idx);
     setArtistPool(newPool);
     artistPoolRef.current = newPool;
-    setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), artist] } }));
+    // v199.169: sync playerDataRef IMMEDIATELY (not via the useEffect which lags by
+    // one render) so the counter pill reflects the fresh hand on the same render.
+    const curPd = playerDataRef.current || playerData;
+    const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), artist] } };
+    playerDataRef.current = newPd;
+    setPlayerData(newPd);
     addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — took ${artist.name} from pool.`);
     // v199.165: do NOT refill the pool here — the player should see the depleted pool
     // for the duration of their effect. The pool is topped back to 5 at the next
@@ -15041,7 +15046,11 @@ export default function Headliners() {
         else if (f === 5 && !nextKeptF5) { kept = true; keptAs = 5; }
         // Commit the card to hand or discard outside this updater (side effect).
         if (kept) {
-          setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
+          // v199.169: sync playerDataRef immediately so downstream reads see the fresh hand.
+          const curPd = playerDataRef.current || playerData;
+          const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), card] } };
+          playerDataRef.current = newPd;
+          setPlayerData(newPd);
           addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — kept ${card.name} (F${f}).`);
           if (keptAs === 4) showFloatingBonus(`⭐ Kept ${card.name} (F4)`, "#fcd34d");
           if (keptAs === 5) showFloatingBonus(`⭐ Kept ${card.name} (F5)`, "#fcd34d");
@@ -15070,7 +15079,12 @@ export default function Headliners() {
       const newDeck = deck.slice(1);
       setArtistDeck(newDeck);
       artistDeckRef.current = newDeck;
-      setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
+      // v199.169: sync playerDataRef immediately so the counter pill is accurate on the
+      // same render — the useEffect sync lags by one render.
+      const curPd = playerDataRef.current || playerData;
+      const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), card] } };
+      playerDataRef.current = newPd;
+      setPlayerData(newPd);
       addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — drew ${card.name} from deck.`);
     });
   };
