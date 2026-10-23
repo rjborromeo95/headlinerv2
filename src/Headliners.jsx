@@ -3489,7 +3489,9 @@ export default function Headliners() {
   // Returns { total, lines[] } where lines is a per-card breakdown for the game log.
   const computeFameCardEndGameTickets = (pid) => {
     if (gameModeRef.current !== "quickYear") return { total: 0, lines: [] };
-    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "game_end");
+    // v199.164: skip disabled cards (killed by RAYE / Remi Wolf). They stay in the tray
+    // visually and count toward the 5-slot limit but contribute 0 at scoring.
+    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "game_end" && !c.disabled);
     if (cards.length === 0) return { total: 0, lines: [] };
     const pd = (playerDataRef.current || playerData)[pid] || {};
     const fields = pd.fields || [];
@@ -4216,7 +4218,8 @@ export default function Headliners() {
   // require choices open a picker modal for humans (AI auto-picks).
   const fireSeasonStartEffects = (pid) => {
     if (gameModeRef.current !== "quickYear") return;
-    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "season_start");
+    // v199.164: skip disabled cards.
+    const cards = (playerFameCardsRef.current[pid] || []).filter(c => c.trigger === "season_start" && !c.disabled);
     if (cards.length === 0) return;
     cards.forEach((c, idx) => {
       setTimeout(() => fireFameCardEffect(pid, c, { atSeasonStart: true }), 150 + idx * 200);
@@ -9553,7 +9556,8 @@ export default function Headliners() {
     const fkMatch = raw.match(/^select\s+an\s+active\s+fame\s+card\s+you\s+own\.\s*you\s+no\s+longer\s+receive\s+the\s+benefit\.\s*(.+)$/i);
     if (fkMatch) {
       const trailing = fkMatch[1].trim();
-      const activeCards = (playerFameCardsRef.current[pid] || []);
+      // v199.164: "active" means not-yet-disabled. Already-disabled cards don't qualify.
+      const activeCards = (playerFameCardsRef.current[pid] || []).filter(c => !c.disabled);
       if (activeCards.length === 0) {
         addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} — no active Fame cards to disable; skipping kill, trailing effect still fires.`);
         setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, trailing), 60);
@@ -9572,9 +9576,10 @@ export default function Headliners() {
           return { c, i, score };
         }).sort((a, b) => a.score - b.score);
         const victim = scored[0].c;
-        setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).filter(c => c.instanceId !== victim.instanceId) }));
-        setFameDiscardPile(d => [...d, victim]);
-        addLog("🔥 Fame", `${festival} 🤖: ${artist.name} → discarded Fame card "${victim.name}".`);
+        // v199.164: mark disabled in-place rather than removing. Preserves tray slot
+        // count and ordering; triggers skip disabled cards.
+        setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === victim.instanceId ? { ...c, disabled: true } : c) }));
+        addLog("🔥 Fame", `${festival} 🤖: ${artist.name} → disabled Fame card "${victim.name}" (stays in tray, no longer fires).`);
         setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, trailing), 150);
       } else {
         setFameKillPicker({ pid, cardName: artist.name, trailingEffect: trailing });
@@ -15269,7 +15274,8 @@ export default function Headliners() {
       // completed are eligible to auto-fire.
       const cardsAtActionTime = new Set((playerFameCardsRef.current[trigPid] || []).map(c => c.instanceId).filter(Boolean));
       setTimeout(() => {
-        const cards = (playerFameCardsRef.current[trigPid] || []).filter(c => c.instanceId && cardsAtActionTime.has(c.instanceId));
+        // v199.164: also skip disabled cards (RAYE / Remi Wolf kill).
+        const cards = (playerFameCardsRef.current[trigPid] || []).filter(c => c.instanceId && cardsAtActionTime.has(c.instanceId) && !c.disabled);
         const triggerType = _wasBuild ? "after_build" : _wasBook ? "after_book" : _wasBrowse ? "after_browse" : null;
         if (triggerType) {
           const matchingCards = cards.filter(c => c.trigger === triggerType);
@@ -15303,7 +15309,8 @@ export default function Headliners() {
       if (reactTrigger) {
         players.forEach((p, pIdx) => {
           if (p.id === trigPid) return;
-          const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger);
+          // v199.164: skip disabled cards on opponents too.
+          const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger && !c.disabled);
           if (theirCards.length === 0) return;
           theirCards.forEach((c, cIdx) => {
             setTimeout(() => {
@@ -19497,30 +19504,40 @@ export default function Headliners() {
                                                          "#c084fc"
                     ) : "rgba(100,116,139,0.3)";
                     const _spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
+                    // v199.164: disabled cards (killed by RAYE/Remi Wolf) render greyed with ✖.
+                    const _vIsDisabled = !!(card && card.disabled);
                     return <div key={keyIdx} style={{
                       display: "flex", flexDirection: "column",
                       padding: 4, borderRadius: 6,
                       background: catBg,
-                      border: `1px solid ${catBorder}`,
+                      border: `1px solid ${_vIsDisabled ? "#475569" : catBorder}`,
                       minHeight: 72,
                       justifyContent: empty ? "center" : "flex-start",
                       gap: 2,
+                      opacity: _vIsDisabled ? 0.4 : 1,
+                      filter: _vIsDisabled ? "grayscale(100%)" : "none",
+                      position: "relative",
                       ..._spanStyle,
-                    }} title={card ? `${card.name} — ${card.desc}` : "Empty slot"}>
+                    }} title={card ? `${card.name} — ${card.desc}${_vIsDisabled ? " · DISABLED" : ""}` : "Empty slot"}>
                       {empty ? (
                         <span style={{ fontSize: 20, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
                       ) : (
                         <>
-                          <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
-                            {card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : fameCardCategoryLabel(card)}
+                          <div style={{ fontSize: 7, fontWeight: 800, color: _vIsDisabled ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                            {_vIsDisabled ? "Disabled" :
+                             card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : fameCardCategoryLabel(card)}
                           </div>
-                          <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                          <div style={{ fontSize: 8, color: _vIsDisabled ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: _vIsDisabled ? "line-through" : "none" }}>
                             <div>{card.name}</div>
-                            {card.category === "game_end" && (() => {
+                            {card.category === "game_end" && !_vIsDisabled && (() => {
                               const tally = computeFameCardEndTally(viewingPlayerId, card);
                               return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
                             })()}
+                            {card.category === "game_end" && _vIsDisabled && (
+                              <div style={{ fontSize: 9, color: "#64748b", fontWeight: 800 }}>(0 🎟️)</div>
+                            )}
                           </div>
+                          {_vIsDisabled && <div style={{ position: "absolute", top: 2, right: 4, fontSize: 10, color: "#f87171", fontWeight: 900 }} title="Disabled">✖</div>}
                         </>
                       )}
                     </div>;
@@ -19939,45 +19956,55 @@ export default function Headliners() {
                     const isYouMay = card && card.category === "you_may";
                     const usedThisTurn = card ? isFameCardUsedThisTurn(currentPlayerId, card.instanceId) : false;
                     const isPendingTrigger = card && (pendingAfterTriggers[currentPlayerId] || []).some(p => p.cardInstanceId === card.instanceId);
-                    const youMayClickable = isYouMay && !usedThisTurn;
-                    const afterActionClickable = isPendingTrigger;
+                    // v199.164: disabled cards (killed by RAYE/Remi Wolf) are never clickable
+                    // and never pulse. They stay in the tray with the same ordering/count.
+                    const isDisabled = !!(card && card.disabled);
+                    const youMayClickable = isYouMay && !usedThisTurn && !isDisabled;
+                    const afterActionClickable = isPendingTrigger && !isDisabled;
                     const clickable = youMayClickable || afterActionClickable;
                     const slotStyle = {
                       display: "flex", flexDirection: "column",
                       padding: 4, borderRadius: 6,
                       background: catBg,
-                      border: `${clickable ? 2 : 1}px solid ${catBorder}`,
+                      border: `${clickable ? 2 : 1}px solid ${isDisabled ? "#475569" : catBorder}`,
                       minHeight: 86,
                       justifyContent: empty ? "center" : "flex-start",
                       gap: 2,
                       transition: "all 0.2s",
                       cursor: clickable ? "pointer" : "default",
-                      opacity: card && usedThisTurn ? 0.4 : 1,
+                      opacity: isDisabled ? 0.4 : (card && usedThisTurn ? 0.4 : 1),
+                      filter: isDisabled ? "grayscale(100%)" : "none",
                       boxShadow: clickable ? `0 0 14px ${catBorder}, 0 0 24px ${catBorder}60` : "none",
                       animation: clickable ? "affordPulse 1.4s ease-in-out infinite" : "none",
+                      position: "relative",
                     };
                     const inner = empty ? (
                       <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
                     ) : (
                       <>
-                        <div style={{ fontSize: 7, fontWeight: 800, color: catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
-                          {afterActionClickable ? "Fire!" :
+                        <div style={{ fontSize: 7, fontWeight: 800, color: isDisabled ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                          {isDisabled ? "Disabled" :
+                           afterActionClickable ? "Fire!" :
                            card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
                            card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" :
                            fameCardCategoryLabel(card)}
                         </div>
-                        <div style={{ fontSize: 8, color: "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                        <div style={{ fontSize: 8, color: isDisabled ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: isDisabled ? "line-through" : "none" }}>
                           <div>{card.name}</div>
                           {/* v199.106: live game-end tally for END cards. */}
-                          {card.category === "game_end" && (() => {
+                          {card.category === "game_end" && !isDisabled && (() => {
                             const tally = computeFameCardEndTally(currentPlayerId, card);
                             return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
                           })()}
+                          {card.category === "game_end" && isDisabled && (
+                            <div style={{ fontSize: 9, color: "#64748b", fontWeight: 800 }}>(0 🎟️)</div>
+                          )}
                         </div>
+                        {isDisabled && <div style={{ position: "absolute", top: 2, right: 4, fontSize: 10, color: "#f87171", fontWeight: 900 }} title="This Fame card was disabled and no longer fires">✖</div>}
                       </>
                     );
                     const titleText = card
-                      ? `${card.name} — ${card.desc}${afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}${card.category === "game_end" ? ` · currently worth ${computeFameCardEndTally(currentPlayerId, card)} 🎟️` : ""}`
+                      ? `${card.name} — ${card.desc}${isDisabled ? " · DISABLED (no longer fires)" : afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}${card.category === "game_end" ? ` · currently worth ${isDisabled ? 0 : computeFameCardEndTally(currentPlayerId, card)} 🎟️` : ""}`
                       : "Empty slot — gain Fame to draw a card";
                     const spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
                     return clickable ? (
@@ -21707,7 +21734,8 @@ export default function Headliners() {
 
             {/* v199.161: Fame-kill picker — player picks one active Fame card to discard; trailing effect then fires. */}
             {fameKillPicker && fameKillPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
-              const active = playerFameCardsRef.current[fameKillPicker.pid] || [];
+              // v199.164: picker lists only ACTIVE (non-disabled) cards; already-disabled ones can't be re-killed.
+              const active = (playerFameCardsRef.current[fameKillPicker.pid] || []).filter(c => !c.disabled);
               return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s", overflowY: "auto" }}>
                 <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(127,29,29,0.4), rgba(76,16,32,0.25))", border: "2px solid #ef4444", boxShadow: "0 0 50px rgba(239,68,68,0.3)", maxWidth: 820, width: "100%", margin: "auto" }}>
                   <div style={{ textAlign: "center", marginBottom: 16 }}>
@@ -21722,9 +21750,9 @@ export default function Headliners() {
                       const pid = fameKillPicker.pid;
                       const art = { name: fameKillPicker.cardName };
                       setFameKillPicker(null);
-                      setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).filter(x => x.instanceId !== c.instanceId) }));
-                      setFameDiscardPile(d => [...d, c]);
-                      addLog("🔥 Fame", `${players.find(p => p.id === pid)?.festivalName || "?"}: ${fameKillPicker.cardName} → discarded Fame card "${c.name}".`);
+                      // v199.164: disabled in place (card stays in tray, slot count preserved, order preserved).
+                      setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(x => x.instanceId === c.instanceId ? { ...x, disabled: true } : x) }));
+                      addLog("🔥 Fame", `${players.find(p => p.id === pid)?.festivalName || "?"}: ${fameKillPicker.cardName} → disabled Fame card "${c.name}" (stays in tray, no longer fires).`);
                       setTimeout(() => applyArtistSubEffect(pid, art, -1, trailing), 150);
                     }} style={{ padding: "10px 12px", borderRadius: 10, background: "linear-gradient(135deg, #1e1b4b, #0f172a)", border: "2px solid #fca5a5", color: "#ede9fe", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", minWidth: 170, maxWidth: 220 }}>
                       <div style={{ fontWeight: 800, color: "#fde68a", fontSize: 13 }}>{c.name}</div>
