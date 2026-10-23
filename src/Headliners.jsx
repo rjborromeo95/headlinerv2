@@ -5407,6 +5407,16 @@ export default function Headliners() {
   // v199.161: Discard-amenity picker (Ja Rule, Dave). Player picks one amenity type they
   // own and loses one of it. Shape: { pid, cardName, remaining }.
   const [discardAmenityPicker, setDiscardAmenityPicker] = useState(null);
+  // v199.167: when a draw-until picker (Sadchild / Djo / Ensemble) starts, auto-open the
+  // hand drawer so the player sees cards landing live. Replaces the heavy bottom overlay
+  // from v199.163 — a compact counter pill is enough signal.
+  useEffect(() => {
+    if (extraDrawPicker && extraDrawPicker.pid === currentPlayerId) {
+      setShowHand(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extraDrawPicker?.pid, extraDrawPicker?.cardName]);
+
   // v199.166: Lil Angry interactive picker. Player clicks the deck one card at a time;
   // the first F4 drawn and the first F5 drawn are kept (gold glow), every other card
   // drawn is discarded (greyed out). Picker auto-completes when both have landed OR
@@ -21630,11 +21640,10 @@ export default function Headliners() {
                 one card at a time from either the deck or the pool, auto-closes when the
                 threshold is met. Shows a running metric. */}
             {extraDrawPicker && extraDrawPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
-              // v199.163: redesigned as a bottom-anchored overlay. The real deck + pool at
-              // the top of the screen stay visible and clickable (via the deck tile and
-              // pool-card wiring above); this strip shows the host card, current hand,
-              // progress counter and Stop button. Players draw by clicking the actual
-              // pool/deck instead of a disconnected "Draw from Pool" button.
+              // v199.167: compact floating counter pill at top-center. Replaces the
+              // v199.163 full-bottom overlay. The hand drawer is auto-opened via a
+              // useEffect (above) so the player sees cards landing in their hand live.
+              // Pool cards and deck tile still carry the 🎸 Pick / purple glow for input.
               const picker = extraDrawPicker;
               const pdNow = (playerDataRef.current || playerData)[picker.pid] || {};
               const hand = pdNow.hand || [];
@@ -21646,67 +21655,41 @@ export default function Headliners() {
               })();
               const met = picker.mode === "allGenres" ? metricValue >= picker.target : metricValue > picker.target;
               const counterIcon = picker.mode === "ticketSum" ? "🎟️" : picker.mode === "fameSum" ? "🔥" : "🎵";
-              const counterLabel = picker.mode === "ticketSum" ? "tickets" : picker.mode === "fameSum" ? "Fame sum" : "genres";
-              const targetLabel = picker.mode === "allGenres" ? `/ ${picker.target}` : `/ ${picker.target + 1}`;
-              const curDeck = artistDeckRef.current || artistDeck;
-              const curDisc = discardPileRef.current || discardPile || [];
-              const curPool = artistPoolRef.current || artistPool;
-              const deckAvail = curDeck.length + curDisc.length;
-              const poolAvail = curPool.filter(a => a && !a.isFavour).length;
+              const counterLabel = picker.mode === "ticketSum" ? "tickets" : picker.mode === "fameSum" ? "Fame" : "genres";
+              const targetDisplay = picker.mode === "allGenres" ? `${metricValue}/${picker.target}` : `${metricValue}/${picker.target + 1}`;
               return createPortal(<div style={{
-                position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9494,
-                background: "linear-gradient(180deg, rgba(76,29,149,0) 0%, rgba(46,16,101,0.95) 25%, rgba(46,16,101,0.98) 100%)",
-                borderTop: "2px solid #a78bfa",
-                boxShadow: "0 -8px 40px rgba(139,92,246,0.35)",
-                padding: "14px 18px 18px",
+                position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)",
+                zIndex: 9494,
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "8px 14px 8px 16px",
+                borderRadius: 999,
+                background: "linear-gradient(135deg, rgba(76,29,149,0.95), rgba(46,16,101,0.95))",
+                border: `2px solid ${met ? "#4ade80" : "#a78bfa"}`,
+                boxShadow: `0 4px 20px ${met ? "rgba(74,222,128,0.4)" : "rgba(139,92,246,0.5)"}`,
                 animation: "fadeSlideIn 0.3s",
                 pointerEvents: "auto",
+                maxWidth: "calc(100vw - 24px)",
               }}>
-                <div style={{ display: "flex", alignItems: "stretch", gap: 16, maxWidth: 1400, margin: "0 auto" }}>
-                  {/* LEFT: host-card title block */}
-                  <div style={{ flexShrink: 0, minWidth: 180, maxWidth: 220, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎸 Keep Drawing</div>
-                    <h2 style={{ color: "#ede9fe", fontSize: 18, margin: "2px 0 4px", fontWeight: 800 }}>{picker.cardName}</h2>
-                    <p style={{ color: "#c4b5fd", fontSize: 11, margin: 0, lineHeight: 1.35 }}>
-                      {picker.mode === "ticketSum" && <>Draw until your hand ticket total exceeds <strong>{picker.target}</strong>.</>}
-                      {picker.mode === "fameSum" && <>Draw until your hand Fame total exceeds <strong>{picker.target}</strong>.</>}
-                      {picker.mode === "allGenres" && <>Draw until you have all 6 genres in hand.</>}
-                    </p>
-                    <p style={{ color: "#a78bfa", fontSize: 10, margin: "6px 0 0", fontStyle: "italic", opacity: 0.8 }}>
-                      {met ? "Target reached — click Done to finish." : "Click any card in the pool above, or the deck tile, to draw."}
-                    </p>
-                  </div>
-                  {/* CENTER: current hand strip */}
-                  <div style={{ flex: 1, minWidth: 0, background: "rgba(30,27,75,0.5)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(167,139,250,0.3)" }}>
-                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 700, marginBottom: 6 }}>Your Current Hand ({hand.length})</div>
-                    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-                      {hand.length === 0 && <div style={{ color: "#64748b", fontSize: 12, fontStyle: "italic", padding: "10px 0" }}>Hand empty.</div>}
-                      {hand.map((a, i) => <div key={i} style={{ flexShrink: 0, minWidth: 88, maxWidth: 110, padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(49,46,129,0.9), rgba(30,27,75,0.9))", border: "1px solid #4c1d95" }}>
-                        <div style={{ fontSize: 11, fontWeight: 800, color: "#fde68a", lineHeight: 1.1, marginBottom: 2 }}>{a.name}</div>
-                        <div style={{ fontSize: 9, color: "#c4b5fd", lineHeight: 1.1 }}>{a.genre}</div>
-                        <div style={{ fontSize: 10, color: "#ddd6fe", marginTop: 3 }}>🔥{a.fame || 0} 🎟️{a.tickets || 0}</div>
-                      </div>)}
-                    </div>
-                  </div>
-                  {/* RIGHT: big progress counter + stop */}
-                  <div style={{ flexShrink: 0, minWidth: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 36, fontWeight: 900, color: met ? "#86efac" : "#fde68a", lineHeight: 1, letterSpacing: -1 }}>
-                        {counterIcon} {metricValue}
-                      </div>
-                      <div style={{ fontSize: 11, color: met ? "#86efac" : "#fcd34d", fontWeight: 700, marginTop: 4, opacity: 0.9 }}>
-                        {targetLabel} {counterLabel} {met ? "✓" : ""}
-                      </div>
-                      {deckAvail === 0 && poolAvail === 0 && !met && (
-                        <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 4, fontStyle: "italic" }}>Deck + pool exhausted</div>
-                      )}
-                    </div>
-                    <button onClick={() => { setExtraDrawPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — ${met ? "done drawing" : "stopped drawing"}.`); }}
-                      style={{ padding: "8px 20px", borderRadius: 8, background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent", border: `2px solid ${met ? "#4ade80" : "#a78bfa"}`, color: met ? "#dcfce7" : "#ede9fe", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                      {met ? "✓ Done" : "Stop"}
-                    </button>
-                  </div>
-                </div>
+                <span style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>🎸 {picker.cardName}</span>
+                <span style={{
+                  fontSize: 16, fontWeight: 900,
+                  color: met ? "#86efac" : "#fde68a",
+                  padding: "2px 10px", borderRadius: 999,
+                  background: "rgba(30,27,75,0.6)",
+                  border: `1px solid ${met ? "rgba(74,222,128,0.5)" : "rgba(252,211,77,0.4)"}`,
+                }}>
+                  {counterIcon} {targetDisplay} {counterLabel}{met ? " ✓" : ""}
+                </span>
+                <button onClick={() => { setExtraDrawPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — ${met ? "done drawing" : "stopped drawing"}.`); }}
+                  style={{
+                    padding: "5px 14px", borderRadius: 999,
+                    background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent",
+                    border: `1.5px solid ${met ? "#4ade80" : "#a78bfa"}`,
+                    color: met ? "#dcfce7" : "#ede9fe",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>
+                  {met ? "✓ Done" : "Stop"}
+                </button>
               </div>, document.body);
             })()}
 
