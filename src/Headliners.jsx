@@ -3780,6 +3780,12 @@ export default function Headliners() {
   const [pendingReactiveEffects, setPendingReactiveEffects] = useState({});
   const pendingReactiveEffectsRef = useRef({});
   useEffect(() => { pendingReactiveEffectsRef.current = pendingReactiveEffects; }, [pendingReactiveEffects]);
+  // v199.171: reactiveSpentRef tracks which Fame cards (by instanceId) have already fired
+  // via an opp_* trigger between the owner's turns. Keyed by pid → Set<instanceId>. The
+  // set is cleared at the START of that owner's next turn (in endTurn). Prevents the "a
+  // single reactive card fires 3 times in a 4-player round" exploit — now fires at most
+  // once per round-trip.
+  const reactiveSpentRef = useRef({});
   // v199.115: track which players still need their season_start Fame cards fired this
   // season. Marked at season transition; cleared when each player's season_start fires
   // at THEIR turn start. Fixes the issue where multiple players' season_start pickers
@@ -7277,6 +7283,8 @@ export default function Headliners() {
       const np = players.find(p => p.id === turnOrder[nextPlayerIdx]);
       addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
       refillPool();
+      // v199.171: reset reactive-fire budget at season-boundary turn start too.
+      reactiveSpentRef.current = { ...reactiveSpentRef.current, [turnOrder[nextPlayerIdx]]: new Set() };
       // v199.98: fire the new player's queued reactive Fame effects at season boundary too.
       setTimeout(() => fireQueuedReactiveEffects(turnOrder[nextPlayerIdx]), 150);
       // v199.115: fire pending season_start Fame cards for this player, if any.
@@ -15398,14 +15406,24 @@ export default function Headliners() {
         players.forEach((p, pIdx) => {
           if (p.id === trigPid) return;
           // v199.164: skip disabled cards on opponents too.
-          const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger && !c.disabled);
+          // v199.171: ALSO skip cards already spent via opp_* this round-trip. A card
+          // can fire at most once between the owner's turns; the spent set is cleared
+          // when the owner's turn begins (see endTurn below).
+          const spentSet = reactiveSpentRef.current[p.id] || new Set();
+          const theirCards = (playerFameCardsRef.current[p.id] || []).filter(c => c.trigger === reactTrigger && !c.disabled && !spentSet.has(c.instanceId));
           if (theirCards.length === 0) return;
+          // Mark these cards as spent IMMEDIATELY so a second opponent action in the same
+          // round-trip can't double-fire them. The set lives in a ref so this write is
+          // visible to any subsequent trigger check inside the same event loop tick.
+          const newSpent = new Set(spentSet);
+          theirCards.forEach(c => newSpent.add(c.instanceId));
+          reactiveSpentRef.current = { ...reactiveSpentRef.current, [p.id]: newSpent };
           theirCards.forEach((c, cIdx) => {
             setTimeout(() => {
               fireFameCardEffect(p.id, c, { amenityType: _selectedDieFace, bookedArtist: _bookedArtist });
             }, 20 + pIdx * 30 + cIdx * 300);
           });
-          addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} firing (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}).`);
+          addLog("🔥 Fame", `${p.festivalName}: ${theirCards.length} reactive effect${theirCards.length === 1 ? "" : "s"} firing (opponent took ${_wasBuild ? "Build" : _wasBook ? "Book" : "Browse"}). Spent until ${p.festivalName}'s next turn.`);
         });
       }
       if (newActions <= 0) {
@@ -15657,6 +15675,11 @@ export default function Headliners() {
     setCurrentPlayerIdx(ni);
     const np = players.find(p => p.id === turnOrder[ni]);
     addLogH(`${np?.festivalName || "?"}'s Turn`, "turn");
+
+    // v199.171: reset reactive-fire budget for the new current player. Their opp_*
+    // Fame cards can now fire again (once each) in response to opponents' actions
+    // until it's their turn again.
+    reactiveSpentRef.current = { ...reactiveSpentRef.current, [turnOrder[ni]]: new Set() };
 
     // v199.98: fire the new player's queued reactive Fame effects (from opponents'
     // recent actions). Deferred so state transitions commit first.
@@ -23781,6 +23804,8 @@ export default function Headliners() {
               setFameCardUsedThisTurn({}); setQuickYearTurnsTaken(0);
               playerFameCardsRef.current = {}; pendingReactiveEffectsRef.current = {};
               pendingAfterTriggersRef.current = {}; quickYearTurnsTakenRef.current = 0;
+              // v199.171: reset reactive-fire budget tracker for the new game.
+              reactiveSpentRef.current = {};
               // v199.125: reset AI "already resolved this step" locks. Without this,
               // the new game's setupIndex=0:draftArtist key could match a leftover lock
               // from the previous game, making the AI setup useEffect short-circuit and
