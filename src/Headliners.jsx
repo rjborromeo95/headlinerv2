@@ -14974,7 +14974,11 @@ export default function Headliners() {
     artistPoolRef.current = newPool;
     setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), artist] } }));
     addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — took ${artist.name} from pool.`);
-    setTimeout(() => refillPool(), 60);
+    // v199.165: do NOT refill the pool here — the player should see the depleted pool
+    // for the duration of their effect. The pool is topped back to 5 at the next
+    // pre-round via refillPoolTo5(). Prior behaviour (refill after each pick) exposed
+    // fresh cards mid-effect and let the player cherry-pick a bigger offering than
+    // the rule intended.
   };
   // v199.163: deck-draw handler for the extraDrawPicker. Routes through the reshuffle
   // helper so an empty deck + non-empty discard still works (minus the F0 filter).
@@ -20631,10 +20635,20 @@ export default function Headliners() {
                       {(() => {
                         // v199.114: reactive pickers belong to a non-current player; don't gate by pid.
                         const fameDeckActive = !!fameDrawPicker && fameDrawPicker.allowDeck && artistDeck.length > 0;
-                        // v199.163: deck is also clickable during extraDrawPicker (Sadchild
-                        // etc.). Routes to extraDrawDrawFromDeck. Available even if the
-                        // deck is empty but discard has cards (reshuffle path).
-                        const extraDrawActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId
+                        // v199.163/v199.165: deck is also clickable during extraDrawPicker
+                        // (Sadchild etc.) UNLESS the target has already been met. Palette
+                        // now uses purple to match the Fame Tray / festival look.
+                        const extraDrawPickerActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId;
+                        const extraDrawMet = (() => {
+                          if (!extraDrawPickerActive) return false;
+                          const pdNow = (playerDataRef.current || playerData)[extraDrawPicker.pid] || {};
+                          const hand = pdNow.hand || [];
+                          if (extraDrawPicker.mode === "ticketSum") return hand.reduce((s, a) => s + (a?.tickets || 0), 0) > extraDrawPicker.target;
+                          if (extraDrawPicker.mode === "fameSum") return hand.reduce((s, a) => s + (a?.fame || 0), 0) > extraDrawPicker.target;
+                          if (extraDrawPicker.mode === "allGenres") { const g = new Set(); hand.forEach(a => (a?.genre || "").split(",").map(x => x.trim()).forEach(x => x && g.add(x))); return g.size >= extraDrawPicker.target; }
+                          return false;
+                        })();
+                        const extraDrawActive = extraDrawPickerActive && !extraDrawMet
                           && (artistDeck.length + (discardPile?.length || 0)) > 0;
                         const deckClickable = canBrowseDeck || fameDeckActive || extraDrawActive;
                         const fameHighlight = fameDeckActive;
@@ -20653,24 +20667,24 @@ export default function Headliners() {
                             background: fameHighlight
                               ? "linear-gradient(135deg, rgba(251,191,36,0.3), rgba(217,119,6,0.2))"
                               : extraHighlight
-                                ? "linear-gradient(135deg, rgba(6,182,212,0.3), rgba(14,116,144,0.2))"
+                                ? "linear-gradient(135deg, rgba(139,92,246,0.3), rgba(76,29,149,0.2))"
                                 : canBrowseDeck
                                   ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
                                   : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
-                            border: fameHighlight ? "2px solid #fbbf24" : extraHighlight ? "2px solid #06b6d4" : canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
+                            border: fameHighlight ? "2px solid #fbbf24" : extraHighlight ? "2px solid #a78bfa" : canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
                             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                             gap: 4, flexShrink: 0,
-                            color: fameHighlight ? "#fde68a" : extraHighlight ? "#cffafe" : canBrowseDeck ? "#bbf7d0" : "#94a3b8",
+                            color: fameHighlight ? "#fde68a" : extraHighlight ? "#ede9fe" : canBrowseDeck ? "#bbf7d0" : "#94a3b8",
                             cursor: deckClickable ? "pointer" : "default",
-                            boxShadow: fameHighlight ? "0 0 18px rgba(251,191,36,0.7)" : extraHighlight ? "0 0 18px rgba(6,182,212,0.6)" : canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
+                            boxShadow: fameHighlight ? "0 0 18px rgba(251,191,36,0.7)" : extraHighlight ? "0 0 18px rgba(139,92,246,0.65)" : canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
                             animation: deckClickable ? "affordPulse 2s ease-in-out infinite" : "none",
                           }}
-                          title={fameHighlight ? `🔥 Draw from deck (Fame card: ${fameDrawPicker.cardName})` : extraHighlight ? `🎸 Draw from deck (${extraDrawPicker.cardName})` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
+                          title={fameHighlight ? `🔥 Draw from deck (Fame card: ${fameDrawPicker.cardName})` : extraHighlight ? `🎸 Draw from deck (${extraDrawPicker.cardName})` : extraDrawPickerActive && extraDrawMet ? `Target reached — click Stop to finish` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
                         >
                           <div style={{ fontSize: 24, opacity: deckClickable ? 1 : 0.5 }}>🎴</div>
                           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : extraHighlight ? "#cffafe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
-                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : extraHighlight ? "#67e8f9" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : extraHighlight ? "#ede9fe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : extraHighlight ? "#c4b5fd" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
                         </div>;
                       })()}
                       {artistPool.map((a, i) => {
@@ -20682,9 +20696,21 @@ export default function Headliners() {
                         // pickers fire mid-opponent-turn and belong to a DIFFERENT player,
                         // so we don't gate by currentPlayerId — the handler enforces pid.
                         const famePoolActive = !!fameDrawPicker && !claimedByOther;
-                        // v199.163: extraDrawPicker — pool cards also clickable from the
-                        // top tray; click moves that specific card to the player's hand.
-                        const extraPoolActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId && !claimedByOther && !a.isFavour;
+                        // v199.163/v199.165: extraDrawPicker — pool cards clickable from
+                        // the top tray UNLESS the target has already been met (fix 3). Once
+                        // the hand threshold is reached, no further draws are allowed; the
+                        // player must click Stop/Done to finish.
+                        const extraPickerActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId;
+                        const extraTargetMet = (() => {
+                          if (!extraPickerActive) return false;
+                          const pdNow = (playerDataRef.current || playerData)[extraDrawPicker.pid] || {};
+                          const hand = pdNow.hand || [];
+                          if (extraDrawPicker.mode === "ticketSum") return hand.reduce((s, a) => s + (a?.tickets || 0), 0) > extraDrawPicker.target;
+                          if (extraDrawPicker.mode === "fameSum") return hand.reduce((s, a) => s + (a?.fame || 0), 0) > extraDrawPicker.target;
+                          if (extraDrawPicker.mode === "allGenres") { const g = new Set(); hand.forEach(a => (a?.genre || "").split(",").map(x => x.trim()).forEach(x => x && g.add(x))); return g.size >= extraDrawPicker.target; }
+                          return false;
+                        })();
+                        const extraPoolActive = extraPickerActive && !extraTargetMet && !claimedByOther && !a.isFavour;
                         return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
                           <ArtistCard artist={a} showCost small
                             affordable={browseClickable || famePoolActive || extraPoolActive ? true : canBookArtistAnywhere(a, currentPD)}
@@ -20699,7 +20725,7 @@ export default function Headliners() {
                                   : () => { if (artistAction === null && !actionTaken) {} }}
                           />
                           {famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(251,191,36,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🔥 Pick</div>}
-                          {extraPoolActive && !famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(6,182,212,0.95)", color: "#083344", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🎸 Pick</div>}
+                          {extraPoolActive && !famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(167,139,250,0.95)", color: "#2e1065", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🎸 Pick</div>}
                           {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                             {agentsOnThis.map(([pid, p], ai) => {
                               const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -21556,9 +21582,9 @@ export default function Headliners() {
               const poolAvail = curPool.filter(a => a && !a.isFavour).length;
               return createPortal(<div style={{
                 position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9494,
-                background: "linear-gradient(180deg, rgba(14,116,144,0) 0%, rgba(6,78,99,0.95) 25%, rgba(6,78,99,0.98) 100%)",
-                borderTop: "2px solid #06b6d4",
-                boxShadow: "0 -8px 40px rgba(6,182,212,0.35)",
+                background: "linear-gradient(180deg, rgba(76,29,149,0) 0%, rgba(46,16,101,0.95) 25%, rgba(46,16,101,0.98) 100%)",
+                borderTop: "2px solid #a78bfa",
+                boxShadow: "0 -8px 40px rgba(139,92,246,0.35)",
                 padding: "14px 18px 18px",
                 animation: "fadeSlideIn 0.3s",
                 pointerEvents: "auto",
@@ -21566,26 +21592,26 @@ export default function Headliners() {
                 <div style={{ display: "flex", alignItems: "stretch", gap: 16, maxWidth: 1400, margin: "0 auto" }}>
                   {/* LEFT: host-card title block */}
                   <div style={{ flexShrink: 0, minWidth: 180, maxWidth: 220, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                    <div style={{ fontSize: 10, color: "#a5f3fc", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎸 Keep Drawing</div>
-                    <h2 style={{ color: "#cffafe", fontSize: 18, margin: "2px 0 4px", fontWeight: 800 }}>{picker.cardName}</h2>
-                    <p style={{ color: "#67e8f9", fontSize: 11, margin: 0, lineHeight: 1.35 }}>
+                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎸 Keep Drawing</div>
+                    <h2 style={{ color: "#ede9fe", fontSize: 18, margin: "2px 0 4px", fontWeight: 800 }}>{picker.cardName}</h2>
+                    <p style={{ color: "#c4b5fd", fontSize: 11, margin: 0, lineHeight: 1.35 }}>
                       {picker.mode === "ticketSum" && <>Draw until your hand ticket total exceeds <strong>{picker.target}</strong>.</>}
                       {picker.mode === "fameSum" && <>Draw until your hand Fame total exceeds <strong>{picker.target}</strong>.</>}
                       {picker.mode === "allGenres" && <>Draw until you have all 6 genres in hand.</>}
                     </p>
-                    <p style={{ color: "#67e8f9", fontSize: 10, margin: "6px 0 0", fontStyle: "italic", opacity: 0.75 }}>
-                      Click any card in the pool above, or the deck tile, to draw.
+                    <p style={{ color: "#a78bfa", fontSize: 10, margin: "6px 0 0", fontStyle: "italic", opacity: 0.8 }}>
+                      {met ? "Target reached — click Done to finish." : "Click any card in the pool above, or the deck tile, to draw."}
                     </p>
                   </div>
                   {/* CENTER: current hand strip */}
-                  <div style={{ flex: 1, minWidth: 0, background: "rgba(15,23,42,0.5)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(6,182,212,0.3)" }}>
-                    <div style={{ fontSize: 10, color: "#a5f3fc", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 700, marginBottom: 6 }}>Your Current Hand ({hand.length})</div>
+                  <div style={{ flex: 1, minWidth: 0, background: "rgba(30,27,75,0.5)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(167,139,250,0.3)" }}>
+                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 700, marginBottom: 6 }}>Your Current Hand ({hand.length})</div>
                     <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
                       {hand.length === 0 && <div style={{ color: "#64748b", fontSize: 12, fontStyle: "italic", padding: "10px 0" }}>Hand empty.</div>}
-                      {hand.map((a, i) => <div key={i} style={{ flexShrink: 0, minWidth: 88, maxWidth: 110, padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.9))", border: "1px solid #334155" }}>
+                      {hand.map((a, i) => <div key={i} style={{ flexShrink: 0, minWidth: 88, maxWidth: 110, padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(49,46,129,0.9), rgba(30,27,75,0.9))", border: "1px solid #4c1d95" }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: "#fde68a", lineHeight: 1.1, marginBottom: 2 }}>{a.name}</div>
-                        <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.1 }}>{a.genre}</div>
-                        <div style={{ fontSize: 10, color: "#cbd5e1", marginTop: 3 }}>🔥{a.fame || 0} 🎟️{a.tickets || 0}</div>
+                        <div style={{ fontSize: 9, color: "#c4b5fd", lineHeight: 1.1 }}>{a.genre}</div>
+                        <div style={{ fontSize: 10, color: "#ddd6fe", marginTop: 3 }}>🔥{a.fame || 0} 🎟️{a.tickets || 0}</div>
                       </div>)}
                     </div>
                   </div>
@@ -21603,7 +21629,7 @@ export default function Headliners() {
                       )}
                     </div>
                     <button onClick={() => { setExtraDrawPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — ${met ? "done drawing" : "stopped drawing"}.`); }}
-                      style={{ padding: "8px 20px", borderRadius: 8, background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent", border: `2px solid ${met ? "#4ade80" : "#64748b"}`, color: met ? "#dcfce7" : "#cbd5e1", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ padding: "8px 20px", borderRadius: 8, background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent", border: `2px solid ${met ? "#4ade80" : "#a78bfa"}`, color: met ? "#dcfce7" : "#ede9fe", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {met ? "✓ Done" : "Stop"}
                     </button>
                   </div>
