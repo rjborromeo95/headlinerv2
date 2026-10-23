@@ -11176,11 +11176,16 @@ export default function Headliners() {
     if (pattyBonus > 0) {
       addLog("📜 Patty Promises", pattyLogMsg);
       showFloatingBonus("📜 +4 🎟️ Patty!", "#fcd34d");
+      // v199.142: log so it appears in the end-game ticket breakdown instead of silently
+      // folding into bonusTickets and showing as "unexplained".
+      logTicketGain(pid, pattyBonus, "📜 Patty Promises");
     }
     if (firstLineupBonus > 0) {
       setFirstFullLineup(true);
       addLog("🎪 FIRST!", firstLineupLog);
       showFloatingBonus("+5 🎟️ First Lineup!", "#4ade80");
+      // v199.142: log so it appears in the end-game breakdown.
+      logTicketGain(pid, firstLineupBonus, "🎪 First full lineup bonus");
     }
 
     const pd = playerData[pid];
@@ -11779,7 +11784,22 @@ export default function Headliners() {
         setSetupCouncilSelected([]); setSetupCouncilAssignments({});
         const skipObjective = !altObjectivesModeRef.current;
         setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
-        setSetupDraftOptions(skipObjective ? newR0.slice(0, 6) : []);
+        // v199.141: top up the draft pool from undraftedArtists if newR0 is short of 6.
+        // The new 90-artist deck only has 12 Fame-0 cards, so 3+ player games ran out
+        // mid-setup, leaving later players with an empty draft screen. Recycling the
+        // cards previous players rejected keeps the per-player "6 fresh options" guarantee
+        // and preserves the Fame-0-only promise (so starting hands remain playable turn 1).
+        const needTopUp = newR0.length < 6;
+        const topUp = needTopUp ? shuffle([...undraftedArtists, ...unchosen]) : [];
+        const combinedR0 = needTopUp ? [...newR0, ...topUp] : newR0;
+        const nextOptions = skipObjective ? combinedR0.slice(0, 6) : [];
+        if (needTopUp) {
+          // Rebuild draftRemaining0 so future top-ups see the recycled cards too, and
+          // clear undraftedArtists since those cards are now live in the pool.
+          setDraftRemaining0(combinedR0);
+          setUndraftedArtists([]);
+        }
+        setSetupDraftOptions(nextOptions);
         setSetupDraftSelected([]);
       } else {
         startGame();
@@ -12065,15 +12085,13 @@ export default function Headliners() {
       });
       setSeasonCounters(freshCounters);
       seasonCountersRef.current = freshCounters;
-      // v199.21: draw 3 legendary artists from the pool. These are visible to all players
-      // for the whole game — the public "legendary lineup" they're competing to acquire.
-      // v199.31: for each drawn legendary, roll randomized Autumn + Winter reqs from
-      // LEGENDARY_REQ_POOL. Spring stays fixed per the legendary's identity.
-      const chosenLegendariesBase = shuffle([...LEGENDARY_ARTIST_POOL]).slice(0, LEGENDARY_ARTISTS_PER_GAME);
-      const chosenLegendaries = chosenLegendariesBase.map(la => ({
-        ...la,
-        requirements: assignLegendaryReqs(la),
-      }));
+      // v199.142: Legendary Artists and Legendary tokens REMOVED. They were duplicative with
+      // the new Fame Card system (season-start/after-action/game-end triggers) and the
+      // Game-End artist effects (Sell N tickets per genre on stage, etc.) that landed in
+      // v199.133. Deal an empty pool — downstream code (token awards, end-game payouts,
+      // UI panels gated on gameLegendaryArtists.length > 0) all no-op naturally. To
+      // re-enable, restore the chosenLegendariesBase/chosenLegendaries lines below.
+      const chosenLegendaries = [];
       setGameLegendaryArtists(chosenLegendaries);
       gameLegendaryArtistsRef.current = chosenLegendaries;
       // v199.32: generate 12 Favour cards (FAVOURS_PER_GENRE × 6 genres) and shuffle
@@ -22222,12 +22240,20 @@ export default function Headliners() {
                           const campsiteValue = 2 + (hasInfraReward(row.player.id, "camp_1") ? 1 : 0);
                           const campsiteTickets = campsiteCount * campsiteValue;
                           const cateringTickets = hasInfraReward(row.player.id, "cat_2") ? (am.catering || 0) * 2 : 0;
+                          // v199.133/v199.142: HEADLINER DOUBLES — slot 2 artist's tickets+VP
+                          // count double. The breakdown must mirror computeTicketsForPlayer or
+                          // the doubled portion shows as "unexplained".
                           let artistBaseTickets = 0;
                           let artistBaseVP = 0;
-                          (pd.stageArtists || []).forEach(sa => sa.forEach(a => {
-                            artistBaseTickets += (a.tickets || 0);
-                            artistBaseVP += (a.vp || 0);
-                          }));
+                          (pd.stageArtists || []).forEach(sa => {
+                            if (!Array.isArray(sa)) return;
+                            sa.forEach((a, slotIdx) => {
+                              if (!a || typeof a !== "object") return;
+                              const mult = slotIdx === 2 ? 2 : 1;
+                              artistBaseTickets += (a.tickets || 0) * mult;
+                              artistBaseVP += (a.vp || 0) * mult;
+                            });
+                          });
                           // Logged event sources (Legendary payouts, token conversions, etc.)
                           const log = (ticketsLog && ticketsLog[row.player.id]) || [];
                           const grouped = {};
