@@ -9749,9 +9749,17 @@ export default function Headliners() {
     // v199.133: try the new dispatcher FIRST. If it handles the effect, skip the legacy
     // dispatcher below. New artist deck effects use plain English string patterns rather
     // than the [TAG] prefix style the legacy dispatcher expects.
+    // v199.145: slotIdx computation with fallback. First try to find the artist in the
+    // committed stageArtists; if that fails (stale playerDataRef — React may batch the
+    // updater from bookArtistToStage so the ref write hasn't happened by the time
+    // applyEffect runs in the same microtask), fall back to the caller's slotCount
+    // (1-indexed: 1=opener, 2=middle, 3=headliner). This fixes slot-conditional effects
+    // like Jamie xx "If Headliner: Open a stage" and Pink Pantheress "If Middle Slot:
+    // Gain 1 Fame" silently failing on the main book action.
     const pdNow = (playerDataRef.current || playerData)[pid] || {};
     const stage = (pdNow.stageArtists || [])[stageIdx] || [];
-    const slotIdx = Math.max(0, stage.findIndex(a => a && a.name === artist.name));
+    const foundIdx = stage.findIndex(a => a && a.name === artist.name);
+    const slotIdx = foundIdx >= 0 ? foundIdx : (slotCount > 0 ? slotCount - 1 : 0);
     if (fireNewArtistEffect(artist, pid, stageIdx, slotIdx)) return;
 
     let eff = (artist.effect || "").trim();
