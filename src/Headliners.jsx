@@ -3052,7 +3052,40 @@ export default function Headliners() {
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { temptModeRef.current = temptMode; }, [temptMode]);
   useEffect(() => { antiLeadMechanicsRef.current = antiLeadMechanics; }, [antiLeadMechanics]);
-  const [playerData, setPlayerData] = useState({});
+  // ═══════════════════════════════════════════════════════════
+  // v199.181: TEMPORARY — React #185 loop detector. Remove once bug is found.
+  // Catches two shapes of runaway behavior:
+  //   1. Render counter — if the component re-renders more than 30 times in 500ms,
+  //      console.trace() the render stack. Tells us a loop is happening but not which.
+  //   2. Setter wrappers — if any wrapped setState fires more than 20 times in 300ms,
+  //      console.trace() the call stack at the offending call site. Tells us WHICH.
+  // The traces print full function names in a dev console (minified in prod bundle, but
+  // enough to narrow down the originating file region).
+  // ═══════════════════════════════════════════════════════════
+  const _loopGuardRef = useRef({ renders: [], setters: {} });
+  const _now = Date.now();
+  _loopGuardRef.current.renders = _loopGuardRef.current.renders.filter(t => _now - t < 500);
+  _loopGuardRef.current.renders.push(_now);
+  if (_loopGuardRef.current.renders.length > 30) {
+    console.error(`🔁 LOOP: ${_loopGuardRef.current.renders.length} renders in 500ms`);
+    console.trace("Render loop trace");
+    _loopGuardRef.current.renders = []; // reset to avoid console flood
+  }
+  const _guardSetter = (name, raw) => (...args) => {
+    const now = Date.now();
+    const arr = (_loopGuardRef.current.setters[name] || []).filter(t => now - t < 300);
+    arr.push(now);
+    _loopGuardRef.current.setters[name] = arr;
+    if (arr.length > 20) {
+      console.error(`🔁 LOOP: ${name} called ${arr.length}x in 300ms`);
+      console.trace(`${name} call site`);
+      _loopGuardRef.current.setters[name] = []; // reset
+    }
+    return raw(...args);
+  };
+
+  const [playerData, _rawSetPlayerData] = useState({});
+  const setPlayerData = _guardSetter("setPlayerData", _rawSetPlayerData);
   // Refs that mirror state, kept in sync via useEffect. Use these in functions called from
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
   const playerDataRef = useRef(playerData);
@@ -3080,7 +3113,8 @@ export default function Headliners() {
       _setTurnsLeft(val);
     }
   };
-  const [dice, setDice] = useState([]);
+  const [dice, _rawSetDice] = useState([]);
+  const setDice = _guardSetter("setDice", _rawSetDice);
   const [turnAction, setTurnAction] = useState(null);
   // v199.10: Quick Play Fame-scaled action picks. On action start we set this to the
   // Fame-tiered max (amenity: 1 at Fame 0-1, 2 at Fame 2+; artist: 1 at Fame 0-1, 2 at
@@ -3702,7 +3736,8 @@ export default function Headliners() {
   // key, meaning YOU MAY cards could only be used once per season per player. Now we use
   // quickYearTurnsTaken (increments every turn across the game), giving every turn a
   // unique key per player.
-  const [fameCardUsedThisTurn, setFameCardUsedThisTurn] = useState({});
+  const [fameCardUsedThisTurn, _rawSetFameCardUsedThisTurn] = useState({});
+  const setFameCardUsedThisTurn = _guardSetter("setFameCardUsedThisTurn", _rawSetFameCardUsedThisTurn);
   const isFameCardUsedThisTurn = (pid, instanceId) => {
     const turnKey = `${pid}:${quickYearTurnsTaken}:${instanceId}`;
     return !!fameCardUsedThisTurn[turnKey];
@@ -5451,8 +5486,10 @@ export default function Headliners() {
   // (displacedAmenities / displacedPlaceIdx removed)
 
   // Artist system
-  const [artistDeck, setArtistDeck] = useState([]);
-  const [artistPool, setArtistPool] = useState([]);
+  const [artistDeck, _rawSetArtistDeck] = useState([]);
+  const setArtistDeck = _guardSetter("setArtistDeck", _rawSetArtistDeck);
+  const [artistPool, _rawSetArtistPool] = useState([]);
+  const setArtistPool = _guardSetter("setArtistPool", _rawSetArtistPool);
   const [discardPile, setDiscardPile] = useState([]);
   // Keep refs in sync with state so functions called inside chained event handlers
   // can see the latest values without waiting for React to flush.
@@ -5505,7 +5542,8 @@ export default function Headliners() {
   // drawn is discarded (greyed out). Picker auto-completes when both have landed OR
   // when the deck+discard are exhausted. Shape:
   //   { pid, cardName, drawn: [{ card, kept, keptAs }, ...], keptF4, keptF5 }
-  const [lilAngryPicker, setLilAngryPicker] = useState(null);
+  const [lilAngryPicker, _rawSetLilAngryPicker] = useState(null);
+  const setLilAngryPicker = _guardSetter("setLilAngryPicker", _rawSetLilAngryPicker);
   // v199.133: previous-turn trackers for new artist conditional effects.
   // lastActionByPidRef: { pid: "build"|"book"|"browse"|null } — the main action from each
   // player's most recent completed turn. Read when a new artist with "If the previous
@@ -5586,7 +5624,8 @@ export default function Headliners() {
   const [playerObjectives, setPlayerObjectives] = useState({}); // { playerId: [{ obj, completed, vpAwarded }] }
   const [pendingObjectiveChoice, setPendingObjectiveChoice] = useState(null); // { playerId, options: [obj, obj] }
   const [trendingObjective, setTrendingObjective] = useState(null);
-  const [microtrends, setMicrotrends] = useState([]); // v189: always [amenity, genre] pair
+  const [microtrends, _rawSetMicrotrends] = useState([]); // v189: always [amenity, genre] pair
+  const setMicrotrends = _guardSetter("setMicrotrends", _rawSetMicrotrends);
   // v199.143: sync refs for microtrends + both forecast tracks. endTurn's claim-refresh
   // logic reads these to decide whether to refresh — reading the React state directly
   // caused a stale read when a claim had been scheduled (via setTimeout 50ms in several
@@ -5632,7 +5671,8 @@ export default function Headliners() {
   // (max 5 per player). fameDrawModal is the "pick 1 of 3" modal state: { pid, choices: [3] }.
   const [fameDeck, setFameDeck] = useState([]);
   const [fameDiscardPile, setFameDiscardPile] = useState([]);
-  const [playerFameCards, setPlayerFameCards] = useState({});
+  const [playerFameCards, _rawSetPlayerFameCards] = useState({});
+  const setPlayerFameCards = _guardSetter("setPlayerFameCards", _rawSetPlayerFameCards);
   const [fameDrawModal, setFameDrawModal] = useState(null);
   const playerFameCardsRef = useRef({});
   useEffect(() => { playerFameCardsRef.current = playerFameCards; }, [playerFameCards]);
