@@ -14950,6 +14950,43 @@ export default function Headliners() {
     // as their Browse interface. Deck slot and pool cards are click-targets in this mode.
     setPoolDrawerOpen(true);
   };
+  // v199.163: pool-pick handler for the extraDrawPicker effects (Sadchild, Djo, Lil Angry,
+  // Horsegiirl, Ensemble, Beabadoobee-style). Player clicks a specific card in the real
+  // pool at the top of the screen — the card moves to their hand, the pool refills, and
+  // the picker updates. No turn cost, doesn't consume the Browse action.
+  const extraDrawPickFromPool = (idx) => {
+    const picker = extraDrawPicker;
+    if (!picker) return;
+    const curPool = artistPoolRef.current || artistPool;
+    const artist = curPool[idx];
+    if (!artist || artist.isFavour) return;
+    if (isAgentClaimedByOther(artist.name, picker.pid)) {
+      addLog(currentPlayer.festivalName, `🕵️ ${artist.name} is claimed by another agent — can't pick`);
+      return;
+    }
+    const newPool = curPool.filter((_, i) => i !== idx);
+    setArtistPool(newPool);
+    artistPoolRef.current = newPool;
+    setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), artist] } }));
+    addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — took ${artist.name} from pool.`);
+    setTimeout(() => refillPool(), 60);
+  };
+  // v199.163: deck-draw handler for the extraDrawPicker. Routes through the reshuffle
+  // helper so an empty deck + non-empty discard still works (minus the F0 filter).
+  const extraDrawDrawFromDeck = () => {
+    const picker = extraDrawPicker;
+    if (!picker) return;
+    drawFromDeckWithReshuffle(deck => {
+      if (deck.length === 0) return;
+      const card = deck[0];
+      const newDeck = deck.slice(1);
+      setArtistDeck(newDeck);
+      artistDeckRef.current = newDeck;
+      setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
+      addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — drew ${card.name} from deck.`);
+    });
+  };
+
   const draw2PickFromPool = (idx) => {
     const artist = artistPool[idx];
     if (!artist) return;
@@ -20567,11 +20604,18 @@ export default function Headliners() {
                       {(() => {
                         // v199.114: reactive pickers belong to a non-current player; don't gate by pid.
                         const fameDeckActive = !!fameDrawPicker && fameDrawPicker.allowDeck && artistDeck.length > 0;
-                        const deckClickable = canBrowseDeck || fameDeckActive;
+                        // v199.163: deck is also clickable during extraDrawPicker (Sadchild
+                        // etc.). Routes to extraDrawDrawFromDeck. Available even if the
+                        // deck is empty but discard has cards (reshuffle path).
+                        const extraDrawActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId
+                          && (artistDeck.length + (discardPile?.length || 0)) > 0;
+                        const deckClickable = canBrowseDeck || fameDeckActive || extraDrawActive;
                         const fameHighlight = fameDeckActive;
+                        const extraHighlight = extraDrawActive && !fameHighlight;
                         return <div
                           onClick={() => {
                             if (fameDeckActive) { pickFameDrawFromDeck(); return; }
+                            if (extraDrawActive) { extraDrawDrawFromDeck(); return; }
                             if (canBrowseDeck) draw2PickFromDeck();
                           }}
                           style={{
@@ -20581,23 +20625,25 @@ export default function Headliners() {
                             borderRadius: 10,
                             background: fameHighlight
                               ? "linear-gradient(135deg, rgba(251,191,36,0.3), rgba(217,119,6,0.2))"
-                              : canBrowseDeck
-                                ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
-                                : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
-                            border: fameHighlight ? "2px solid #fbbf24" : canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
+                              : extraHighlight
+                                ? "linear-gradient(135deg, rgba(6,182,212,0.3), rgba(14,116,144,0.2))"
+                                : canBrowseDeck
+                                  ? "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(21,128,61,0.2))"
+                                  : "linear-gradient(135deg, rgba(100,116,139,0.3), rgba(71,85,105,0.2))",
+                            border: fameHighlight ? "2px solid #fbbf24" : extraHighlight ? "2px solid #06b6d4" : canBrowseDeck ? "2px solid rgba(34,197,94,0.6)" : "1px dashed rgba(148,163,184,0.3)",
                             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                             gap: 4, flexShrink: 0,
-                            color: fameHighlight ? "#fde68a" : canBrowseDeck ? "#bbf7d0" : "#94a3b8",
+                            color: fameHighlight ? "#fde68a" : extraHighlight ? "#cffafe" : canBrowseDeck ? "#bbf7d0" : "#94a3b8",
                             cursor: deckClickable ? "pointer" : "default",
-                            boxShadow: fameHighlight ? "0 0 18px rgba(251,191,36,0.7)" : canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
+                            boxShadow: fameHighlight ? "0 0 18px rgba(251,191,36,0.7)" : extraHighlight ? "0 0 18px rgba(6,182,212,0.6)" : canBrowseDeck ? "0 0 14px rgba(34,197,94,0.4)" : "none",
                             animation: deckClickable ? "affordPulse 2s ease-in-out infinite" : "none",
                           }}
-                          title={fameHighlight ? `🔥 Draw from deck (Fame card: ${fameDrawPicker.cardName})` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
+                          title={fameHighlight ? `🔥 Draw from deck (Fame card: ${fameDrawPicker.cardName})` : extraHighlight ? `🎸 Draw from deck (${extraDrawPicker.cardName})` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
                         >
                           <div style={{ fontSize: 24, opacity: deckClickable ? 1 : 0.5 }}>🎴</div>
                           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
-                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : extraHighlight ? "#cffafe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : extraHighlight ? "#67e8f9" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
                         </div>;
                       })()}
                       {artistPool.map((a, i) => {
@@ -20609,18 +20655,24 @@ export default function Headliners() {
                         // pickers fire mid-opponent-turn and belong to a DIFFERENT player,
                         // so we don't gate by currentPlayerId — the handler enforces pid.
                         const famePoolActive = !!fameDrawPicker && !claimedByOther;
+                        // v199.163: extraDrawPicker — pool cards also clickable from the
+                        // top tray; click moves that specific card to the player's hand.
+                        const extraPoolActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId && !claimedByOther && !a.isFavour;
                         return <div key={i} style={{ position: "relative", opacity: canBrowsePool && claimedByOther ? 0.4 : 1 }}>
                           <ArtistCard artist={a} showCost small
-                            affordable={browseClickable || famePoolActive ? true : canBookArtistAnywhere(a, currentPD)}
-                            genreMatchGlow={famePoolActive || hasGenreMatchBonusAvailable(a, currentPD)}
-                            disabled={!browseClickable && !famePoolActive && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
+                            affordable={browseClickable || famePoolActive || extraPoolActive ? true : canBookArtistAnywhere(a, currentPD)}
+                            genreMatchGlow={famePoolActive || extraPoolActive || hasGenreMatchBonusAvailable(a, currentPD)}
+                            disabled={!browseClickable && !famePoolActive && !extraPoolActive && (actionTaken || turnAction !== "artist" || artistAction === "pickStage")}
                             onClick={famePoolActive
                               ? () => pickFameDrawFromPool(i)
-                              : browseClickable
-                                ? () => draw2PickFromPool(i)
-                                : () => { if (artistAction === null && !actionTaken) {} }}
+                              : extraPoolActive
+                                ? () => extraDrawPickFromPool(i)
+                                : browseClickable
+                                  ? () => draw2PickFromPool(i)
+                                  : () => { if (artistAction === null && !actionTaken) {} }}
                           />
                           {famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(251,191,36,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🔥 Pick</div>}
+                          {extraPoolActive && !famePoolActive && <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(6,182,212,0.95)", color: "#083344", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, zIndex: 2 }}>🎸 Pick</div>}
                           {agentsOnThis.length > 0 && <div style={{ position: "absolute", top: -4, right: -4, display: "flex", gap: 2 }}>
                             {agentsOnThis.map(([pid, p], ai) => {
                               const pColor = players.find(pl => pl.id === parseInt(pid))?.color || "#60a5fa";
@@ -21452,6 +21504,11 @@ export default function Headliners() {
                 one card at a time from either the deck or the pool, auto-closes when the
                 threshold is met. Shows a running metric. */}
             {extraDrawPicker && extraDrawPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
+              // v199.163: redesigned as a bottom-anchored overlay. The real deck + pool at
+              // the top of the screen stay visible and clickable (via the deck tile and
+              // pool-card wiring above); this strip shows the host card, current hand,
+              // progress counter and Stop button. Players draw by clicking the actual
+              // pool/deck instead of a disconnected "Draw from Pool" button.
               const picker = extraDrawPicker;
               const pdNow = (playerDataRef.current || playerData)[picker.pid] || {};
               const hand = pdNow.hand || [];
@@ -21461,67 +21518,65 @@ export default function Headliners() {
                 if (picker.mode === "allGenres") { const g = new Set(); hand.forEach(a => (a?.genre || "").split(",").map(x => x.trim()).forEach(x => x && g.add(x))); return g.size; }
                 return 0;
               })();
-              const metricLabel = picker.mode === "ticketSum" ? `🎟️ ${metricValue} / exceed ${picker.target}`
-                : picker.mode === "fameSum" ? `🔥 Fame sum ${metricValue} / exceed ${picker.target}`
-                : `🎵 ${metricValue} / ${picker.target} genres`;
               const met = picker.mode === "allGenres" ? metricValue >= picker.target : metricValue > picker.target;
+              const counterIcon = picker.mode === "ticketSum" ? "🎟️" : picker.mode === "fameSum" ? "🔥" : "🎵";
+              const counterLabel = picker.mode === "ticketSum" ? "tickets" : picker.mode === "fameSum" ? "Fame sum" : "genres";
+              const targetLabel = picker.mode === "allGenres" ? `/ ${picker.target}` : `/ ${picker.target + 1}`;
               const curDeck = artistDeckRef.current || artistDeck;
+              const curDisc = discardPileRef.current || discardPile || [];
               const curPool = artistPoolRef.current || artistPool;
-              const drawOne = (src) => {
-                if (src === "deck") {
-                  // v199.156: route through reshuffle helper — if the deck is empty but
-                  // the discard pile has cards, this animates a shuffle and continues.
-                  drawFromDeckWithReshuffle(deck => {
-                    if (deck.length === 0) return; // nothing to draw anywhere
-                    const card = deck[0];
-                    const newDeck = deck.slice(1);
-                    setArtistDeck(newDeck);
-                    artistDeckRef.current = newDeck;
-                    setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
-                    addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — drew ${card.name} from deck.`);
-                  });
-                } else {
-                  const nonFavourIdx = curPool.findIndex(a => a && !a.isFavour);
-                  if (nonFavourIdx < 0) return;
-                  const card = curPool[nonFavourIdx];
-                  const newPool = curPool.filter((_, i) => i !== nonFavourIdx);
-                  setArtistPool(newPool);
-                  setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
-                  addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — drew ${card.name} from pool.`);
-                  setTimeout(() => refillPool(), 60);
-                }
-              };
-              return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9494, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s" }}>
-                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(14,116,144,0.3), rgba(6,78,99,0.2))", border: "2px solid #06b6d4", boxShadow: "0 0 50px rgba(6,182,212,0.3)", maxWidth: 560, width: "100%" }}>
-                  <div style={{ textAlign: "center", marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: "#a5f3fc", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎸 Artist Effect — Keep Drawing</div>
-                    <h2 style={{ color: "#cffafe", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>{picker.cardName}</h2>
-                    <p style={{ color: "#67e8f9", fontSize: 12, margin: "0 0 4px" }}>
-                      {picker.mode === "ticketSum" && <>Keep drawing until your hand ticket total exceeds <strong>{picker.target}</strong>.</>}
-                      {picker.mode === "fameSum" && <>Keep drawing until your hand Fame total exceeds <strong>{picker.target}</strong>.</>}
-                      {picker.mode === "allGenres" && <>Keep drawing until you have all 6 genres in hand.</>}
+              const deckAvail = curDeck.length + curDisc.length;
+              const poolAvail = curPool.filter(a => a && !a.isFavour).length;
+              return createPortal(<div style={{
+                position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9494,
+                background: "linear-gradient(180deg, rgba(14,116,144,0) 0%, rgba(6,78,99,0.95) 25%, rgba(6,78,99,0.98) 100%)",
+                borderTop: "2px solid #06b6d4",
+                boxShadow: "0 -8px 40px rgba(6,182,212,0.35)",
+                padding: "14px 18px 18px",
+                animation: "fadeSlideIn 0.3s",
+                pointerEvents: "auto",
+              }}>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 16, maxWidth: 1400, margin: "0 auto" }}>
+                  {/* LEFT: host-card title block */}
+                  <div style={{ flexShrink: 0, minWidth: 180, maxWidth: 220, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                    <div style={{ fontSize: 10, color: "#a5f3fc", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎸 Keep Drawing</div>
+                    <h2 style={{ color: "#cffafe", fontSize: 18, margin: "2px 0 4px", fontWeight: 800 }}>{picker.cardName}</h2>
+                    <p style={{ color: "#67e8f9", fontSize: 11, margin: 0, lineHeight: 1.35 }}>
+                      {picker.mode === "ticketSum" && <>Draw until your hand ticket total exceeds <strong>{picker.target}</strong>.</>}
+                      {picker.mode === "fameSum" && <>Draw until your hand Fame total exceeds <strong>{picker.target}</strong>.</>}
+                      {picker.mode === "allGenres" && <>Draw until you have all 6 genres in hand.</>}
                     </p>
-                    <div style={{ fontSize: 14, color: met ? "#86efac" : "#fde68a", fontWeight: 700 }}>{metricLabel} {met ? "✓" : ""}</div>
+                    <p style={{ color: "#67e8f9", fontSize: 10, margin: "6px 0 0", fontStyle: "italic", opacity: 0.75 }}>
+                      Click any card in the pool above, or the deck tile, to draw.
+                    </p>
                   </div>
-                  {!met && (() => {
-                    const curDisc = discardPileRef.current || discardPile || [];
-                    const deckAvail = curDeck.length + curDisc.length;
-                    const deckLabel = curDeck.length > 0 ? `${curDeck.length}` : (curDisc.length > 0 ? `${curDisc.length} ↻` : "0");
-                    return <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 10 }}>
-                      <button onClick={() => drawOne("deck")} disabled={deckAvail === 0}
-                        style={{ padding: "10px 16px", borderRadius: 10, background: deckAvail > 0 ? "linear-gradient(135deg, #164e63, #083344)" : "rgba(100,116,139,0.3)", border: `2px solid ${deckAvail > 0 ? "#06b6d4" : "#475569"}`, color: deckAvail > 0 ? "#cffafe" : "#64748b", fontSize: 13, fontWeight: 700, cursor: deckAvail > 0 ? "pointer" : "not-allowed" }}
-                        title={curDeck.length === 0 && curDisc.length > 0 ? "Deck empty — next draw reshuffles the discard pile" : ""}>
-                        🎴 Draw from Deck ({deckLabel})
-                      </button>
-                      <button onClick={() => drawOne("pool")} disabled={!curPool.some(a => a && !a.isFavour)}
-                        style={{ padding: "10px 16px", borderRadius: 10, background: curPool.some(a => a && !a.isFavour) ? "linear-gradient(135deg, #164e63, #083344)" : "rgba(100,116,139,0.3)", border: `2px solid ${curPool.some(a => a && !a.isFavour) ? "#06b6d4" : "#475569"}`, color: curPool.some(a => a && !a.isFavour) ? "#cffafe" : "#64748b", fontSize: 13, fontWeight: 700, cursor: curPool.some(a => a && !a.isFavour) ? "pointer" : "not-allowed" }}>
-                        🎪 Draw from Pool ({curPool.filter(a => a && !a.isFavour).length})
-                      </button>
-                    </div>;
-                  })()}
-                  <div style={{ display: "flex", justifyContent: "center" }}>
-                    <button onClick={() => { setExtraDrawPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — stopped drawing.`); }}
-                      style={{ padding: "10px 18px", borderRadius: 10, background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent", border: `2px solid ${met ? "#4ade80" : "#64748b"}`, color: met ? "#dcfce7" : "#cbd5e1", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  {/* CENTER: current hand strip */}
+                  <div style={{ flex: 1, minWidth: 0, background: "rgba(15,23,42,0.5)", borderRadius: 10, padding: "8px 12px", border: "1px solid rgba(6,182,212,0.3)" }}>
+                    <div style={{ fontSize: 10, color: "#a5f3fc", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 700, marginBottom: 6 }}>Your Current Hand ({hand.length})</div>
+                    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                      {hand.length === 0 && <div style={{ color: "#64748b", fontSize: 12, fontStyle: "italic", padding: "10px 0" }}>Hand empty.</div>}
+                      {hand.map((a, i) => <div key={i} style={{ flexShrink: 0, minWidth: 88, maxWidth: 110, padding: "6px 8px", borderRadius: 8, background: "linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.9))", border: "1px solid #334155" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#fde68a", lineHeight: 1.1, marginBottom: 2 }}>{a.name}</div>
+                        <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.1 }}>{a.genre}</div>
+                        <div style={{ fontSize: 10, color: "#cbd5e1", marginTop: 3 }}>🔥{a.fame || 0} 🎟️{a.tickets || 0}</div>
+                      </div>)}
+                    </div>
+                  </div>
+                  {/* RIGHT: big progress counter + stop */}
+                  <div style={{ flexShrink: 0, minWidth: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 36, fontWeight: 900, color: met ? "#86efac" : "#fde68a", lineHeight: 1, letterSpacing: -1 }}>
+                        {counterIcon} {metricValue}
+                      </div>
+                      <div style={{ fontSize: 11, color: met ? "#86efac" : "#fcd34d", fontWeight: 700, marginTop: 4, opacity: 0.9 }}>
+                        {targetLabel} {counterLabel} {met ? "✓" : ""}
+                      </div>
+                      {deckAvail === 0 && poolAvail === 0 && !met && (
+                        <div style={{ fontSize: 10, color: "#fca5a5", marginTop: 4, fontStyle: "italic" }}>Deck + pool exhausted</div>
+                      )}
+                    </div>
+                    <button onClick={() => { setExtraDrawPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — ${met ? "done drawing" : "stopped drawing"}.`); }}
+                      style={{ padding: "8px 20px", borderRadius: 8, background: met ? "linear-gradient(135deg, #15803d, #14532d)" : "transparent", border: `2px solid ${met ? "#4ade80" : "#64748b"}`, color: met ? "#dcfce7" : "#cbd5e1", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       {met ? "✓ Done" : "Stop"}
                     </button>
                   </div>
