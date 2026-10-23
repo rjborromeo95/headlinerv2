@@ -5331,11 +5331,22 @@ export default function Headliners() {
   const [pendingObjectiveChoice, setPendingObjectiveChoice] = useState(null); // { playerId, options: [obj, obj] }
   const [trendingObjective, setTrendingObjective] = useState(null);
   const [microtrends, setMicrotrends] = useState([]); // v189: always [amenity, genre] pair
+  // v199.143: sync refs for microtrends + both forecast tracks. endTurn's claim-refresh
+  // logic reads these to decide whether to refresh — reading the React state directly
+  // caused a stale read when a claim had been scheduled (via setTimeout 50ms in several
+  // code paths) but hadn't committed by the time endTurn ran, so no refresh fired and
+  // the next player saw a claimed microtrend with no replacement.
+  const microtrendsRef = useRef([]);
+  const nextAmenityMicrotrendRef = useRef(null);
+  const nextGenreMicrotrendRef = useRef(null);
+  useEffect(() => { microtrendsRef.current = microtrends; }, [microtrends]);
   // v189: two separate forecasts — one for amenity, one for genre. nextMicrotrend kept as
   // an alias to nextAmenityMicrotrend for legacy code paths (most read it for genre logic
   // and now we're clarifying which type they mean).
   const [nextAmenityMicrotrend, setNextAmenityMicrotrend] = useState(null);
   const [nextGenreMicrotrend, setNextGenreMicrotrend] = useState(null);
+  useEffect(() => { nextAmenityMicrotrendRef.current = nextAmenityMicrotrend; }, [nextAmenityMicrotrend]);
+  useEffect(() => { nextGenreMicrotrendRef.current = nextGenreMicrotrend; }, [nextGenreMicrotrend]);
   // Legacy alias — most callers use this for genre-based forecast logic
   const nextMicrotrend = nextGenreMicrotrend;
   const setNextMicrotrend = setNextGenreMicrotrend;
@@ -7062,9 +7073,11 @@ export default function Headliners() {
         try {
           const newActive = useAmenity ? popAmenityFromBag() : popGenreFromBag();
           const newForecast = useAmenity ? popAmenityFromBag(newActive) : popGenreFromBag(newActive);
+          // v199.143: sync refs synchronously so immediately-subsequent reads (claim, endTurn) see the new values.
+          microtrendsRef.current = [newActive];
           setMicrotrends([newActive]);
-          if (useAmenity) { setNextAmenityMicrotrend(newForecast); setNextGenreMicrotrend(null); }
-          else            { setNextGenreMicrotrend(newForecast);   setNextAmenityMicrotrend(null); }
+          if (useAmenity) { nextAmenityMicrotrendRef.current = newForecast; nextGenreMicrotrendRef.current = null; setNextAmenityMicrotrend(newForecast); setNextGenreMicrotrend(null); }
+          else            { nextGenreMicrotrendRef.current = newForecast;   nextAmenityMicrotrendRef.current = null; setNextGenreMicrotrend(newForecast);   setNextAmenityMicrotrend(null); }
           const describe = (m) => m.kind === "amenity" ? `Place a ${AMENITY_LABELS[m.amenity]}` : `Book a ${m.genre} artist`;
           addLog("🎵 Microtrend refresh", `New trend: ${describe(newActive)} (next: ${describe(newForecast)})`);
         } catch (err) {
@@ -7931,12 +7944,16 @@ export default function Headliners() {
   const placeAgentOnMicrotrend = (pid) => {
     if (!agentMicrotrendClaimRef.current) return false;
     if (temptModeRef.current) return false; // v130: microtrends only claimable via booking/amenity under tempt mode
-    const active = microtrends.find(mt => mt.claimedBy === null);
+    const curTrends = microtrendsRef.current || microtrends || [];
+    const active = curTrends.find(mt => mt && mt.claimedBy === null);
     if (!active) return false; // nothing claimable
     const pName = players.find(p => p.id === pid)?.festivalName || "?";
     const trendLabel = active.kind === "amenity" ? AMENITY_LABELS[active.amenity] : active.genre;
     // Mark microtrend claimed; end-of-turn replacement will swap in the forecast.
-    setMicrotrends(prev => prev.map(mt => mt === active ? { ...mt, claimedBy: pid } : mt));
+    // v199.143: ref write mirrors state so endTurn (same microtask) sees it.
+    const newTrends = curTrends.map(mt => mt === active ? { ...mt, claimedBy: pid } : mt);
+    microtrendsRef.current = newTrends;
+    setMicrotrends(newTrends);
     // v165: microtrend claims no longer grant tickets — fame-only. This applies to
     // all three claim paths (agent, active-play, forecast-play, amenity-place).
     logFameGain(pid, 1, "Matching a Microtrend");
@@ -11363,51 +11380,41 @@ export default function Headliners() {
     // v130: under tempt mode the claim payout is +2 Fame and 0 tickets; standard mode is +1 Fame + 1 ticket.
     // v153: anti-lead mechanic — non-leaders can ALSO claim the forecast microtrend (nextMicrotrend)
     // if the artist's genre matches it, giving trailing players an information/timing edge.
+    // v199.143: refactor — compute match outside updater, write ref synchronously.
     let claimedActive = false;
-    setMicrotrends(prev => prev.map(mt => {
-      if (mt.claimedBy !== null) return mt;
-      if (mt.kind !== "genre") return mt;
-      if (getGenres(artist.genre).includes(mt.genre)) {
-        claimedActive = true;
-        const isTempt = temptModeRef.current;
-        // v165: microtrend claims are fame-only. v191: reduced to flat +1 (was +2 under tempt).
-        const fameGain = 1; // v191: reduced from 2 to 1 — Fame was becoming too easy from Year 2 onward
-        logFameGain(pid, fameGain, "Matching a Microtrend");
-        setPlayerData(p => ({ ...p, [pid]: {
-          ...p[pid],
-          baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
-          microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
-        } }));
-        addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
-        setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
-        bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
-        showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
-        // v135: alt-objectives event — Pandering tracks genre microtrend wins via play.
-        bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
-        // v197.12/22: "Word of Mouth" (port_3) — portaloo leader draws 1 artist on
-        // microtrend claim. v197.22: converted from silent auto-draw-from-deck to the
-        // interactive pool-or-deck picker so the player can see the pool and choose the
-        // best artist for their situation. AI dispatcher already handles this pendingEffect
-        // type (auto-picks best from pool if any playable, else deck).
-        if (hasInfraReward(pid, "port_3")) {
-          setPendingEffect({
-            type: "drawFromPoolOrDeck",
-            artistName: "Word of Mouth (Most Portaloos)",
-            drawsRemaining: 1,
-          });
-          setPendingEffectPid(pid);
-          addLog("🏗️ Reward", `${festival}: draw 1 artist from pool or deck (Word of Mouth)`);
-        }
-        setTimeout(() => checkMidYearAchievements(pid), 80);
-        // Trigger council bonus for "artistOnMicrotrend" — slight delay so the fame/VP
-        // updates land first; the bonus draw appears as a follow-up log line.
-        setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
-        // v155: check for stage-open credit (every 3 microtrends = 1 credit)
-        checkMicrotrendCredit(pid);
-        return { ...mt, claimedBy: pid };
+    const curTrends = microtrendsRef.current || microtrends || [];
+    const matchIdx = curTrends.findIndex(mt => mt && mt.claimedBy === null && mt.kind === "genre" && getGenres(artist.genre).includes(mt.genre));
+    if (matchIdx >= 0) {
+      claimedActive = true;
+      const mt = curTrends[matchIdx];
+      const fameGain = 1;
+      const newTrends = curTrends.map((t, i) => i === matchIdx ? { ...t, claimedBy: pid } : t);
+      microtrendsRef.current = newTrends;
+      setMicrotrends(newTrends);
+      logFameGain(pid, fameGain, "Matching a Microtrend");
+      setPlayerData(p => ({ ...p, [pid]: {
+        ...p[pid],
+        baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
+        microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
+      } }));
+      addLog("🎵 Microtrend", `${festival} claimed "${mt.genre}" microtrend → +${fameGain} 🔥 Fame!`);
+      setLastActionFor(pid, `claimed the ${mt.genre} Trending Genre (+${fameGain} Fame)`);
+      bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
+      showFloatingBonus(`🎵 ${mt.genre} Microtrend!`, GENRE_COLORS[mt.genre] || "#fbbf24");
+      bumpYearEvent(pid, "genreMicrotrendWinsThisYear");
+      if (hasInfraReward(pid, "port_3")) {
+        setPendingEffect({
+          type: "drawFromPoolOrDeck",
+          artistName: "Word of Mouth (Most Portaloos)",
+          drawsRemaining: 1,
+        });
+        setPendingEffectPid(pid);
+        addLog("🏗️ Reward", `${festival}: draw 1 artist from pool or deck (Word of Mouth)`);
       }
-      return mt;
-    }));
+      setTimeout(() => checkMidYearAchievements(pid), 80);
+      setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
+      checkMicrotrendCredit(pid);
+    }
 
     // v153: anti-lead forecast claim. Only fires if the active trend was NOT already
     // claimed by this play (a single artist play can't claim both — pick current first).
@@ -13494,14 +13501,20 @@ export default function Headliners() {
 
   const claimAmenityMicrotrend = (pid, amenityType) => {
     const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    // v199.143: compute the claim-match outside the updater (pure read of current state).
+    // If a match exists, mark it via setMicrotrends AND write microtrendsRef synchronously
+    // so endTurn's claim-refresh logic sees it even when React hasn't committed yet.
+    // Side effects (logFameGain, setPlayerData, logging, counters) also run OUTSIDE the
+    // updater to prevent strict-mode double-fire of all of them.
     let claimedActive = false;
-    setMicrotrends(prev => prev.map(mt => {
-      if (mt.claimedBy !== null) return mt;
-      if (mt.kind !== "amenity") return mt;
-      if (mt.amenity !== amenityType) return mt;
-      // v165: microtrend claims are fame-only. v191: reduced to flat +1 (was +2 under tempt).
-      const isTempt = temptModeRef.current;
+    const curTrends = microtrendsRef.current || microtrends || [];
+    const matchIdx = curTrends.findIndex(mt => mt && mt.claimedBy === null && mt.kind === "amenity" && mt.amenity === amenityType);
+    if (matchIdx >= 0) {
+      claimedActive = true;
       const fameGain = 1; // v191: reduced from 2 to 1
+      const newTrends = curTrends.map((mt, i) => i === matchIdx ? { ...mt, claimedBy: pid } : mt);
+      microtrendsRef.current = newTrends;
+      setMicrotrends(newTrends);
       logFameGain(pid, fameGain, "Matching a Council Incentive");
       setPlayerData(p => ({ ...p, [pid]: {
         ...p[pid],
@@ -13515,9 +13528,7 @@ export default function Headliners() {
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
-      claimedActive = true;
-      return { ...mt, claimedBy: pid };
-    }));
+    }
     // v189: anti-lead amenity-forecast claim. Non-leaders can claim the upcoming amenity
     // microtrend if their placement matches it, giving trailing players an early advantage.
     if (!claimedActive && canClaimForecast(pid) && nextAmenityMicrotrend && nextAmenityMicrotrend.amenity === amenityType) {
@@ -14525,24 +14536,36 @@ export default function Headliners() {
     // v189: two-track microtrend replacement. Each claimed trend gets replaced by the
     // matching-type forecast (amenity → amenity forecast, genre → genre forecast), and a
     // fresh forecast is drawn from that type's bag.
-    const claimedAmenity = microtrends.find(mt => mt.claimedBy !== null && mt.kind === "amenity");
-    const claimedGenre = microtrends.find(mt => mt.claimedBy !== null && mt.kind === "genre");
+    // v199.143: read from refs instead of state. The claim's setMicrotrends is often
+    // batched in the same event handler as endTurn (AI's build → claim → completeAction →
+    // endTurn chain is all one microtask), so reading state directly here was stale and
+    // the refresh was skipped, leaving the next player with a claimed-but-not-refreshed
+    // microtrend sitting live on the board.
+    const curTrends = microtrendsRef.current || microtrends || [];
+    const curNextAmenity = nextAmenityMicrotrendRef.current || nextAmenityMicrotrend;
+    const curNextGenre = nextGenreMicrotrendRef.current || nextGenreMicrotrend;
+    const claimedAmenity = curTrends.find(mt => mt && mt.claimedBy !== null && mt.kind === "amenity");
+    const claimedGenre = curTrends.find(mt => mt && mt.claimedBy !== null && mt.kind === "genre");
     if (claimedAmenity || claimedGenre) {
-      setMicrotrends(prev => prev.map(mt => {
-        if (mt.claimedBy === null) return mt;
-        if (mt.kind === "amenity" && nextAmenityMicrotrend) return nextAmenityMicrotrend;
-        if (mt.kind === "genre" && nextGenreMicrotrend) return nextGenreMicrotrend;
+      const nextTrends = curTrends.map(mt => {
+        if (!mt || mt.claimedBy === null) return mt;
+        if (mt.kind === "amenity" && curNextAmenity) return curNextAmenity;
+        if (mt.kind === "genre" && curNextGenre) return curNextGenre;
         return mt.kind === "amenity" ? popAmenityFromBag() : popGenreFromBag();
-      }));
-      if (claimedAmenity && nextAmenityMicrotrend) {
-        const promoted = nextAmenityMicrotrend;
+      });
+      microtrendsRef.current = nextTrends;
+      setMicrotrends(nextTrends);
+      if (claimedAmenity && curNextAmenity) {
+        const promoted = curNextAmenity;
         const fresh = popAmenityFromBag(promoted);
+        nextAmenityMicrotrendRef.current = fresh;
         setNextAmenityMicrotrend(fresh);
         addLog("🎵 Council Incentive", `Next: place a ${AMENITY_LABELS[fresh.amenity]}`);
       }
-      if (claimedGenre && nextGenreMicrotrend) {
-        const promoted = nextGenreMicrotrend;
+      if (claimedGenre && curNextGenre) {
+        const promoted = curNextGenre;
         const fresh = popGenreFromBag(promoted);
+        nextGenreMicrotrendRef.current = fresh;
         setNextGenreMicrotrend(fresh);
         addLog("🎵 Trending Genre", `Next: book a ${fresh.genre} artist`);
       }
