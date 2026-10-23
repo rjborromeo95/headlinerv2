@@ -554,7 +554,7 @@ const FAME_CARDS = [
   { id: "FM_BROWSE_DISCARD_FAME",name: "Discard 2 → +1 Fame",     category: "after_browse", trigger: "after_browse", effect: "discard_2_hand_gain_1_fame",    copies: 1, desc: "After you take the Browse action: discard 2 artists from your hand to gain 1 Fame." },
   // AFTER BOOK — badge renders "AFTER BOOK ACTION".
   { id: "FM_BOOK_DRAW_GENRE",  name: "Draw Genre-Match",          category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",       copies: 1, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
-  { id: "FM_BOOK_ANOTHER",     name: "Play Another Artist Free",  category: "after_book",   trigger: "after_book",  effect: "book_another_stage",             copies: 1, desc: "After you book an artist: play another artist (that you can afford) on a different stage, free." },
+  { id: "FM_BOOK_ANOTHER",     name: "Universal Favour",          category: "you_may",      trigger: "any_time",    effect: "free_pool_play_once",            copies: 1, desc: "Once per game, on your turn: play an artist from the pool (any genre) on an empty slot. Amenities waived — Fame still required. This card is disabled after use." },
   { id: "FM_BOOK_AM_OR_DRAW",  name: "Gain Amenity or Draw Artist", category: "after_book", trigger: "after_book",  effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you book an artist: gain an amenity OR draw 1 artist." },
   { id: "FM_BOOK_PLACE_AM",    name: "Gain 1 Amenity",            category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an amenity from the amenity die." },
   // REACTIVE — badge renders per-trigger label ("WHEN OPPONENT BUILDS" etc.).
@@ -4322,6 +4322,39 @@ export default function Headliners() {
     }, 60);
   };
 
+  // v199.183: free pool-play resolver for the Universal Favour Fame card. Takes a pool
+  // index + stage index, pulls the artist out of the pool, books it to the stage via
+  // bookArtistToStage (which does NOT deduct amenities — Favour-style play). Fame tier
+  // is enforced here before booking since the Fame card's "no amenity cost" doesn't
+  // extend to Fame. The booked artist's effect fires normally.
+  const resolveFreePoolPlay = (pid, poolIdx, stageIdx, cardName) => {
+    const player = players.find(pl => pl.id === pid);
+    const festName = player?.festivalName || "?";
+    const pdNow = (playerDataRef.current || playerData)[pid] || {};
+    const pool = artistPoolRef.current || artistPool;
+    const artist = pool[poolIdx];
+    if (!artist || artist.isFavour) {
+      addLog("🔥 Fame", `${festName}: "${cardName}" — pool slot gone, skipped.`);
+      return;
+    }
+    // Fame gate — mirrors the Favour behavior.
+    if ((pdNow.fame || 0) < (artist.fame || 0)) {
+      addLog("🔥 Fame", `${festName}: "${cardName}" — can't play ${artist.name} (need 🔥 ${artist.fame}, have ${pdNow.fame || 0}). Card not spent.`);
+      return;
+    }
+    // Pool removal + pool refill scheduling. bookArtistToStage will handle the stage write.
+    setArtistPool(prev => {
+      const next = [...prev];
+      next.splice(poolIdx, 1);
+      return next;
+    });
+    bookArtistToStage(artist, stageIdx, pid, false, false);
+    addLog("🔥 Fame", `${festName}: "${cardName}" → played ${artist.name} from the pool on Stage ${stageIdx + 1} (amenities waived).`);
+    if (!player?.isAI) showFloatingBonus(`🔥 ${artist.name} (free from pool)`, "#fbbf24");
+    setTimeout(() => refillPool(), 80);
+    setTimeout(() => recalcTickets(), 50);
+  };
+
   const resolvePlayFreeArtist = (pid, handIdx, stageIdx, cardName) => {
     const player = players.find(pl => pl.id === pid);
     const festName = player?.festivalName || "?";
@@ -4962,39 +4995,42 @@ export default function Headliners() {
         }
         break;
       }
-      case "book_another_stage": {
-        // v199.112: play another artist (that you can afford) on a different stage
-        // from the one just booked. Free (no amenity cost deduction). Reuses the
-        // play-free pattern but filters stages.
+      case "free_pool_play_once": {
+        // v199.183: Universal Favour — play any pool artist, amenities waived, Fame
+        // required. One-time YOU-MAY (card gets `disabled: true` after use).
         const pdNow = (playerDataRef.current || playerData)[pid] || {};
-        const hand = pdNow.hand || [];
         const stages = pdNow.stageArtists || [];
-        const bookedStageIdx = ctx?.bookedStageIdx;
-        // Eligible: stages with room, excluding the one just booked.
-        const eligibleStages = stages
-          .map((sa, i) => (Array.isArray(sa) && sa.length < 3 && i !== bookedStageIdx) ? i : -1)
-          .filter(i => i >= 0);
-        if (eligibleStages.length === 0) {
-          addLog("🔥 Fame", `${festName}: "${card.name}" — no different stage with room, skipped.`);
-          return;
+        const emptyStageIndices = stages.map((sa, i) => (Array.isArray(sa) && sa.length < 3) ? i : -1).filter(i => i >= 0);
+        if (emptyStageIndices.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no empty stage slot, skipped.`);
+          break;
         }
-        const affordable = hand.map((a, i) => ({ a, i })).filter(x => canAffordArtistWithRewards(x.a, pdNow, pid));
-        if (affordable.length === 0) {
-          addLog("🔥 Fame", `${festName}: "${card.name}" — no affordable artist in hand, skipped.`);
-          return;
+        const pool = artistPoolRef.current || artistPool;
+        const fameHave = pdNow.fame || 0;
+        const eligible = pool
+          .map((a, i) => ({ a, i }))
+          .filter(x => x.a && !x.a.isFavour && (x.a.fame || 0) <= fameHave);
+        if (eligible.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no Fame-affordable artist in the pool, skipped.`);
+          break;
         }
         if (player?.isAI) {
-          const best = affordable.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
-          resolvePlayFreeArtist(pid, best.i, eligibleStages[0], card.name);
+          // AI heuristic: highest tickets wins.
+          const best = eligible.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
+          resolveFreePoolPlay(pid, best.i, emptyStageIndices[0], card.name);
+          setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? { ...c, disabled: true } : c) }));
         } else {
+          // Human: open the pool picker. The picker renders pool cards; on commit it
+          // routes to resolveFreePoolPlay and disables this instance.
           setFameSeasonPicker({
             pid, cardName: card.name, cardEffect: card.effect,
-            step: "pick_artist_to_play", pickedArtistIdx: null,
-            affordableIndices: affordable.map(x => x.i),
-            emptyStageIndices: eligibleStages,
-            excludeStageIdx: bookedStageIdx,
+            step: "pick_pool_artist_free", pickedPoolIdx: null,
+            eligiblePoolIndices: eligible.map(x => x.i),
+            emptyStageIndices,
+            disableCardAfterPlay: card.instanceId,
           });
         }
+        // Not markFameCardUsedThisTurn — disabled flag is the permanent lockout.
         break;
       }
       case "gain_amenity_from_die":
@@ -22488,6 +22524,8 @@ export default function Headliners() {
                 if (picker.step === "place_amenity_after_discard") return !picker.pickedAmenityType;
                 if (picker.step === "pick_artist_to_play") return picker.pickedArtistIdx == null;
                 if (picker.step === "pick_stage_to_play") return picker.pickedStageIdx == null;
+                if (picker.step === "pick_pool_artist_free") return picker.pickedPoolIdx == null;
+                if (picker.step === "pick_pool_stage_free") return picker.pickedStageIdx == null;
                 return true;
               })();
               const onConfirm = () => {
@@ -22531,6 +22569,25 @@ export default function Headliners() {
                     setPlayerFameCards(pc => ({ ...pc, [p.pid]: (pc[p.pid] || []).map(c => c.instanceId === p.disableCardAfterPlay ? { ...c, disabled: true } : c) }));
                   }
                   setFameSeasonPicker(null);
+                } else if (p.step === "pick_pool_artist_free") {
+                  // v199.183: Universal Favour — chose a pool artist. If only one empty
+                  // stage, resolve now; else move to the stage picker.
+                  const emptyIdxPool = p.emptyStageIndices || (pd.stageArtists || []).map((sa, i) => (sa.length < 3 ? i : -1)).filter(i => i >= 0);
+                  if (emptyIdxPool.length === 1) {
+                    resolveFreePoolPlay(p.pid, p.pickedPoolIdx, emptyIdxPool[0], p.cardName);
+                    if (p.disableCardAfterPlay) {
+                      setPlayerFameCards(pc => ({ ...pc, [p.pid]: (pc[p.pid] || []).map(c => c.instanceId === p.disableCardAfterPlay ? { ...c, disabled: true } : c) }));
+                    }
+                    setFameSeasonPicker(null);
+                  } else {
+                    setFameSeasonPicker({ ...p, step: "pick_pool_stage_free", pickedStageIdx: null, emptyStageIndices: emptyIdxPool });
+                  }
+                } else if (p.step === "pick_pool_stage_free") {
+                  resolveFreePoolPlay(p.pid, p.pickedPoolIdx, p.pickedStageIdx, p.cardName);
+                  if (p.disableCardAfterPlay) {
+                    setPlayerFameCards(pc => ({ ...pc, [p.pid]: (pc[p.pid] || []).map(c => c.instanceId === p.disableCardAfterPlay ? { ...c, disabled: true } : c) }));
+                  }
+                  setFameSeasonPicker(null);
                 }
               };
               return <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.9)", zIndex: 9450, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s", overflowY: "auto" }}>
@@ -22547,6 +22604,8 @@ export default function Headliners() {
                       {(picker.step === "place_amenity_after_discard") && "Pick an amenity type to place."}
                       {(picker.step === "pick_artist_to_play") && "Pick an affordable artist from your hand."}
                       {(picker.step === "pick_stage_to_play") && "Pick a stage to play the artist on."}
+                      {(picker.step === "pick_pool_artist_free") && "Pick an artist from the pool. Fame still required; amenities waived."}
+                      {(picker.step === "pick_pool_stage_free") && "Pick a stage to play the artist on."}
                     </p>
                   </div>
                   {/* ARTIST PICKER (discard or play) */}
@@ -22631,8 +22690,8 @@ export default function Headliners() {
                       ))}
                     </div>
                   )}
-                  {/* STAGE PICKER */}
-                  {picker.step === "pick_stage_to_play" && (
+                  {/* STAGE PICKER (hand-source and pool-source share this view) */}
+                  {(picker.step === "pick_stage_to_play" || picker.step === "pick_pool_stage_free") && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginBottom: 14 }}>
                       {(picker.emptyStageIndices || []).map(sIdx => (
                         <button
@@ -22652,6 +22711,38 @@ export default function Headliners() {
                           <div style={{ fontSize: 12, fontWeight: 700 }}>Stage {sIdx + 1}</div>
                         </button>
                       ))}
+                    </div>
+                  )}
+                  {/* v199.183: POOL ARTIST PICKER — Universal Favour (free_pool_play_once).
+                      Shows the current pool; Fame-affordable artists (eligiblePoolIndices)
+                      are enabled, over-Fame artists are greyed out. */}
+                  {picker.step === "pick_pool_artist_free" && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 14 }}>
+                      {(artistPool || []).map((a, i) => {
+                        if (!a) return null;
+                        const isEligible = (picker.eligiblePoolIndices || []).includes(i);
+                        const isSelected = picker.pickedPoolIdx === i;
+                        return <button
+                          key={i}
+                          disabled={!isEligible}
+                          onClick={() => setFameSeasonPicker({ ...picker, pickedPoolIdx: i })}
+                          style={{
+                            padding: 10, borderRadius: 8,
+                            border: `2px solid ${isSelected ? "#fbbf24" : isEligible ? "#4c1d95" : "rgba(100,116,139,0.3)"}`,
+                            background: isSelected ? "linear-gradient(135deg, rgba(251,191,36,0.25), rgba(146,64,14,0.15))" : "rgba(30,27,75,0.5)",
+                            color: isEligible ? "#f3f4f6" : "#64748b",
+                            cursor: isEligible ? "pointer" : "not-allowed",
+                            opacity: isEligible ? 1 : 0.45,
+                            minWidth: 150,
+                            textAlign: "left",
+                            fontSize: 11,
+                          }}
+                          title={a.isFavour ? `${a.genre} Favour — not pickable` : `${a.name} · 🔥${a.fame || 0} · ${a.tickets || 0}🎟️${isEligible ? "" : ` (need 🔥${a.fame || 0})`}`}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: 12 }}>{isSelected ? "✓ " : ""}{a.name}</div>
+                          <div style={{ fontSize: 10, opacity: 0.85, marginTop: 2 }}>🔥{a.fame || 0} · {a.tickets || 0}🎟️ · {a.genre}</div>
+                        </button>;
+                      })}
                     </div>
                   )}
                   <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
