@@ -1579,12 +1579,16 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
                 // v199.133: Headliner doubles ticket display; v199.134: show +N special
                 // guests chip under the host name.
-                const displayTickets = isHeadliner ? (a.tickets || 0) * 2 : (a.tickets || 0);
+                // v199.180: show the BASE ticket count with "×2" as a suffix for the
+                // headliner, so e.g. a 6-ticket artist in the headliner slot reads as
+                // "6×2" — clear multiplication the player can resolve to 12. The old
+                // display showed "12×2" which read as "12 twice" and was confusing.
+                const baseTickets = a.tickets || 0;
                 return (
                   <div key={slot}>
                     <div style={{ padding: "3px 6px", borderRadius: 6, background: genreGradient(a.genre || ""), color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", gap: 4, border: isHeadliner ? "1px solid #fbbf24" : "1px solid transparent" }}>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isHeadliner ? "★ " : ""}{a.name || "Unknown"}</span>
-                      <span style={{ flexShrink: 0 }}>🎟️{displayTickets}{isHeadliner ? "×2" : ""}</span>
+                      <span style={{ flexShrink: 0 }} title={isHeadliner ? `${baseTickets} × 2 (headliner) = ${baseTickets * 2} tickets` : `${baseTickets} tickets`}>🎟️{baseTickets}{isHeadliner ? "×2" : ""}</span>
                     </div>
                     {guests.length > 0 && (
                       <div title={`Special Guests: ${guests.map(g => g && g.name).filter(Boolean).join(", ")}`} style={{ padding: "1px 6px", borderRadius: 4, marginTop: 1, background: "linear-gradient(90deg, rgba(236,72,153,0.25), rgba(190,24,93,0.15))", border: "1px dashed #f472b6", color: "#fce7f3", fontSize: 8, fontWeight: 600, textAlign: "center", transformOrigin: "top center", animation: "specialGuestTuck 0.45s ease-out" }}>
