@@ -10216,7 +10216,12 @@ export default function Headliners() {
       else setArtistOrChoice({ pid, cardName: artist.name, optA: "Place an amenity of your choice", optB: "Draw 2 artists", artistRef: artist });
       return true;
     }
-    if (t === "play an additional artist you can afford or gain 1 fame") {
+    // v199.172: Afrika Bambaataa. The raw effect is "Play an additional artist...", but
+    // the v199.151 normalization step strips "additional" ("an additional artist" → "an
+    // artist"), so the normalized `t` doesn't contain "additional". This handler was
+    // matching ONLY the pre-normalization form and silently failing. Match both forms
+    // for safety.
+    if (t === "play an artist you can afford or gain 1 fame" || t === "play an additional artist you can afford or gain 1 fame") {
       if (isAI) applyArtistSubEffect(pid, artist, stageIdx, "Gain 1 Fame.");
       else setArtistOrChoice({ pid, cardName: artist.name, optA: "Play another artist from your hand", optB: "Gain 1 Fame", artistRef: artist });
       return true;
@@ -10250,7 +10255,11 @@ export default function Headliners() {
     if (t === "play an artist you can afford from your hand"
       || t === "play another artist from your hand if you can afford them"
       || t === "play another artist from your hand"
-      || t === "play another artist you can afford") {
+      || t === "play another artist you can afford"
+      || t === "play another artist"
+      || t === "play an artist"
+      || t === "play an additional artist you can afford"
+      || t === "play an artist you can afford") {
       resolveExtraPlayPicker(pid, artist, "hand");
       return true;
     }
