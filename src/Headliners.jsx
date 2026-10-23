@@ -12383,6 +12383,10 @@ export default function Headliners() {
   // AI AUTO-PLAY (ref-based to prevent re-trigger loops)
   // ═══════════════════════════════════════════════════════════
   const aiProcessing = useRef(false);
+  // v199.154: per-turn latch — set when the AI opens a stage via Festival Principle, cleared
+  // in endTurn. Prevents a loop where state hadn't committed before the next aiStep tick,
+  // the open conditions still looked satisfied, and openStageViaPrinciple fired repeatedly.
+  const aiJustOpenedStageRef = useRef({});
   const aiTimer = useRef(null);
   // v197.8: per-turn-start resolution lock. Set to a "playerId:turnNumber" key when the
   // AI turn-start uncontested tempt-resolution block fires. Cleared when a NEW turn-start
@@ -13208,19 +13212,22 @@ export default function Headliners() {
       // v199.148: AI stage-opening via Festival Principle. CRITICAL FIX — the AI used to
       // never call openStageViaPrinciple, which meant that in Quick Play (0 starting
       // stages) it had nowhere to book artists and total scoring was capped around ~10
-      // tickets per game. Open a stage when: (a) 0 stages OR current stages all full,
-      // (b) under the max stage count, (c) a Principle is complete and unused, (d) not
-      // Summer (no time to fill), and (e) at least one hand artist is affordable now
-      // (don't open an empty stage to sit idle). Opening costs 1 action, so this returns
-      // early without calling aiDecideTurn.
-      if (gameModeRef.current === "quickYear") {
-        const stageCount = (pd.stages || []).length;
-        const sa = pd.stageArtists || [];
+      // tickets per game.
+      //
+      // v199.154: use playerDataRef (not stale state) + per-turn latch. The original
+      // version read `pd` (state) for stageCount — if a re-render triggered aiStep before
+      // the state had committed from the just-opened stage, stageCount still showed 0,
+      // shouldOpen fired again, loop. React #185 reported in the field. The latch
+      // (aiJustOpenedStageRef) is set when we open and cleared on turn transition
+      // (reset in endTurn below). All reads below use pdFresh from the ref.
+      if (gameModeRef.current === "quickYear" && !aiJustOpenedStageRef.current[currentPlayerId]) {
+        const pdFresh = (playerDataRef.current || playerData)[currentPlayerId] || pd;
+        const stageCount = (pdFresh.stages || []).length;
+        const sa = pdFresh.stageArtists || [];
         const allFull = sa.length > 0 && sa.every(st => (st || []).length >= 3);
         const needStage = stageCount === 0 || (stageCount < QUICKYEAR_MAX_STAGES && allFull);
         const notSummer = curSeason !== "summer";
         const principles = playerPrinciplesRef.current[currentPlayerId] || [];
-        const pdFresh = (playerDataRef.current || playerData)[currentPlayerId] || pd;
         const completeUnused = principles.find(pr => !pr.used && isPrincipleComplete(pr, pdFresh));
         const amCounts = pdFresh.amenities || {};
         const pdFame = pdFresh.fame || 0;
@@ -13232,11 +13239,9 @@ export default function Headliners() {
           && (amCounts.catering || 0) >= (a.cateringCost || 0)
           && (amCounts.portaloo || 0) >= (a.portalooCost || 0)
         );
-        // For the "no stages yet" case, open even without an affordable hand artist —
-        // we need the stage to be ready for when amenities catch up. Otherwise require
-        // a bookable artist so the new stage won't sit empty.
         const shouldOpen = needStage && notSummer && completeUnused && (stageCount === 0 || hasBookableInHand);
         if (shouldOpen) {
+          aiJustOpenedStageRef.current[currentPlayerId] = true;
           addLog("🤖 AI", `${currentPlayer?.festivalName} opens a new stage via ${completeUnused.name}`);
           openStageViaPrinciple(currentPlayerId, completeUnused.id);
           scheduleNext(500);
@@ -14650,6 +14655,8 @@ export default function Headliners() {
     if (specialGuestPicker && specialGuestPicker.pid === endingPid) setSpecialGuestPicker(null);
     if (artistOrChoice && artistOrChoice.pid === endingPid) setArtistOrChoice(null);
     if (extraPlayPicker && extraPlayPicker.pid === endingPid) setExtraPlayPicker(null);
+    // v199.154: clear the AI stage-opened latch for the ending player.
+    if (aiJustOpenedStageRef.current[endingPid]) aiJustOpenedStageRef.current[endingPid] = false;
     if (fameDrawModal && fameDrawModal.pid === endingPid) {
       // Auto-pick card 0 if a draw modal was left open at turn end — otherwise the
       // player loses the card entirely.
@@ -22552,6 +22559,7 @@ export default function Headliners() {
               setFameDrawPicker(null); setFameKeepOnePicker(null); setFameFreeAmenityPicker(null); setFameDeckPeekPicker(null); setPendingReactiveEffects({}); setPendingAfterTriggers({}); setPlayersNeedingSeasonStart({});
               // v199.135: reset artist-effect pickers.
               setSpecialGuestPicker(null); setArtistOrChoice(null); setExtraPlayPicker(null);
+              aiJustOpenedStageRef.current = {};
               setFameCardUsedThisTurn({}); setQuickYearTurnsTaken(0);
               playerFameCardsRef.current = {}; pendingReactiveEffectsRef.current = {};
               pendingAfterTriggersRef.current = {}; quickYearTurnsTakenRef.current = 0;
