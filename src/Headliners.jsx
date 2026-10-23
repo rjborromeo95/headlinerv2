@@ -19857,8 +19857,11 @@ export default function Headliners() {
                           </button>;
                         })}
                       </div>
-                      {/* v199.92: reroll button when dice need refresh (<3 dice or all same face) */}
-                      {diceNeedReroll(dice) && inBuildMode && (
+                      {/* v199.92: reroll button when dice need refresh (<3 dice or all same face).
+                          v199.147: removed inBuildMode gate — players can now reroll stuck dice
+                          at any point in their turn (before committing to a Build), so they can
+                          see what's available before deciding what action to take. */}
+                      {diceNeedReroll(dice) && (
                         <button
                           onClick={handleRerollDice}
                           style={{
