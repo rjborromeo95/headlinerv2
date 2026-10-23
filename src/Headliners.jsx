@@ -5407,16 +5407,6 @@ export default function Headliners() {
   // v199.161: Discard-amenity picker (Ja Rule, Dave). Player picks one amenity type they
   // own and loses one of it. Shape: { pid, cardName, remaining }.
   const [discardAmenityPicker, setDiscardAmenityPicker] = useState(null);
-  // v199.167: when a draw-until picker (Sadchild / Djo / Ensemble) starts, auto-open the
-  // hand drawer so the player sees cards landing live. Replaces the heavy bottom overlay
-  // from v199.163 — a compact counter pill is enough signal.
-  useEffect(() => {
-    if (extraDrawPicker && extraDrawPicker.pid === currentPlayerId) {
-      setShowHand(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extraDrawPicker?.pid, extraDrawPicker?.cardName]);
-
   // v199.166: Lil Angry interactive picker. Player clicks the deck one card at a time;
   // the first F4 drawn and the first F5 drawn are kept (gold glow), every other card
   // drawn is discarded (greyed out). Picker auto-completes when both have landed OR
@@ -10004,6 +9994,7 @@ export default function Headliners() {
         autoDrawUntil(pid, artist, "ticketSum", target);
       } else {
         setExtraDrawPicker({ pid, mode: "ticketSum", target, cardName: artist.name });
+        setShowHand(true); // v199.170: open hand drawer directly (replaces the useEffect approach that caused React #185)
       }
       return true;
     }
@@ -10013,13 +10004,13 @@ export default function Headliners() {
     if (m) {
       const target = parseInt(m[1], 10);
       if (isAI) autoDrawUntil(pid, artist, "fameSum", target);
-      else setExtraDrawPicker({ pid, mode: "fameSum", target, cardName: artist.name });
+      else { setExtraDrawPicker({ pid, mode: "fameSum", target, cardName: artist.name }); setShowHand(true); }
       return true;
     }
     // v199.155: "Draw artists until you have all six genres in your hand" (Backseat).
     if (/^draw\s+artists\s+until\s+you\s+have\s+all\s+six\s+genres/.test(t)) {
       if (isAI) autoDrawUntil(pid, artist, "allGenres", 6);
-      else setExtraDrawPicker({ pid, mode: "allGenres", target: 6, cardName: artist.name });
+      else { setExtraDrawPicker({ pid, mode: "allGenres", target: 6, cardName: artist.name }); setShowHand(true); }
       return true;
     }
     // v199.166: "Continue drawing artists from the deck until you have a 4 Fame and a 5
