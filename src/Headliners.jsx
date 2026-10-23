@@ -9608,11 +9608,24 @@ export default function Headliners() {
       const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, both: 2, your: 1 };
       const pickN = wordToNum[koMatch[2].toLowerCase()] || parseInt(koMatch[2], 10);
       const setN = parseInt(koMatch[3], 10);
-      suppressFameCardDrawRef.current = true;
-      applyArtistSubEffect(pid, artist, stageIdx, `Gain ${fameN} Fame.`);
-      // Clear flag after the gain's setTimeout(80ms) draw window has passed.
-      setTimeout(() => { suppressFameCardDrawRef.current = false; }, 150);
-      // Then fire the custom-count picker.
+      // v199.174: do the Fame gain DIRECTLY (not through applyArtistSubEffect →
+      // logFameGain), so no 80ms Fame-draw gets scheduled from it. The old
+      // suppressFameCardDrawRef flag was collateral-damaging the microtrend's own
+      // Fame-draw (which also schedules at 80ms and sees the suppress flag). By
+      // bypassing logFameGain entirely for Kara's self-gain, the microtrend's draw
+      // runs normally and Kara's custom 5-card picker opens separately below.
+      const y = yearRef.current || year || 1;
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid]?.baseFame || 0) + fameN) } }));
+      setFameLog(prev => ({ ...prev, [pid]: [...(prev[pid] || []), { source: `Artist: ${artist.name}`, amount: fameN, year: y }] }));
+      currentTurnFameGainedRef.current = true;
+      bumpSeasonStat(pid, "fameGained", fameN);
+      setTimeout(() => checkLegendaryContracts(pid), 60);
+      addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} → +${fameN} Fame.`);
+      if (!isAI) {
+        showFloatingBonus(`🔥 +${fameN} Fame`, "#f59e0b");
+        setFameGainQueue(prev => [...prev, { pid, amount: fameN, source: `Artist: ${artist.name}`, ts: Date.now() }]);
+      }
+      // Fire the custom-count picker.
       setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Choose ${pickN === 2 ? "both" : pickN} Fame Card${pickN === 1 ? "" : "s"} from a set of ${setN}.`), 220);
       return true;
     }
