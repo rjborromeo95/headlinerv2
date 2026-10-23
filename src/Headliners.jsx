@@ -9378,15 +9378,11 @@ export default function Headliners() {
     try {
     if (!text) return false;
     const raw = text.trim();
-    // v199.150/v199.151: normalize "another"/"an additional"/"additional" wording.
-    // The game uses several synonymous phrasings for "one more" that all mean the same
-    // thing. Normalize to the canonical forms so the regex patterns below match:
-    //   "draw another 2 artists" → "draw 2 artists"
-    //   "place another amenity" → "place an amenity"
-    //   "gain an additional Fame" → "gain 1 fame"
-    //   "an additional 2 artists" → "2 artists"
-    //   "play an additional artist" → "play an artist"
-    const t = raw.toLowerCase().replace(/\.$/, "").trim()
+    // v199.150/v199.151/v199.153: normalize "another"/"an additional"/"additional" and
+    // strip ALL trailing periods (previously stripped only one — which broke compound
+    // effects where the splitter appended a "." to a half that already ended in ".",
+    // leaving the end-anchored regex matchers unable to find the "$" after ".")
+    const t = raw.toLowerCase().replace(/\.+$/, "").trim()
       .replace(/\banother\s+(\d+)/g, "$1")
       .replace(/\banother\s+amenity/g, "an amenity")
       .replace(/\ban additional\s+fame\b/g, "1 fame")       // "gain an additional Fame" → "gain 1 fame"
@@ -9406,8 +9402,14 @@ export default function Headliners() {
     if (t.includes(" and ") && t !== "draw 1 artist and place 1 amenity from the dice") {
       const parts = raw.split(/\s+and\s+/i);
       if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
-        applyArtistSubEffect(pid, artist, stageIdx, parts[0].trim() + ".");
-        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, parts[1].trim() + "."), 180);
+        // v199.153: strip trailing period on each half before re-adding — otherwise the
+        // second half (which usually carries the original period through the split) ends
+        // up as "X..", and the downstream normalization only strips one period, leaving
+        // regexes unable to match end-of-string.
+        const p0 = parts[0].trim().replace(/\.+$/, "");
+        const p1 = parts[1].trim().replace(/\.+$/, "");
+        applyArtistSubEffect(pid, artist, stageIdx, p0 + ".");
+        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, p1 + "."), 180);
         return true;
       }
     }
