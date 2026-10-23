@@ -3869,13 +3869,6 @@ export default function Headliners() {
   // single reactive card fires 3 times in a 4-player round" exploit — now fires at most
   // once per round-trip.
   const reactiveSpentRef = useRef({});
-  // v199.177: pending "If this completes a microtrend, X" bonus holder. Set by the
-  // microtrend-bonus-split handler right before firing the unconditional half; consumed
-  // when any microtrend claim (genre OR amenity, booking-time OR amenity-placement) fires
-  // for that pid. Clears itself after fire or on a safety timeout. Only one bonus can be
-  // pending per player at a time — a new booking replaces any stale pending entry.
-  //   Shape: { pid, artist, stageIdx, bonusSubEffect } | null
-  const pendingMicrotrendBonusRef = useRef(null);
   // v199.115: track which players still need their season_start Fame cards fired this
   // season. Marked at season transition; cleared when each player's season_start fires
   // at THEIR turn start. Fixes the issue where multiple players' season_start pickers
@@ -10607,45 +10600,35 @@ export default function Headliners() {
     if (m) {
       const uncond = m[1].trim();
       const bonus = m[2].trim();
-      // v199.177: register the pending bonus BEFORE firing the unconditional half. For
-      // artists whose unconditional half opens an async picker that eventually completes
-      // an amenity microtrend (Parcels: place amenity → claims amenity trend; Parliament:
-      // same), the claim path (claimAmenityMicrotrend) picks up this pending entry and
-      // fires the bonus once the picker commits. For artists whose BOOKING directly
-      // completes a genre microtrend (Vulfpeck as Funk/Indie), the pre-handler claim in
-      // bookArtistToStage will have already set a "just claimed" marker which we check
-      // immediately below as a fast path.
-      pendingMicrotrendBonusRef.current = { pid, artist, stageIdx, bonusSubEffect: bonus };
+      // v199.179: polling-based delta check. Snapshot microtrendsCompletedCount BEFORE
+      // firing uncond, then poll at 500/1500/4000/10000ms. Any microtrend claim (genre
+      // via booking, amenity via picker commit) bumps the count — so a single mechanism
+      // catches both Vulfpeck-style (booking-time genre claim) and Parcels-style
+      // (amenity-pick claim) scenarios WITHOUT the pending-ref claim-path hooks that
+      // triggered React #185 in v199.177. The polling runs from independent setTimeouts,
+      // not from inside claimAmenityMicrotrend's call stack, so bonus-fire doesn't
+      // cascade back through the AI-step useEffect in the same React batch.
+      const beforeCount = ((playerDataRef.current || playerData)[pid] || {}).microtrendsCompletedCount || 0;
       // Fire the unconditional part immediately.
       applyArtistSubEffect(pid, artist, stageIdx, uncond + ".");
-      // Fast path: did the booking ITSELF just complete a genre microtrend? If so, the
-      // claim already fired during bookArtistToStage (before this handler ran) and the
-      // pending ref would be set — fire the bonus directly without waiting for an async
-      // amenity claim. We detect this by checking whether the artist's genres match an
-      // ALREADY-CLAIMED genre trend attributed to this pid in the last tick. Simplest
-      // signal: compare microtrendsCompletedCount delta since the booking started, but
-      // we don't have that snapshot here. Instead, check whether a genre trend was just
-      // claimed by pid (claimedBy === pid) AND the artist's genres match it — that's
-      // the booking's own claim.
-      const trends = microtrendsRef.current || microtrends || [];
-      const justClaimedByBooking = trends.find(mt => mt && mt.claimedBy === pid && mt.kind === "genre"
-        && (/counts as all genres/i.test(artist?.effect || "") || getGenres(artist.genre || "").some(g => g === mt.genre)));
-      if (justClaimedByBooking) {
-        // Booking's genre claim already consumed the pending entry — fire now.
-        addLog("🎸 Artist Effect", `${festival}: ${artist.name} — completes ${justClaimedByBooking.genre} microtrend ✓ bonus triggers.`);
-        pendingMicrotrendBonusRef.current = null;
-        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, bonus + "."), 220);
-      } else {
-        // Safety timeout: if nothing claims within 10s, clear the pending entry and log
-        // the miss. 10s is generous enough to accommodate a human reading the picker.
+      // Chained polling. bonusFired latch (closure-local) ensures the bonus fires at
+      // most once per booking even if multiple checks see the increase.
+      let bonusFired = false;
+      const checkDelays = [500, 1500, 4000, 10000];
+      checkDelays.forEach((delay, idx) => {
         setTimeout(() => {
-          const cur = pendingMicrotrendBonusRef.current;
-          if (cur && cur.pid === pid && cur.artist === artist) {
-            pendingMicrotrendBonusRef.current = null;
+          if (bonusFired) return;
+          const nowCount = ((playerDataRef.current || playerData)[pid] || {}).microtrendsCompletedCount || 0;
+          if (nowCount > beforeCount) {
+            bonusFired = true;
+            addLog("🎸 Artist Effect", `${festival}: ${artist.name} — microtrend completed ✓ bonus triggers.`);
+            setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, bonus + "."), 220);
+          } else if (idx === checkDelays.length - 1) {
+            // Final poll and still no claim — give up.
             addLog("🎸 Artist Effect", `${festival}: ${artist.name} — no microtrend completed, bonus skipped.`);
           }
-        }, 10000);
-      }
+        }, delay);
+      });
       return true;
     }
 
@@ -14546,16 +14529,6 @@ export default function Headliners() {
       setTimeout(() => recalcTickets(), 50);
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
-      // v199.177: fire any pending Parcels/Parliament-style "If this completes a
-      // microtrend, X" bonus. The handler registered the bonus before firing the
-      // amenity-placement sub-effect; now that the amenity has placed AND claimed a
-      // trend, consume the pending entry and fire the bonus half.
-      const pending = pendingMicrotrendBonusRef.current;
-      if (pending && pending.pid === pid) {
-        pendingMicrotrendBonusRef.current = null;
-        addLog("🎸 Artist Effect", `${festival}: ${pending.artist.name} — amenity completed ${AMENITY_LABELS[amenityType]} microtrend ✓ bonus triggers.`);
-        setTimeout(() => applyArtistSubEffect(pending.pid, pending.artist, pending.stageIdx, pending.bonusSubEffect + "."), 220);
-      }
     }
     // v189: anti-lead amenity-forecast claim. Non-leaders can claim the upcoming amenity
     // microtrend if their placement matches it, giving trailing players an early advantage.
@@ -14575,13 +14548,6 @@ export default function Headliners() {
       showFloatingBonus(`🏛️ ${AMENITY_LABELS[amenityType]} (Forecast)!`, "#fbbf24");
       setTimeout(() => triggerArtistOnMicrotrendBonus(pid), 60);
       checkMicrotrendCredit(pid);
-      // v199.177: fire pending Parcels/Parliament-style bonus — forecast claim counts.
-      const pending = pendingMicrotrendBonusRef.current;
-      if (pending && pending.pid === pid) {
-        pendingMicrotrendBonusRef.current = null;
-        addLog("🎸 Artist Effect", `${festival}: ${pending.artist.name} — amenity forecast claim ✓ bonus triggers.`);
-        setTimeout(() => applyArtistSubEffect(pending.pid, pending.artist, pending.stageIdx, pending.bonusSubEffect + "."), 220);
-      }
       const fresh = popAmenityFromBag(claimedTrend);
       setNextAmenityMicrotrend(fresh);
     }
