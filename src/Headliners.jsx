@@ -9587,6 +9587,9 @@ export default function Headliners() {
         resolvePlayFreeArtist(pid, pick.i, chosenStage, hostArtist.name);
       } else {
         // Pool path: splice the artist out of the pool, book onto stage.
+        // v199.144: sync playerDataRef inside the updater + fire applyEffect for the
+        // played artist (previously its effect was silently skipped — same class of bug
+        // as the resolvePlayFreeArtist v199.139 fix, but for the pool source).
         const curPool = artistPoolRef.current || artistPool;
         const newPool = curPool.filter((_, idx) => idx !== pick.i);
         setArtistPool(newPool);
@@ -9594,11 +9597,16 @@ export default function Headliners() {
           const cur = p[pid] || {};
           const stageArtists = [...(cur.stageArtists || [])];
           stageArtists[chosenStage] = [...(stageArtists[chosenStage] || []), pick.a];
-          return { ...p, [pid]: { ...cur, stageArtists } };
+          const result = { ...p, [pid]: { ...cur, stageArtists } };
+          playerDataRef.current = result;
+          return result;
         });
         addLog("🎸 Artist Effect", `${festival} 🤖: ${hostArtist.name} → played ${pick.a.name} from pool onto Stage ${chosenStage + 1}.`);
         setTimeout(() => refillPool(), 80);
         setTimeout(() => recalcTickets(), 50);
+        setTimeout(() => {
+          try { applyEffect(pick.a, pid, 1, chosenStage, false, false, null, null, (((playerDataRef.current || playerData)[pid] || {}).stageArtists || [])[chosenStage]?.length || 0); } catch (err) { console.error("resolveExtraPlayPicker pool applyEffect error", err); }
+        }, 60);
       }
       return;
     }
@@ -20501,6 +20509,7 @@ export default function Headliners() {
                 if (picker.source === "hand") {
                   resolvePlayFreeArtist(picker.pid, candIdx, chosenStage, picker.cardName);
                 } else {
+                  // v199.144: sync playerDataRef + fire applyEffect for the played artist.
                   const curPool = artistPoolRef.current || artistPool;
                   const newPool = curPool.filter((_, idx) => idx !== candIdx);
                   setArtistPool(newPool);
@@ -20508,12 +20517,17 @@ export default function Headliners() {
                     const cur = p[picker.pid] || {};
                     const sa = [...(cur.stageArtists || [])];
                     sa[chosenStage] = [...(sa[chosenStage] || []), cand];
-                    return { ...p, [picker.pid]: { ...cur, stageArtists: sa } };
+                    const result = { ...p, [picker.pid]: { ...cur, stageArtists: sa } };
+                    playerDataRef.current = result;
+                    return result;
                   });
                   addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} → played ${cand.name} from pool onto Stage ${chosenStage + 1}.`);
                   showFloatingBonus(`🎸 Played ${cand.name} free`, "#86efac");
                   setTimeout(() => refillPool(), 80);
                   setTimeout(() => recalcTickets(), 50);
+                  setTimeout(() => {
+                    try { applyEffect(cand, picker.pid, 1, chosenStage, false, false, null, null, (((playerDataRef.current || playerData)[picker.pid] || {}).stageArtists || [])[chosenStage]?.length || 0); } catch (err) { console.error("extraPlayPicker pool applyEffect error", err); }
+                  }, 60);
                 }
                 setExtraPlayPicker(null);
               };
