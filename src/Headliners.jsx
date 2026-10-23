@@ -11180,10 +11180,15 @@ export default function Headliners() {
           pattyLogMsg = `${players.find(p => p.id === pid)?.festivalName}: +4 🎟️ for genre-matching ${artist.name} to ${(prePd0.stageNames || [])[stageIdx] || `Stage ${stageIdx + 1}`}`;
         }
       }
-      if (isFullLineup && !firstFullLineup) {
-        firstLineupBonus = 5;
-        firstLineupLog = `${players.find(p => p.id === pid)?.festivalName} released the first full lineup! +5 tickets!`;
-      }
+      // v199.146: First Full Lineup bonus removed per user request. Dropped entirely —
+      // the +5 ticket award + "🎪 FIRST!" announcement no longer fire. The dependent
+      // state (firstFullLineup) and side-effect block below (lines ~11216) become dead
+      // code since firstLineupBonus never exceeds 0, but left intact so re-enabling is
+      // just restoring the two lines below.
+      // if (isFullLineup && !firstFullLineup) {
+      //   firstLineupBonus = 5;
+      //   firstLineupLog = `${players.find(p => p.id === pid)?.festivalName} released the first full lineup! +5 tickets!`;
+      // }
     }
     // Commit state ONCE, no side effects inside.
     setPlayerData(prev => {
