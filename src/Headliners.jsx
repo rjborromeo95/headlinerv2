@@ -15010,12 +15010,10 @@ export default function Headliners() {
     const newPool = curPool.filter((_, i) => i !== idx);
     setArtistPool(newPool);
     artistPoolRef.current = newPool;
-    // v199.169: sync playerDataRef IMMEDIATELY (not via the useEffect which lags by
-    // one render) so the counter pill reflects the fresh hand on the same render.
-    const curPd = playerDataRef.current || playerData;
-    const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), artist] } };
-    playerDataRef.current = newPd;
-    setPlayerData(newPd);
+    // v199.173: use the functional setPlayerData form (safer than reading the possibly-
+    // stale ref and overwriting with a full object). The counter accuracy is fixed on the
+    // read side instead (counter reads playerData state directly).
+    setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), artist] } }));
     addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — took ${artist.name} from pool.`);
     // v199.165: do NOT refill the pool here — the player should see the depleted pool
     // for the duration of their effect. The pool is topped back to 5 at the next
@@ -15054,11 +15052,8 @@ export default function Headliners() {
         else if (f === 5 && !nextKeptF5) { kept = true; keptAs = 5; }
         // Commit the card to hand or discard outside this updater (side effect).
         if (kept) {
-          // v199.169: sync playerDataRef immediately so downstream reads see the fresh hand.
-          const curPd = playerDataRef.current || playerData;
-          const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), card] } };
-          playerDataRef.current = newPd;
-          setPlayerData(newPd);
+          // v199.173: functional setPlayerData form (safer than direct ref writes).
+          setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
           addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — kept ${card.name} (F${f}).`);
           if (keptAs === 4) showFloatingBonus(`⭐ Kept ${card.name} (F4)`, "#fcd34d");
           if (keptAs === 5) showFloatingBonus(`⭐ Kept ${card.name} (F5)`, "#fcd34d");
@@ -15087,12 +15082,8 @@ export default function Headliners() {
       const newDeck = deck.slice(1);
       setArtistDeck(newDeck);
       artistDeckRef.current = newDeck;
-      // v199.169: sync playerDataRef immediately so the counter pill is accurate on the
-      // same render — the useEffect sync lags by one render.
-      const curPd = playerDataRef.current || playerData;
-      const newPd = { ...curPd, [picker.pid]: { ...curPd[picker.pid], hand: [...(curPd[picker.pid]?.hand || []), card] } };
-      playerDataRef.current = newPd;
-      setPlayerData(newPd);
+      // v199.173: functional setPlayerData form — see extraDrawPickFromPool note above.
+      setPlayerData(p => ({ ...p, [picker.pid]: { ...p[picker.pid], hand: [...(p[picker.pid]?.hand || []), card] } }));
       addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — drew ${card.name} from deck.`);
     });
   };
@@ -20757,7 +20748,8 @@ export default function Headliners() {
                         const extraDrawPickerActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId;
                         const extraDrawMet = (() => {
                           if (!extraDrawPickerActive) return false;
-                          const pdNow = (playerDataRef.current || playerData)[extraDrawPicker.pid] || {};
+                          // v199.173: read playerData state directly (ref lags one render behind).
+                          const pdNow = playerData[extraDrawPicker.pid] || {};
                           const hand = pdNow.hand || [];
                           if (extraDrawPicker.mode === "ticketSum") return hand.reduce((s, a) => s + (a?.tickets || 0), 0) > extraDrawPicker.target;
                           if (extraDrawPicker.mode === "fameSum") return hand.reduce((s, a) => s + (a?.fame || 0), 0) > extraDrawPicker.target;
@@ -20829,7 +20821,8 @@ export default function Headliners() {
                         const extraPickerActive = !!extraDrawPicker && extraDrawPicker.pid === currentPlayerId;
                         const extraTargetMet = (() => {
                           if (!extraPickerActive) return false;
-                          const pdNow = (playerDataRef.current || playerData)[extraDrawPicker.pid] || {};
+                          // v199.173: read playerData state directly (ref lags one render behind).
+                          const pdNow = playerData[extraDrawPicker.pid] || {};
                           const hand = pdNow.hand || [];
                           if (extraDrawPicker.mode === "ticketSum") return hand.reduce((s, a) => s + (a?.tickets || 0), 0) > extraDrawPicker.target;
                           if (extraDrawPicker.mode === "fameSum") return hand.reduce((s, a) => s + (a?.fame || 0), 0) > extraDrawPicker.target;
@@ -21688,7 +21681,10 @@ export default function Headliners() {
               // useEffect (above) so the player sees cards landing in their hand live.
               // Pool cards and deck tile still carry the 🎸 Pick / purple glow for input.
               const picker = extraDrawPicker;
-              const pdNow = (playerDataRef.current || playerData)[picker.pid] || {};
+              // v199.173: read from playerData STATE (not the ref). The ref lags one
+              // render behind due to the useEffect sync at line 3043. State is always
+              // the latest committed value during render — gives an accurate counter.
+              const pdNow = playerData[picker.pid] || {};
               const hand = pdNow.hand || [];
               const metricValue = (() => {
                 if (picker.mode === "ticketSum") return hand.reduce((s, a) => s + (a?.tickets || 0), 0);
