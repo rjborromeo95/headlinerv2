@@ -1820,12 +1820,13 @@ function aiPickDie(dice, pd, preferredType, wantsStageProgress, wantsFameThisTur
 
 /** AI selects which draft artists to keep (indices) */
 function aiDraftSelect(options) {
-  // Prefer one low-fame (playable soon) and one high-fame (for later)
+  // v199.157: starting hand is 1 artist (from a set of 5). Pick the single best option
+  // weighted toward low Fame (playable sooner), high tickets, and effect-bearing cards.
   const scored = options.map((a, i) => ({
     idx: i, score: a.vp * 2 + a.tickets * 3 + (a.effect ? 5 : 0) + (a.fame <= 1 ? 10 : 0) + Math.random() * 3
   }));
   scored.sort((a, b) => b.score - a.score);
-  return [scored[0].idx, scored[1].idx];
+  return [scored[0].idx];
 }
 
 /** AI decides which amenity to pick in setup */
@@ -12122,7 +12123,7 @@ export default function Headliners() {
     // nothing to pick from.
     const skipObjective = !altObjectivesModeRef.current;
     setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
-    setSetupDraftOptions(skipObjective ? fame0.slice(0, 6) : []);
+    setSetupDraftOptions(skipObjective ? fame0.slice(0, 5) : []); // v199.157: deal 5
     setSetupDraftSelected([]);
     // v143: before setup begins, the first non-AI player picks the win condition. If
     // all players are AI, pick randomly and jump straight to setup.
@@ -12153,7 +12154,7 @@ export default function Headliners() {
 
   const confirmViewObjective = () => {
     // Objectives are now chosen after draft — skip to draft
-    setSetupDraftOptions([...draftRemaining0.slice(0, 6)]);
+    setSetupDraftOptions([...draftRemaining0.slice(0, 5)]); // v199.157: deal 5
     setSetupDraftSelected([]);
     setSetupStep("draftArtist");
   };
@@ -12197,7 +12198,7 @@ export default function Headliners() {
     setSetupDraftSelected(prev => {
       const arr = prev || [];
       if (arr.includes(idx)) return arr.filter(i => i !== idx);
-      if (arr.length >= 2) return arr;
+      if (arr.length >= 1) return arr; // v199.157: starting hand = 1 artist
       return [...arr, idx];
     });
   };
@@ -12209,14 +12210,15 @@ export default function Headliners() {
     // confirmSetupDraft from BEFORE the state update committed — so when it fired, the
     // length-2 guard below read the old empty array and bailed. The AI's picks never
     // committed, leaving the human to click "Draft 2 Artists" themselves.
-    const selected = (overridePicks && overridePicks.length === 2) ? overridePicks : (setupDraftSelected || []);
-    if (selected.length !== 2) return;
+    // v199.157: starting hand = 1 artist (was 2). Dealt 5 options.
+    const selected = (overridePicks && overridePicks.length === 1) ? overridePicks : (setupDraftSelected || []);
+    if (selected.length !== 1) return;
     const chosen = selected.map(i => setupDraftOptions[i]);
     setPlayerData(p => ({ ...p, [currentSetupPlayer.id]: { ...p[currentSetupPlayer.id], hand: [...p[currentSetupPlayer.id].hand, ...chosen] } }));
     chosen.forEach(c => addLog(currentSetupPlayer.festivalName, `drafted ${c.name} (${c.genre})`));
     const unchosen = setupDraftOptions.filter((_, i) => !selected.includes(i));
     setUndraftedArtists(prev => [...prev, ...unchosen]);
-    const newR0 = draftRemaining0.slice(6);
+    const newR0 = draftRemaining0.slice(5); // v199.157: deal 5 per player, not 6
     const newR5 = draftRemaining5;
     setDraftRemaining0(newR0); setDraftRemaining5(newR5);
     setSetupDraftOptions([]); setSetupDraftSelected([]);
@@ -12243,10 +12245,10 @@ export default function Headliners() {
         // mid-setup, leaving later players with an empty draft screen. Recycling the
         // cards previous players rejected keeps the per-player "6 fresh options" guarantee
         // and preserves the Fame-0-only promise (so starting hands remain playable turn 1).
-        const needTopUp = newR0.length < 6;
+        const needTopUp = newR0.length < 5; // v199.157: top up to 5
         const topUp = needTopUp ? shuffle([...undraftedArtists, ...unchosen]) : [];
         const combinedR0 = needTopUp ? [...newR0, ...topUp] : newR0;
-        const nextOptions = skipObjective ? combinedR0.slice(0, 6) : [];
+        const nextOptions = skipObjective ? combinedR0.slice(0, 5) : []; // v199.157: deal 5
         if (needTopUp) {
           // Rebuild draftRemaining0 so future top-ups see the recycled cards too, and
           // clear undraftedArtists since those cards are now live in the pool.
@@ -12323,7 +12325,7 @@ export default function Headliners() {
       // inside confirmViewObjective; skipping that step means we must set it here).
       const skipObjective = !altObjectivesModeRef.current;
       setSetupStep(skipObjective ? "draftArtist" : "viewObjective");
-      setSetupDraftOptions(skipObjective ? draftRemaining0.slice(0, 6) : []);
+      setSetupDraftOptions(skipObjective ? draftRemaining0.slice(0, 5) : []); // v199.157: deal 5
       setSetupDraftSelected([]);
     } else startGame();
   };
@@ -12345,8 +12347,8 @@ export default function Headliners() {
             }
           };
         });
-        // Re-deal the 6 draft options for this player from draftRemaining0.
-        setSetupDraftOptions(draftRemaining0.slice(0, 6));
+        // Re-deal the 5 draft options for this player from draftRemaining0.
+        setSetupDraftOptions(draftRemaining0.slice(0, 5)); // v199.157: deal 5
         setSetupDraftSelected([]);
         setSetupStep("draftArtist");
         return;
@@ -13115,7 +13117,7 @@ export default function Headliners() {
         aiSetupResolvedRef.current = setupLockKey;
         confirmViewObjective(); scheduleNext(400); return;
       }
-      if (setupStep === "draftArtist" && setupDraftOptions.length >= 2) {
+      if (setupStep === "draftArtist" && setupDraftOptions.length >= 1) { // v199.157: pick 1
         aiSetupResolvedRef.current = setupLockKey;
         const picks = aiDraftSelect(setupDraftOptions);
         setSetupDraftSelected(picks);
@@ -17146,12 +17148,12 @@ export default function Headliners() {
         })()}
         {setupStep === "draftArtist" && <div style={{ ...card, maxWidth: 700, width: "100%", textAlign: "center" }}>
           <h3 style={{ color: "#e9d5ff", marginBottom: 8 }}>Draft your starting artists</h3>
-          <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Choose <strong style={{ color: "#fbbf24" }}>2</strong> of these 6 artists for your hand. The rest go back into the deck.</p>
+          <p style={{ color: "#8b5cf6", fontSize: 12, marginBottom: 12 }}>Choose <strong style={{ color: "#fbbf24" }}>1</strong> of these 5 artists for your hand. The rest go back into the deck.</p>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
             {setupDraftOptions.map((a, i) => <ArtistCard key={i} artist={a} showCost selected={(setupDraftSelected || []).includes(i)} onClick={() => toggleDraftSelection(i)} />)}
           </div>
-          <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{(setupDraftSelected || []).length}/2 selected</p>
-          <button onClick={confirmSetupDraft} disabled={(setupDraftSelected || []).length !== 2} style={{ ...bp, width: "100%", opacity: (setupDraftSelected || []).length === 2 ? 1 : 0.4 }}>Draft 2 Artists →</button>
+          <p style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>{(setupDraftSelected || []).length}/1 selected</p>
+          <button onClick={confirmSetupDraft} disabled={(setupDraftSelected || []).length !== 1} style={{ ...bp, width: "100%", opacity: (setupDraftSelected || []).length === 1 ? 1 : 0.4 }}>Draft 1 Artist →</button>
         </div>}
 
         {setupStep === "pickAmenity" && (() => {
