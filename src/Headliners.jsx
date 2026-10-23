@@ -23,7 +23,7 @@ import { createPortal } from "react-dom";
 // ═══════════════════════════════════════════════════════════
 // ARTIST DATA (75 artists from spreadsheet)
 // ═══════════════════════════════════════════════════════════
-const ALL_ARTISTS = [{"name": "Kara Okay", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 1, "effect": "Immediately gain 1 Fame. Choose 1 Fame Card from a set of 5.", "genreMatchEffect": ""}, {"name": "Sadchild", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "Draw artists until your hand exceeds a total of 10 tickets (stop as soon as you exceed that amount).", "genreMatchEffect": ""}, {"name": "Mikerophone", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "If no other player has higher Fame than you, draw 3 artists and place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Rebecca Black", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Jamiroquai", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 4, "effect": "Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Jonas Brothers", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 4, "effect": "If no other player has higher Fame than you, open a stage.", "genreMatchEffect": ""}, {"name": "Nelly", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop, Hip Hop", "tickets": 5, "effect": "Middle Slot: Place an amenity from the available dice.", "genreMatchEffect": ""}, {"name": "Maroon 5", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "Draw 1 artist.", "genreMatchEffect": ""}, {"name": "Clairo", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Pop, Indie", "tickets": 4, "effect": "Game End: Sell 3 tickets/pop artist on this stage.", "genreMatchEffect": ""}, {"name": "Chappell Roan", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 6, "effect": "Game End: Sell 8 tickets if all artists on this stage cost a total of more than 8 Fame.", "genreMatchEffect": ""}, {"name": "Billie Eilish", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Dua Lipa", "fame": 4, "vp": 0, "campCost": 0, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "If no other player has higher Fame than you, draw 1 artist.", "genreMatchEffect": ""}, {"name": "Beyonce", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Coldplay", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Rock", "tickets": 9, "effect": "", "genreMatchEffect": ""}, {"name": "Lady Gaga", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 2, "genre": "Pop, Electronic", "tickets": 9, "effect": "If Headliner: Sell 1 ticket.", "genreMatchEffect": ""}, {"name": "Sitting Ducks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Rock", "tickets": 1, "effect": "Roll 2 amenity dice. Gain all of the outcomes.", "genreMatchEffect": ""}, {"name": "Beabadoobee", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "Draw 2 artists. You may refresh the artist pool once this turn.", "genreMatchEffect": ""}, {"name": "Limp Bizkit", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Rock", "tickets": 5, "effect": "Play an artist from the artist pool if you can afford them.", "genreMatchEffect": ""}, {"name": "No Doubt", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Vampire Weekend", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "Take an amenity from the amenity die.", "genreMatchEffect": ""}, {"name": "Blondie", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 5, "effect": "If Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Royal Blood", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "If the previous player took the browse action, draw 2 artists.", "genreMatchEffect": ""}, {"name": "Heart", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 6, "effect": "Game End: Sell 3 tickets/rock artist on this stage.", "genreMatchEffect": ""}, {"name": "The Kooks", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Rock, Indie", "tickets": 5, "effect": "Game End: Sell 1 ticket for each artist in your hand.", "genreMatchEffect": ""}, {"name": "Wet Leg", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Rock", "tickets": 6, "effect": "If the previous player took the build action, draw 2 artists.", "genreMatchEffect": ""}, {"name": "Radiohead", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Electronic", "tickets": 9, "effect": "If the previous player gained 1 Fame on their turn, gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Rage Against the Machine", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Funk", "tickets": 9, "effect": "", "genreMatchEffect": ""}, {"name": "Olivia Rodrigo", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Pop, Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Arctic Monkeys", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Fleetwood Mac", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 8, "effect": "If the previous player took the book action, sell 3 tickets.", "genreMatchEffect": ""}, {"name": "Lil Angry", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 1, "effect": "Continue drawing artists from the deck until you pick up a 4 or 5 Fame artist. Keep that artist and discard the rest.", "genreMatchEffect": ""}, {"name": "Loosey Goosey", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Hip Hop", "tickets": 3, "effect": "Open a stage.", "genreMatchEffect": ""}, {"name": "Knucks", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "If Opening Set: Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Eve", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "Draw 3 artists.", "genreMatchEffect": ""}, {"name": "KAYTRANADA", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Electronic", "tickets": 4, "effect": "If Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Lil Dicky", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop", "tickets": 4, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Salt-N-Pepa", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "Special Guest: 3", "genreMatchEffect": ""}, {"name": "Little Simz", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Indie", "tickets": 4, "effect": "If Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Ms Banks", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 6, "effect": "Special Guest: 2", "genreMatchEffect": ""}, {"name": "Doja Cat", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 2, "portalooCost": 0, "genre": "Hip Hop", "tickets": 6, "effect": "Game End: Sell 3 tickets/hip hop artist on this stage.", "genreMatchEffect": ""}, {"name": "De La Soul", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 7, "effect": "Special Guest: 7", "genreMatchEffect": ""}, {"name": "Snoop Dogg", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Loyle Carner", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 2, "portalooCost": 0, "genre": "Hip Hop, Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Kendrick Lamar", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 2, "genre": "Hip Hop", "tickets": 8, "effect": "Special Guest: 3", "genreMatchEffect": ""}, {"name": "Eminem", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "CRUEL MISTRESS", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 1, "effect": "If Opening Set: Gain 2 amenities (stages, or Fame included) from the amenity dice.", "genreMatchEffect": ""}, {"name": "Horsegiirl", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "Draw 5 artists from the deck. Keep 2.", "genreMatchEffect": ""}, {"name": "Grimes", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "If Middle Slot: Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "FISHER", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 3, "effect": "If Opening Set: Play an artist you can afford from your hand.", "genreMatchEffect": ""}, {"name": "CHVRCHES", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "If Headliner: Place an amenity of your choice and open a stage.", "genreMatchEffect": ""}, {"name": "Jamie xx", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Indie", "tickets": 3, "effect": "If Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Pink Pantheress", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop, Electronic", "tickets": 5, "effect": "If Middle Slot: Gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Opolopo", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "Draw 2 artists.", "genreMatchEffect": ""}, {"name": "Peggy Gou", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 4, "effect": "Game End: Sell 3 tickets/electronic artist on this stage.", "genreMatchEffect": ""}, {"name": "Flume", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Electronic", "tickets": 6, "effect": "Game End: Sell 2 tickets/every full stage.", "genreMatchEffect": ""}, {"name": "Charli XCX", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic", "tickets": 6, "effect": "Place a campsite in your festival.", "genreMatchEffect": ""}, {"name": "Linkin Park", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Rock, Electronic", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Skrillex", "fame": 4, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Daft Punk", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Electronic", "tickets": 7, "effect": "If Headliner: Sell 5 tickets", "genreMatchEffect": ""}, {"name": "Fatboy Slim", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Bruised Brothers", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Indie", "tickets": 0, "effect": "Place 1 amenity of your choice and draw 2 artists.", "genreMatchEffect": ""}, {"name": "Djo", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 0, "effect": "Draw artists until you have a hand that totals no higher than 6 Fame (stop as soon as you exceed and keep that artist)", "genreMatchEffect": ""}, {"name": "Two Door Cinema Club", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 1, "effect": "If you have less artists in your hand than another player, gain 1 Fame and place an amenity.", "genreMatchEffect": ""}, {"name": "Boygenius", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "If you have less amenities in your festival than another player, gain 1 Fame and draw 3 artists.", "genreMatchEffect": ""}, {"name": "The Kooks (Indie)", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "If you have less artists in your hand than another player, gain 1 Fame and place an amenity.", "genreMatchEffect": ""}, {"name": "Christine & The Queens", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Metronomy", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Funk, Indie", "tickets": 3, "effect": "Gain 1 Fame or place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Mitski", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 4, "effect": "Game End: Sell 3 tickets/indie artist on this stage", "genreMatchEffect": ""}, {"name": "CMAT", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Indie", "tickets": 4, "effect": "Game End: Sell 1 ticket/artist you have played in your festival.", "genreMatchEffect": ""}, {"name": "Florence & The Machine", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "If you have less amenities in your festival than another player, draw 3 artists.", "genreMatchEffect": ""}, {"name": "Lana Del Rey", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "If you have less artists in your hand than another player, place an amenity from the amenity dice.", "genreMatchEffect": ""}, {"name": "Hozier", "fame": 4, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Electronic, Indie", "tickets": 5, "effect": "If Headliner: Sell 6 tickets.", "genreMatchEffect": ""}, {"name": "Tame Impala", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "If you have less Fame than another player, play another artist.", "genreMatchEffect": ""}, {"name": "Gorillaz", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Hip Hop, Indie", "tickets": 6, "effect": "Special Guest: 4", "genreMatchEffect": ""}, {"name": "The Cure", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Indie", "tickets": 6, "effect": "If the player before you took the book action, sell 4 tickets.", "genreMatchEffect": ""}, {"name": "Bella Labelle", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 0, "effect": "Place 1 amenity of your choice. This artist counts as all genres (so can complete any microtrend).", "genreMatchEffect": ""}, {"name": "Backseat", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Funk", "tickets": 3, "effect": "Draw artists from the pool who are not the same genre as this card and gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Parcels", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 2, "effect": "If this completes a microtrend, place two amenities of your choice.", "genreMatchEffect": ""}, {"name": "Vulfpeck", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 2, "effect": "If this completes a microtrend, place an amenity and draw 2 artists.", "genreMatchEffect": ""}, {"name": "Afrika Bambaataa", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "Play an additional artist you can afford or gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Parliament", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Rock, Funk", "tickets": 5, "effect": "If this completes a microtrend, draw 4 artists.", "genreMatchEffect": ""}, {"name": "Toro y Moi", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Funk, Indie", "tickets": 4, "effect": "If you have less amenities in your festival than another player, draw 3 artists.", "genreMatchEffect": ""}, {"name": "Khruangbin", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "If Opening Set: Open a stage.", "genreMatchEffect": ""}, {"name": "Thundercat", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 7, "effect": "Game End: Sell 3 tickets/Funk on this stage.", "genreMatchEffect": ""}, {"name": "Betty Davis", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Rock, Funk", "tickets": 7, "effect": "Game End: Sell 1 ticket/Microtrend you have completed in your festival.", "genreMatchEffect": ""}, {"name": "Earth, Wind & Fire", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Chaka Khan", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 6, "effect": "Special Guest: 2", "genreMatchEffect": ""}, {"name": "Nile Rogers & Chic", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Silk Sonic", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 3, "portalooCost": 1, "genre": "Pop, Funk", "tickets": 9, "effect": "If this completes a microtrend, sell 1 ticket.", "genreMatchEffect": ""}, {"name": "Prince", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 3, "portalooCost": 1, "genre": "Rock, Funk", "tickets": 9, "effect": "", "genreMatchEffect": ""}];
+const ALL_ARTISTS = [{"name": "Kara Okay", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 1, "effect": "Immediately gain 1 Fame. Choose 1 Fame Card from a set of 5.", "genreMatchEffect": ""}, {"name": "Sadchild", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 2, "effect": "Draw artists until your hand exceeds a total of 10 tickets (stop as soon as you exceed that amount).", "genreMatchEffect": ""}, {"name": "Mikerophone", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "If no other player has higher Fame than you, draw 3 artists and place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Rebecca Black", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Remi Wolf", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop", "tickets": 3, "effect": "Select an active Fame Card you own. You no longer receive the benefit. Draw 5 artists.", "genreMatchEffect": ""}, {"name": "Jamiroquai", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 4, "effect": "Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Jonas Brothers", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop", "tickets": 4, "effect": "If no other player has higher Fame than you, open a stage.", "genreMatchEffect": ""}, {"name": "Nelly", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop, Hip Hop", "tickets": 5, "effect": "Middle Slot: Place an amenity from the available dice.", "genreMatchEffect": ""}, {"name": "Maroon 5", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Pop", "tickets": 4, "effect": "Draw 1 artist.", "genreMatchEffect": ""}, {"name": "Clairo", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Pop, Indie", "tickets": 4, "effect": "Game End: Sell 3 tickets/pop artist on this stage.", "genreMatchEffect": ""}, {"name": "RAYE", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 6, "effect": "Select an active Fame Card you own. You no longer receive the benefit. Place 2 amenities from the amenity die.", "genreMatchEffect": ""}, {"name": "Chappell Roan", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 6, "effect": "Game End: Sell 8 tickets if all artists on this stage cost a total of more than 8 Fame.", "genreMatchEffect": ""}, {"name": "Billie Eilish", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Dua Lipa", "fame": 4, "vp": 0, "campCost": 0, "securityCost": 2, "cateringCost": 2, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "If no other player has higher Fame than you, draw 1 artist.", "genreMatchEffect": ""}, {"name": "Beyonce", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Pop", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Coldplay", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Rock", "tickets": 9, "effect": "", "genreMatchEffect": ""}, {"name": "Lady Gaga", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 2, "genre": "Pop, Electronic", "tickets": 9, "effect": "If Headliner: Sell 1 ticket.", "genreMatchEffect": ""}, {"name": "Sitting Ducks", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Rock", "tickets": 1, "effect": "Roll 2 amenity dice. Gain all of the outcomes.", "genreMatchEffect": ""}, {"name": "Beabadoobee", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 2, "effect": "Draw 2 artists. You may refresh the artist pool once this turn.", "genreMatchEffect": ""}, {"name": "The Darkness", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "Refresh the amenity die. Gain any one of the amenities rolled.", "genreMatchEffect": ""}, {"name": "Limp Bizkit", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Rock", "tickets": 5, "effect": "Play an artist from the artist pool if you can afford them.", "genreMatchEffect": ""}, {"name": "No Doubt", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Vampire Weekend", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "Take an amenity from the amenity die.", "genreMatchEffect": ""}, {"name": "Blondie", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 5, "effect": "If Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Beastie Boys", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Rock", "tickets": 5, "effect": "Draw 2 artists. You may refresh the artist pool before or after.", "genreMatchEffect": ""}, {"name": "Royal Blood", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 4, "effect": "If the previous player took the browse action, draw 2 artists.", "genreMatchEffect": ""}, {"name": "Heart", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Rock", "tickets": 6, "effect": "Game End: Sell 3 tickets/rock artist on this stage.", "genreMatchEffect": ""}, {"name": "The Kooks", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Rock, Indie", "tickets": 5, "effect": "Game End: Sell 1 ticket for each artist in your hand.", "genreMatchEffect": ""}, {"name": "Wet Leg", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 0, "portalooCost": 2, "genre": "Rock", "tickets": 6, "effect": "If the previous player took the build action, draw 2 artists.", "genreMatchEffect": ""}, {"name": "Radiohead", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Rock, Electronic", "tickets": 9, "effect": "If the previous player gained 1 Fame on their turn, gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Rage Against the Machine", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Funk", "tickets": 9, "effect": "", "genreMatchEffect": ""}, {"name": "Olivia Rodrigo", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Pop, Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Arctic Monkeys", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Fleetwood Mac", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 3, "genre": "Rock", "tickets": 8, "effect": "If the previous player took the book action, sell 3 tickets.", "genreMatchEffect": ""}, {"name": "Lil Angry", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 1, "effect": "Continue drawing artists from the deck until you pick up a 4 or 5 Fame artist. Keep that artist and discard the rest.", "genreMatchEffect": ""}, {"name": "Loosey Goosey", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Hip Hop", "tickets": 3, "effect": "Open a stage.", "genreMatchEffect": ""}, {"name": "Knucks", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "If Opening Set: Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Eve", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "Draw 3 artists.", "genreMatchEffect": ""}, {"name": "KAYTRANADA", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Electronic", "tickets": 4, "effect": "If Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Lil Dicky", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop", "tickets": 4, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Salt-N-Pepa", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Hip Hop", "tickets": 3, "effect": "Special Guest: 3", "genreMatchEffect": ""}, {"name": "Ja Rule", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 4, "effect": "Discard 1 amenity of your choice. Gain 1 Fame and draw 2 artists.", "genreMatchEffect": ""}, {"name": "Little Simz", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Indie", "tickets": 3, "effect": "If Opening Set: Draw 3 artists.", "genreMatchEffect": ""}, {"name": "Ms Banks", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop", "tickets": 4, "effect": "Special Guest: 2", "genreMatchEffect": ""}, {"name": "Doja Cat", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop", "tickets": 5, "effect": "Game End: Sell 3 tickets/hip hop artist on this stage.", "genreMatchEffect": ""}, {"name": "Dave", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 6, "effect": "Discard 1 amenity of your choice. Gain 1 Fame.", "genreMatchEffect": ""}, {"name": "De La Soul", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop", "tickets": 6, "effect": "Special Guest: 7", "genreMatchEffect": ""}, {"name": "Snoop Dogg", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Loyle Carner", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 2, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop, Rock", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "Kendrick Lamar", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 3, "cateringCost": 1, "portalooCost": 2, "genre": "Hip Hop", "tickets": 8, "effect": "Special Guest: 3", "genreMatchEffect": ""}, {"name": "Eminem", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 3, "cateringCost": 1, "portalooCost": 1, "genre": "Hip Hop", "tickets": 8, "effect": "", "genreMatchEffect": ""}, {"name": "CRUEL MISTRESS", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 1, "effect": "If Opening Set: Gain 2 amenities (stages, or Fame included) from the amenity dice.", "genreMatchEffect": ""}, {"name": "Horsegiirl", "fame": 0, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 2, "effect": "Draw 5 artists from the deck. Keep 2.", "genreMatchEffect": ""}, {"name": "Grimes", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "If Middle Slot: Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "FISHER", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 3, "effect": "If Opening Set: Play an artist you can afford from your hand.", "genreMatchEffect": ""}, {"name": "CHVRCHES", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "If Headliner: Place an amenity of your choice and open a stage.", "genreMatchEffect": ""}, {"name": "Jamie xx", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Indie", "tickets": 3, "effect": "If Headliner: Open a stage.", "genreMatchEffect": ""}, {"name": "Flume", "fame": 2, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 0, "genre": "Electronic", "tickets": 3, "effect": "Remix (discard 1 artist from your hand and gain its effect this turn).", "genreMatchEffect": ""}, {"name": "Pink Pantheress", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Pop, Electronic", "tickets": 5, "effect": "If Middle Slot: Gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Opolopo", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "Draw 2 artists.", "genreMatchEffect": ""}, {"name": "Peggy Gou", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Electronic", "tickets": 4, "effect": "Game End: Sell 3 tickets/electronic artist on this stage.", "genreMatchEffect": ""}, {"name": "Chase and Status", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic", "tickets": 6, "effect": "Remix (discard 1 artist from your hand and gain its effect this turn).", "genreMatchEffect": ""}, {"name": "The Chemical Brothers", "fame": 3, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Electronic", "tickets": 6, "effect": "Game End: Sell 2 tickets/every full stage.", "genreMatchEffect": ""}, {"name": "Charli XCX", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic", "tickets": 6, "effect": "Place a campsite in your festival.", "genreMatchEffect": ""}, {"name": "Linkin Park", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 2, "cateringCost": 1, "portalooCost": 0, "genre": "Rock, Electronic", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Skrillex", "fame": 4, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Electronic", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Daft Punk", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Electronic", "tickets": 7, "effect": "If Headliner: Sell 5 tickets", "genreMatchEffect": ""}, {"name": "Fatboy Slim", "fame": 5, "vp": 0, "campCost": 3, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Bruised Brothers", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Indie", "tickets": 0, "effect": "Place 1 amenity of your choice and draw 2 artists.", "genreMatchEffect": ""}, {"name": "Djo", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 0, "effect": "Draw artists until you have a hand that totals no higher than 6 Fame (stop as soon as you exceed and keep that artist)", "genreMatchEffect": ""}, {"name": "Two Door Cinema Club", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 1, "effect": "If you have less artists in your hand than another player, gain 1 Fame and place an amenity.", "genreMatchEffect": ""}, {"name": "Mickey Raven", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "Gain an amenity from the amenity dice or draw 2 artists.", "genreMatchEffect": ""}, {"name": "Boygenius", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "If you have less amenities in your festival than another player, gain 1 Fame and draw 3 artists.", "genreMatchEffect": ""}, {"name": "The Kooks (Indie)", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "If you have less artists in your hand than another player, gain 1 Fame and place an amenity.", "genreMatchEffect": ""}, {"name": "Christine & The Queens", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 2, "effect": "Place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Metronomy", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 0, "portalooCost": 1, "genre": "Funk, Indie", "tickets": 3, "effect": "Gain 1 Fame or place an amenity of your choice.", "genreMatchEffect": ""}, {"name": "Mitski", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 4, "effect": "Game End: Sell 3 tickets/indie artist on this stage", "genreMatchEffect": ""}, {"name": "Suki Waterhouse", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 3, "effect": "Gain 1 Fame or open a stage.", "genreMatchEffect": ""}, {"name": "CMAT", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Pop, Indie", "tickets": 4, "effect": "Game End: Sell 1 ticket/artist you have played in your festival.", "genreMatchEffect": ""}, {"name": "Florence & The Machine", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "If you have less amenities in your festival than another player, draw 3 artists.", "genreMatchEffect": ""}, {"name": "Lana Del Rey", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Indie", "tickets": 4, "effect": "If you have less artists in your hand than another player, place an amenity from the amenity dice.", "genreMatchEffect": ""}, {"name": "Hozier", "fame": 4, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Electronic, Indie", "tickets": 5, "effect": "If Headliner: Sell 6 tickets.", "genreMatchEffect": ""}, {"name": "Tame Impala", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 2, "genre": "Indie", "tickets": 5, "effect": "If you have less Fame than another player, play another artist.", "genreMatchEffect": ""}, {"name": "Gorillaz", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 1, "portalooCost": 2, "genre": "Hip Hop, Indie", "tickets": 6, "effect": "Special Guest: 4", "genreMatchEffect": ""}, {"name": "The Cure", "fame": 5, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 2, "genre": "Rock, Indie", "tickets": 6, "effect": "If the player before you took the book action, sell 4 tickets.", "genreMatchEffect": ""}, {"name": "Jack of All Trades", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 0, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 0, "effect": "This artist counts as all genres (so can complete any microtrend). Gain 2 amenities of your choice.", "genreMatchEffect": ""}, {"name": "Ensemble", "fame": 0, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Hip Hop, Funk", "tickets": 3, "effect": "Draw artists until you have all six genres in your hand.", "genreMatchEffect": ""}, {"name": "Parcels", "fame": 1, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 2, "effect": "Place an amenity of your choice. If this completes a microtrend, place another amenity of your choice.", "genreMatchEffect": ""}, {"name": "Vulfpeck", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Funk, Indie", "tickets": 2, "effect": "Draw 2 artists. If this completes a microtrend, draw another 2 artists.", "genreMatchEffect": ""}, {"name": "Afrika Bambaataa", "fame": 1, "vp": 0, "campCost": 0, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "Play an additional artist you can afford or gain 1 Fame.", "genreMatchEffect": ""}, {"name": "Parliament", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 0, "genre": "Rock, Funk", "tickets": 5, "effect": "Place an amenity of your choice. If this completes a microtrend, draw 2 artists.", "genreMatchEffect": ""}, {"name": "Toro y Moi", "fame": 2, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Funk, Indie", "tickets": 4, "effect": "If you have less amenities in your festival than another player, draw 3 artists.", "genreMatchEffect": ""}, {"name": "DJ Quik", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 0, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 6, "effect": "This artist counts as all genres (so can complete any microtrend).", "genreMatchEffect": ""}, {"name": "Khruangbin", "fame": 2, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 5, "effect": "If Opening Set: Open a stage.", "genreMatchEffect": ""}, {"name": "L'Imperatrice", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 1, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 7, "effect": "Remix (discard 1 artist from your hand and gain its effect this turn).", "genreMatchEffect": ""}, {"name": "Thundercat", "fame": 3, "vp": 0, "campCost": 1, "securityCost": 0, "cateringCost": 2, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 7, "effect": "Game End: Sell 3 tickets/Funk on this stage.", "genreMatchEffect": ""}, {"name": "Betty Davis", "fame": 3, "vp": 0, "campCost": 0, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Rock, Funk", "tickets": 7, "effect": "Game End: Sell 1 ticket/Microtrend you have completed in your festival.", "genreMatchEffect": ""}, {"name": "Earth, Wind & Fire", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 0, "cateringCost": 2, "portalooCost": 1, "genre": "Electronic, Funk", "tickets": 7, "effect": "", "genreMatchEffect": ""}, {"name": "Chaka Khan", "fame": 4, "vp": 0, "campCost": 1, "securityCost": 1, "cateringCost": 2, "portalooCost": 1, "genre": "Hip Hop, Funk", "tickets": 6, "effect": "Special Guest: 2", "genreMatchEffect": ""}, {"name": "Nile Rogers & Chic", "fame": 4, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 2, "portalooCost": 0, "genre": "Pop, Funk", "tickets": 6, "effect": "", "genreMatchEffect": ""}, {"name": "Silk Sonic", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 3, "portalooCost": 1, "genre": "Pop, Funk", "tickets": 9, "effect": "If this completes a microtrend, sell 1 ticket.", "genreMatchEffect": ""}, {"name": "Prince", "fame": 5, "vp": 0, "campCost": 2, "securityCost": 1, "cateringCost": 3, "portalooCost": 1, "genre": "Rock, Funk", "tickets": 9, "effect": "", "genreMatchEffect": ""}];
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
@@ -3405,11 +3405,28 @@ export default function Headliners() {
     if (curDeck.length > 0) { onReady(curDeck); return; }
     const curDisc = discardPileRef.current || discardPile || [];
     if (curDisc.length === 0) { onReady([]); return; } // genuinely nothing to draw
+    // v199.162: F0 cards are initial-draft-only. If any F0 ended up in the discard pile
+    // (via Remix or a played F0), it stays out of the game forever — strip it from the
+    // reshuffle. If after stripping there's nothing left to shuffle in, treat the deck
+    // as genuinely exhausted.
+    const kept = curDisc.filter(a => (a?.fame || 0) > 0);
+    const dropped = curDisc.length - kept.length;
+    if (kept.length === 0) {
+      // Clear the F0-only discard so it doesn't pile up uselessly, then exhausted.
+      if (dropped > 0) {
+        setDiscardPile([]);
+        discardPileRef.current = [];
+        addLog("🎴 Deck", `Deck empty — ${dropped} 0-Fame card${dropped === 1 ? "" : "s"} in discard removed from game (0-Fame cards never re-enter the deck).`);
+      }
+      onReady([]);
+      return;
+    }
     // Show the shuffle overlay, wait, reshuffle, call onReady.
     setDeckReshuffleAnimation("Reshuffling discard into deck…");
-    addLog("🎴 Deck", `Deck empty — reshuffling ${curDisc.length} discarded card${curDisc.length === 1 ? "" : "s"} back in.`);
+    const dropNote = dropped > 0 ? ` (${dropped} 0-Fame card${dropped === 1 ? "" : "s"} removed from game)` : "";
+    addLog("🎴 Deck", `Deck empty — reshuffling ${kept.length} discarded card${kept.length === 1 ? "" : "s"} back in${dropNote}.`);
     setTimeout(() => {
-      const shuffled = [...curDisc];
+      const shuffled = [...kept];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -5376,6 +5393,17 @@ export default function Headliners() {
   // deck mid-draw, we pause ~900ms to shuffle the discard pile into the deck with a
   // visual, then the effect continues. null when idle; set to a short label while shown.
   const [deckReshuffleAnimation, setDeckReshuffleAnimation] = useState(null);
+  // v199.161: Remix picker (Flume, Chase and Status, L'Imperatrice). Shows the player's
+  // hand; they pick one artist to discard and fire its effect this turn. Game End-only
+  // effects don't fire (the card is still discarded). Shape: { pid, cardName }.
+  const [remixPicker, setRemixPicker] = useState(null);
+  // v199.161: Fame-kill picker (Remi Wolf, RAYE). Player selects one of their active
+  // Fame cards to disable (actually: moved to the Fame discard pile so it stops firing).
+  // Then the trailing effect runs. Shape: { pid, cardName, trailingEffect }.
+  const [fameKillPicker, setFameKillPicker] = useState(null);
+  // v199.161: Discard-amenity picker (Ja Rule, Dave). Player picks one amenity type they
+  // own and loses one of it. Shape: { pid, cardName, remaining }.
+  const [discardAmenityPicker, setDiscardAmenityPicker] = useState(null);
   // v199.133: previous-turn trackers for new artist conditional effects.
   // lastActionByPidRef: { pid: "build"|"book"|"browse"|null } — the main action from each
   // player's most recent completed turn. Read when a new artist with "If the previous
@@ -9517,11 +9545,48 @@ export default function Headliners() {
     // suppression flag set so the normal pick-1-of-3 cascade doesn't fire (would collide
     // with the custom M-card picker), then opens the custom picker. Must come BEFORE the
     // generic sentence splitter.
-    const koMatch = raw.match(/immediately\s+gain\s+(\d+)\s+fame\.\s+choose\s+(both|one|two|three|four|five|\d+)\s+fame\s+cards?\s+from\s+a\s+set\s+of\s+(\d+)/i);
+    // v199.161: Fame-kill compound — "Select an active Fame Card you own. You no longer
+    // receive the benefit. <trailing effect>." (Remi Wolf: Draw 5; RAYE: Place 2 amenities).
+    // Opens the Fame-kill picker; player picks one of their active Fame cards; it's moved
+    // to the Fame discard pile. Then the trailing effect fires. MUST come before the
+    // generic period/compound splitters so the three sentences stay bound together.
+    const fkMatch = raw.match(/^select\s+an\s+active\s+fame\s+card\s+you\s+own\.\s*you\s+no\s+longer\s+receive\s+the\s+benefit\.\s*(.+)$/i);
+    if (fkMatch) {
+      const trailing = fkMatch[1].trim();
+      const activeCards = (playerFameCardsRef.current[pid] || []);
+      if (activeCards.length === 0) {
+        addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} — no active Fame cards to disable; skipping kill, trailing effect still fires.`);
+        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, trailing), 60);
+        return true;
+      }
+      if (isAI) {
+        // Discard the "least useful" card: prefer reactive opp_* and after_* over
+        // game_end / self_bonus. Among those, pick randomly.
+        const scored = activeCards.map((c, i) => {
+          const trig = c.trigger || "";
+          let score = 0;
+          if (trig.startsWith("opp_")) score += 3;        // reactive — rarely-triggered
+          else if (trig.startsWith("after_")) score += 2; // after-action — common
+          else if (trig === "game_end") score += 5;       // most durable — kill last
+          else score += 1;
+          return { c, i, score };
+        }).sort((a, b) => a.score - b.score);
+        const victim = scored[0].c;
+        setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).filter(c => c.instanceId !== victim.instanceId) }));
+        setFameDiscardPile(d => [...d, victim]);
+        addLog("🔥 Fame", `${festival} 🤖: ${artist.name} → discarded Fame card "${victim.name}".`);
+        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, trailing), 150);
+      } else {
+        setFameKillPicker({ pid, cardName: artist.name, trailingEffect: trailing });
+      }
+      return true;
+    }
+
+    const koMatch = raw.match(/immediately\s+gain\s+(\d+)\s+fame\.\s+choose\s+(both|your|one|two|three|four|five|\d+)\s+fame\s+cards?\s+from\s+a\s+set\s+of\s+(\d+)/i);
     if (koMatch) {
       const fameN = parseInt(koMatch[1], 10);
-      // "both" always resolves to 2; otherwise accept word or digit forms.
-      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, both: 2 };
+      // v199.161: "your" (as in "choose your Fame card") resolves to 1 ("the one you want").
+      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, both: 2, your: 1 };
       const pickN = wordToNum[koMatch[2].toLowerCase()] || parseInt(koMatch[2], 10);
       const setN = parseInt(koMatch[3], 10);
       suppressFameCardDrawRef.current = true;
@@ -9554,14 +9619,17 @@ export default function Headliners() {
       }
     }
 
-    // v199.149/v199.155: compound sub-effects — "A, B and C" (comma + and) splits into
-    // 3 parts; "A and B" splits into 2. Covers Mikerophone, Two Door Cinema Club,
-    // Boygenius, Kooks (Indie), Vulfpeck's "place an amenity and draw 2 artists",
-    // Bruised Brothers "Gain 1 Fame, draw 2 artists and place 1 amenity". Skips the
-    // exact CMAT special case.
-    if ((t.includes(" and ") || t.includes(",")) && t !== "draw 1 artist and place 1 amenity from the dice") {
-      // Normalize "A, B and C" to "A and B and C" so a single split works.
-      const normalized = raw.replace(/,\s+/g, " and ");
+    // v199.149/v199.155/v199.160: compound sub-effects — "A, B and C" (comma + and)
+    // splits into 3 parts; "A and B" splits into 2. Covers Mikerophone, Two Door Cinema
+    // Club, Boygenius, Kooks (Indie), Vulfpeck's "place an amenity and draw 2 artists".
+    // Skips: (a) the CMAT exact-string case, (b) ANY effect that contains parentheses —
+    // commas inside parenthetical notes like CRUEL MISTRESS's "(stages, or Fame included)"
+    // are rhetorical, not compound separators.
+    const hasParens = raw.includes("(") || raw.includes(")");
+    if ((t.includes(" and ") || (!hasParens && t.includes(","))) && t !== "draw 1 artist and place 1 amenity from the dice") {
+      // Normalize "A, B and C" to "A and B and C" so a single split works. Only applied
+      // when there are no parens (guard above).
+      const normalized = hasParens ? raw : raw.replace(/,\s+/g, " and ");
       const parts = normalized.split(/\s+and\s+/i).map(p => p.trim().replace(/\.+$/, "")).filter(p => p.length > 0);
       if (parts.length >= 2 && parts.every(p => p.length > 2)) {
         parts.forEach((p, i) => {
@@ -9638,8 +9706,10 @@ export default function Headliners() {
     // Place an amenity of your choice. v199.149: also matches the bare "place an amenity"
     // phrasing (post-"and"-split from Two Door / Boygenius / Kooks Indie / Vulfpeck effects)
     // and the "place N amenities of your choice" plural form (Parcels: "place two amenities").
-    const placeMulti = t.match(/^place\s+(one|two|three|four|five|\d+)\s+amenit(?:y|ies)\s+of your choice$/);
-    const placeOne = t === "place an amenity of your choice" || t === "place an amenity" || t === "place 1 amenity of your choice" || t === "place 1 amenity";
+    // v199.161: accept "gain" as a synonym for "place" throughout — Jack of All Trades
+    // uses "Gain 2 amenities of your choice" (same mechanic as "Place 2").
+    const placeMulti = t.match(/^(?:place|gain)\s+(one|two|three|four|five|\d+)\s+amenit(?:y|ies)\s+of your choice$/);
+    const placeOne = t === "place an amenity of your choice" || t === "place an amenity" || t === "place 1 amenity of your choice" || t === "place 1 amenity" || t === "gain an amenity of your choice" || t === "gain 1 amenity of your choice";
     if (placeOne || placeMulti) {
       const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5 };
       const n = placeMulti ? (wordToNum[placeMulti[1]] || parseInt(placeMulti[1], 10) || 1) : 1;
@@ -9655,6 +9725,127 @@ export default function Headliners() {
         }
       } else {
         setFameFreeAmenityPicker({ pid, cardName: artist.name, remaining: n });
+      }
+      return true;
+    }
+
+    // v199.161: "Refresh the amenity die." (The Darkness, first half). Rolls a fresh
+    // set of dice into the pool. Second sentence ("Gain any one of the amenities rolled")
+    // fires separately via the period splitter and opens the dice-claim picker below.
+    if (t === "refresh the amenity die" || t === "refresh the amenity dice") {
+      const fresh = rollDice();
+      setDice(fresh);
+      addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} → refreshed the amenity dice.`);
+      if (!isAI) showFloatingBonus("🎲 Dice refreshed!", "#fbbf24");
+      return true;
+    }
+
+    // v199.161: "Gain any one of the amenities rolled." (The Darkness, second half).
+    // Opens the dice-claim picker for 1 pick, any face. AI auto-picks the first amenity-face.
+    if (t === "gain any one of the amenities rolled" || t === "gain any one of the amenity rolled") {
+      if (isAI) {
+        const amenityTypes = ["campsite", "security", "catering", "portaloo"];
+        const picked = dice.findIndex(d => amenityTypes.includes(d));
+        if (picked >= 0) {
+          const dieType = dice[picked];
+          applyArtistSubEffect(pid, artist, stageIdx, `Place a ${dieType} in your festival.`);
+          setDice(prev => prev.filter((_, i) => i !== picked));
+        } else {
+          addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} — no amenity dice to claim.`);
+        }
+      } else {
+        setDiceClaimPicker({ pid, count: 1, filter: "any", cardName: artist.name });
+      }
+      return true;
+    }
+
+    // v199.161: "Place N amenities from the amenity die(/dice)" — RAYE's trailing sub-effect.
+    // Reuses the dice-claim picker with count=N, filter=amenity (not any-face).
+    m = t.match(/^place\s+(one|two|three|four|five|\d+)\s+amenit(?:y|ies)\s+from\s+the\s+amenity\s+di(?:e|ce)$/);
+    if (m) {
+      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+      const n = wordToNum[m[1]] || parseInt(m[1], 10) || 1;
+      if (isAI) {
+        const amenityTypes = ["campsite", "security", "catering", "portaloo"];
+        const curDice = [...dice];
+        for (let k = 0; k < n; k++) {
+          const picked = curDice.findIndex(d => amenityTypes.includes(d));
+          if (picked >= 0) {
+            const dieType = curDice[picked]; curDice.splice(picked, 1);
+            setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Place a ${dieType} in your festival.`), k * 150);
+          } else {
+            // No matching die — grant a random amenity instead.
+            const dieType = amenityTypes[Math.floor(Math.random() * 4)];
+            setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Place a ${dieType} in your festival.`), k * 150);
+          }
+        }
+        setDice(curDice);
+      } else {
+        setDiceClaimPicker({ pid, count: n, filter: "amenity", cardName: artist.name });
+      }
+      return true;
+    }
+
+    // v199.161: "Discard N amenity of your choice." (Ja Rule, Dave). Opens the discard-
+    // amenity picker. AI auto-picks the amenity type it has most of (least painful).
+    m = t.match(/^discard\s+(one|two|three|four|five|1|2|3|4|5)\s+amenit(?:y|ies)\s+of\s+your\s+choice$/);
+    if (m) {
+      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+      const n = wordToNum[m[1]] || parseInt(m[1], 10) || 1;
+      if (isAI) {
+        for (let k = 0; k < n; k++) {
+          setTimeout(() => {
+            const pdNow = (playerDataRef.current || playerData)[pid] || {};
+            const am = pdNow.amenities || {};
+            const types = ["campsite", "security", "catering", "portaloo"].filter(t => (am[t] || 0) > 0);
+            if (types.length === 0) {
+              addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} — no amenities to discard.`);
+              return;
+            }
+            // Pick highest-count (least impact per discard)
+            types.sort((a, b) => (am[b] || 0) - (am[a] || 0));
+            const dropType = types[0];
+            // Decrement across the first field that has one.
+            setPlayerData(p => {
+              const cur = p[pid]; if (!cur) return p;
+              const fields = [...(cur.fields || [])];
+              const fIdx = fields.findIndex(f => (f?.[dropType] || 0) > 0);
+              if (fIdx < 0) return p;
+              fields[fIdx] = { ...fields[fIdx], [dropType]: Math.max(0, (fields[fIdx][dropType] || 0) - 1) };
+              const amCounts = { ...(cur.amenities || {}) };
+              amCounts[dropType] = Math.max(0, (amCounts[dropType] || 0) - 1);
+              return { ...p, [pid]: { ...cur, fields, amenities: amCounts } };
+            });
+            addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} → discarded 1 ${dropType}.`);
+          }, k * 150);
+        }
+      } else {
+        setDiscardAmenityPicker({ pid, cardName: artist.name, remaining: n });
+      }
+      return true;
+    }
+
+    // v199.161: Remix — "Remix (discard 1 artist from your hand and gain its effect this
+    // turn)." Covers Flume, Chase and Status, L'Imperatrice. Opens the remix picker;
+    // player picks a hand card, it's discarded, its effect fires. Game End effects don't
+    // fire per user spec (the card is discarded regardless).
+    if (/^remix\s*\(/.test(t) || t === "remix") {
+      const pdNow = (playerDataRef.current || playerData)[pid] || {};
+      const hand = (pdNow.hand || []).filter(a => a && !a.isFavour);
+      if (hand.length === 0) {
+        addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} — Remix: hand empty, skipped.`);
+        return true;
+      }
+      if (isAI) {
+        // Pick the artist with the best in-turn effect (highest fame + tickets, skipping
+        // Game End-only cards).
+        const scored = hand
+          .map((a, i) => ({ a, i, score: (a.fame || 0) + (a.tickets || 0) - (/^game end:/i.test(a.effect || "") ? 100 : 0) }))
+          .sort((x, y) => y.score - x.score);
+        const choice = scored[0];
+        resolveRemix(pid, choice.i, artist.name);
+      } else {
+        setRemixPicker({ pid, cardName: artist.name });
       }
       return true;
     }
@@ -9885,9 +10076,9 @@ export default function Headliners() {
     // Fame draw with configurable pick count and set size. Fires AFTER the gain-fame
     // sub-effect (which is split off and fires first, triggering normal 3-card draws —
     // but we SUPPRESS those via a short-term flag so only the custom picker shows).
-    const koSub = t.match(/^choose\s+(both|one|two|three|four|five|\d+)\s+fame\s+cards?\s+from\s+a\s+set\s+of\s+(\d+)$/);
+    const koSub = t.match(/^choose\s+(both|your|one|two|three|four|five|\d+)\s+fame\s+cards?\s+from\s+a\s+set\s+of\s+(\d+)$/);
     if (koSub) {
-      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, both: 2 };
+      const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, both: 2, your: 1 };
       const pickN = wordToNum[koSub[1].toLowerCase()] || parseInt(koSub[1], 10);
       const setN = parseInt(koSub[2], 10);
       const curDeck = [...(fameDeckRef.current || fameDeck)];
@@ -9996,6 +10187,26 @@ export default function Headliners() {
       else setArtistOrChoice({ pid, cardName: artist.name, optA: "Play another artist from your hand", optB: "Gain 1 Fame", artistRef: artist });
       return true;
     }
+    // v199.161: Suki Waterhouse's "Gain 1 Fame or open a stage." AI prefers opening a
+    // stage when it has room (bigger strategic payoff); falls back to Fame otherwise.
+    if (t === "gain 1 fame or open a stage") {
+      if (isAI) {
+        const pdNow = (playerDataRef.current || playerData)[pid] || {};
+        const stageCount = (pdNow.stages || []).length;
+        const canOpen = stageCount < (typeof QUICKYEAR_MAX_STAGES !== "undefined" ? QUICKYEAR_MAX_STAGES : 3);
+        applyArtistSubEffect(pid, artist, stageIdx, canOpen ? "Open a stage." : "Gain 1 Fame.");
+      } else {
+        setArtistOrChoice({ pid, cardName: artist.name, optA: "Gain 1 Fame", optB: "Open a stage", artistRef: artist });
+      }
+      return true;
+    }
+    // v199.161: Mickey Raven's "Gain an amenity from the amenity dice or draw 2 artists."
+    // AI defaults to the draw (less context-dependent than a die pick).
+    if (t === "gain an amenity from the amenity dice or draw 2 artists" || t === "gain an amenity from the amenity die or draw 2 artists") {
+      if (isAI) applyArtistSubEffect(pid, artist, stageIdx, "Draw 2 artists.");
+      else setArtistOrChoice({ pid, cardName: artist.name, optA: "Place an amenity from the amenity dice", optB: "Draw 2 artists", artistRef: artist });
+      return true;
+    }
 
     // Play an artist (various phrasings). v199.134: wired to the extraPlayPicker modal.
     if (t === "play an artist from the artist pool if you can afford them") {
@@ -10016,6 +10227,45 @@ export default function Headliners() {
       addLog("🎸 Artist Effect", `${artist?.name || "?"}: effect "${text}" failed (${err.message}). Skipped.`);
       return true;
     }
+  };
+
+  // v199.161: Remix — discard the chosen hand-card and fire its effect this turn.
+  // handIdx is the index into the player's hand. hostCardName is the Remix artist's name
+  // (Flume / Chase and Status / L'Imperatrice), used only for the log line. Game End-only
+  // effects don't fire per user spec; the card is still discarded.
+  const resolveRemix = (pid, handIdx, hostCardName) => {
+    const pdNow = (playerDataRef.current || playerData)[pid] || {};
+    const festival = players.find(p => p.id === pid)?.festivalName || "?";
+    const isAI = players.find(p => p.id === pid)?.isAI;
+    const hand = pdNow.hand || [];
+    const picked = hand[handIdx];
+    if (!picked) {
+      addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: Remix of ${hostCardName} — hand card gone, skipped.`);
+      return;
+    }
+    // Discard the card from the hand.
+    setPlayerData(p => {
+      const cur = p[pid]; if (!cur) return p;
+      const newHand = (cur.hand || []).filter((_, i) => i !== handIdx);
+      return { ...p, [pid]: { ...cur, hand: newHand } };
+    });
+    setDiscardPile(d => [...d, picked]);
+    const eff = (picked.effect || "").trim();
+    const isGameEndOnly = /^game end:/i.test(eff);
+    if (!eff) {
+      addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: Remix (${hostCardName}) → discarded ${picked.name} (no effect to copy).`);
+      return;
+    }
+    if (isGameEndOnly) {
+      addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: Remix (${hostCardName}) → discarded ${picked.name}, but Game End effects don't fire mid-game.`);
+      return;
+    }
+    addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: Remix (${hostCardName}) → copying ${picked.name}'s effect: "${eff}"`);
+    // Fire the effect. slotIdx=-1 (not on a stage); slotCount=1 so "If Opening Set"
+    // conditionals pass (most generous reading of a Remix).
+    setTimeout(() => {
+      try { fireNewArtistEffect(picked, pid, -1, 0); } catch (err) { console.error("resolveRemix fire error", err); }
+    }, 120);
   };
 
   // v199.134: resolve the "Play another artist from <source>" effect. For humans, open the
@@ -12517,10 +12767,16 @@ export default function Headliners() {
   };
 
   const startGame = () => {
-    // Build the full deck: all artists minus those drafted by players
+    // Build the full deck: all artists minus those drafted by players.
+    // v199.162: ALSO strip every 0-Fame artist from the main deck. F0 cards are
+    // initial-draft-only — once the draft is over, they never appear in the artist
+    // deck or pool again. Any F0 cards left in draftRemaining0 / undraftedArtists are
+    // silently dropped here. The pool is filled from the (now F0-free) deck, so it
+    // inherits the filter; drawFromDeckWithReshuffle also strips F0s from the discard
+    // when reshuffling so a played F0 (via Remix or otherwise) can't re-enter the game.
     const draftedNames = new Set();
     players.forEach(p => { (playerData[p.id]?.hand || []).forEach(a => draftedNames.add(a.name)); });
-    const remainingArtists = ALL_ARTISTS.filter(a => !draftedNames.has(a.name));
+    const remainingArtists = ALL_ARTISTS.filter(a => !draftedNames.has(a.name) && (a.fame || 0) > 0);
     // Shuffle undrafted offers back in with the rest
     const fullDeck = shuffle([...remainingArtists]);
     const pool = fullDeck.splice(0, 5);
@@ -14967,8 +15223,16 @@ export default function Headliners() {
       // doesn't go through the normal die-selection UI).
       const _selectedDieFace = selectedDie || _amenityTypeForOpts;
       const trigPlayer = players.find(pl => pl.id === trigPid);
+      // v199.159: snapshot the player's current Fame-card instance IDs. The after-action
+      // check runs at t+120ms, but logFameGain from a microtrend claim triggered BY this
+      // same action can draw a NEW card at t+80ms. Without this snapshot, the newly-drawn
+      // after_build card auto-fires on the Build it just reached the tray from — the
+      // "AI builds Portaloo, draws Gain-1-Amenity from microtrend, instantly builds a
+      // second Portaloo in the same action" chain. Only cards present when the action
+      // completed are eligible to auto-fire.
+      const cardsAtActionTime = new Set((playerFameCardsRef.current[trigPid] || []).map(c => c.instanceId).filter(Boolean));
       setTimeout(() => {
-        const cards = (playerFameCardsRef.current[trigPid] || []);
+        const cards = (playerFameCardsRef.current[trigPid] || []).filter(c => c.instanceId && cardsAtActionTime.has(c.instanceId));
         const triggerType = _wasBuild ? "after_build" : _wasBook ? "after_book" : _wasBrowse ? "after_browse" : null;
         if (triggerType) {
           const matchingCards = cards.filter(c => c.trigger === triggerType);
@@ -21353,6 +21617,122 @@ export default function Headliners() {
                 </div>
               </div>
             </div>, document.body)}
+
+            {/* v199.161: Remix picker — player picks a hand card to discard; its effect fires. */}
+            {remixPicker && remixPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
+              const pdNow = (playerDataRef.current || playerData)[remixPicker.pid] || {};
+              const hand = (pdNow.hand || []).map((a, i) => ({ a, i })).filter(x => x.a && !x.a.isFavour);
+              return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s", overflowY: "auto" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.25))", border: "2px solid #a855f7", boxShadow: "0 0 50px rgba(168,85,247,0.3)", maxWidth: 820, width: "100%", margin: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: "#d8b4fe", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🎚️ Remix</div>
+                    <h2 style={{ color: "#e9d5ff", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>{remixPicker.cardName}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 4px" }}>Pick an artist from your hand to discard — their effect fires this turn (Game End effects don't fire).</p>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+                    {hand.length === 0 && <div style={{ color: "#94a3b8", fontSize: 14, padding: 16 }}>Hand empty.</div>}
+                    {hand.map(({ a, i }) => {
+                      const isGameEnd = /^game end:/i.test(a.effect || "");
+                      return <button key={i} onClick={() => {
+                        setRemixPicker(null);
+                        setTimeout(() => resolveRemix(remixPicker.pid, i, remixPicker.cardName), 60);
+                      }} style={{ padding: "10px 12px", borderRadius: 10, background: "linear-gradient(135deg, #1e1b4b, #0f172a)", border: `2px solid ${isGameEnd ? "#475569" : "#a78bfa"}`, color: "#ede9fe", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", minWidth: 170, maxWidth: 220, opacity: isGameEnd ? 0.6 : 1 }}>
+                        <div style={{ fontWeight: 800, color: "#fcd34d", fontSize: 13 }}>{a.name} <span style={{ color: "#94a3b8", fontWeight: 500 }}>F{a.fame} 🎟️{a.tickets}</span></div>
+                        <div style={{ fontSize: 10, color: "#cbd5e1", marginTop: 4, lineHeight: 1.35 }}>{a.effect || "(no effect)"}</div>
+                        {isGameEnd && <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 3, fontStyle: "italic" }}>Game End — won't fire</div>}
+                      </button>;
+                    })}
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 14 }}>
+                    <button onClick={() => { setRemixPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === remixPicker.pid)?.festivalName || "?"}: Remix of ${remixPicker.cardName} — skipped.`); }} style={{ padding: "8px 16px", borderRadius: 8, background: "transparent", border: "1px solid #64748b", color: "#94a3b8", fontSize: 12, cursor: "pointer" }}>Skip</button>
+                  </div>
+                </div>
+              </div>, document.body);
+            })()}
+
+            {/* v199.161: Fame-kill picker — player picks one active Fame card to discard; trailing effect then fires. */}
+            {fameKillPicker && fameKillPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
+              const active = playerFameCardsRef.current[fameKillPicker.pid] || [];
+              return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s", overflowY: "auto" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(127,29,29,0.4), rgba(76,16,32,0.25))", border: "2px solid #ef4444", boxShadow: "0 0 50px rgba(239,68,68,0.3)", maxWidth: 820, width: "100%", margin: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: "#fecaca", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🗑️ Disable a Fame Card</div>
+                    <h2 style={{ color: "#fecaca", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>{fameKillPicker.cardName}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 4px" }}>Pick one of your active Fame cards. You'll no longer receive its benefit, and then the trailing effect fires.</p>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+                    {active.length === 0 && <div style={{ color: "#94a3b8", fontSize: 14, padding: 16 }}>No active Fame cards.</div>}
+                    {active.map((c, i) => <button key={c.instanceId || i} onClick={() => {
+                      const trailing = fameKillPicker.trailingEffect;
+                      const pid = fameKillPicker.pid;
+                      const art = { name: fameKillPicker.cardName };
+                      setFameKillPicker(null);
+                      setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).filter(x => x.instanceId !== c.instanceId) }));
+                      setFameDiscardPile(d => [...d, c]);
+                      addLog("🔥 Fame", `${players.find(p => p.id === pid)?.festivalName || "?"}: ${fameKillPicker.cardName} → discarded Fame card "${c.name}".`);
+                      setTimeout(() => applyArtistSubEffect(pid, art, -1, trailing), 150);
+                    }} style={{ padding: "10px 12px", borderRadius: 10, background: "linear-gradient(135deg, #1e1b4b, #0f172a)", border: "2px solid #fca5a5", color: "#ede9fe", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", minWidth: 170, maxWidth: 220 }}>
+                      <div style={{ fontWeight: 800, color: "#fde68a", fontSize: 13 }}>{c.name}</div>
+                      <div style={{ fontSize: 10, color: "#cbd5e1", marginTop: 4, lineHeight: 1.35 }}>{c.desc || ""}</div>
+                      <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 3, fontStyle: "italic" }}>Trigger: {c.trigger || "—"}</div>
+                    </button>)}
+                  </div>
+                </div>
+              </div>, document.body);
+            })()}
+
+            {/* v199.161: Discard-amenity picker — player picks N amenities to discard. */}
+            {discardAmenityPicker && discardAmenityPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
+              const pdNow = (playerDataRef.current || playerData)[discardAmenityPicker.pid] || {};
+              const am = pdNow.amenities || {};
+              const types = ["campsite", "security", "catering", "portaloo"];
+              const icons = { campsite: "⛺", security: "🛡️", catering: "🍔", portaloo: "🚽" };
+              const totalLeft = types.reduce((s, t) => s + (am[t] || 0), 0);
+              return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.3s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(127,29,29,0.4), rgba(76,16,32,0.25))", border: "2px solid #f87171", boxShadow: "0 0 50px rgba(248,113,113,0.3)", maxWidth: 540, width: "100%", margin: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: "#fecaca", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🗑️ Discard Amenity</div>
+                    <h2 style={{ color: "#fecaca", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>{discardAmenityPicker.cardName}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 4px" }}>Pick an amenity to discard ({discardAmenityPicker.remaining} left).</p>
+                  </div>
+                  {totalLeft === 0 ? (
+                    <div style={{ textAlign: "center", color: "#94a3b8", padding: 16 }}>No amenities to discard.
+                      <div style={{ marginTop: 12 }}>
+                        <button onClick={() => setDiscardAmenityPicker(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "#334155", border: "1px solid #64748b", color: "#e2e8f0", fontSize: 12, cursor: "pointer" }}>Close</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                      {types.map(ty => {
+                        const n = am[ty] || 0;
+                        if (n === 0) return null;
+                        return <button key={ty} onClick={() => {
+                          const pid = discardAmenityPicker.pid;
+                          setPlayerData(p => {
+                            const cur = p[pid]; if (!cur) return p;
+                            const fields = [...(cur.fields || [])];
+                            const fIdx = fields.findIndex(f => (f?.[ty] || 0) > 0);
+                            if (fIdx < 0) return p;
+                            fields[fIdx] = { ...fields[fIdx], [ty]: Math.max(0, (fields[fIdx][ty] || 0) - 1) };
+                            const amCounts = { ...(cur.amenities || {}) };
+                            amCounts[ty] = Math.max(0, (amCounts[ty] || 0) - 1);
+                            return { ...p, [pid]: { ...cur, fields, amenities: amCounts } };
+                          });
+                          addLog("🎸 Artist Effect", `${players.find(p => p.id === pid)?.festivalName || "?"}: ${discardAmenityPicker.cardName} → discarded 1 ${ty}.`);
+                          const remaining = discardAmenityPicker.remaining - 1;
+                          if (remaining <= 0) setDiscardAmenityPicker(null);
+                          else setDiscardAmenityPicker({ ...discardAmenityPicker, remaining });
+                        }} style={{ padding: "14px 10px", borderRadius: 10, background: "linear-gradient(135deg, #1e1b4b, #0f172a)", border: "2px solid #fca5a5", color: "#ede9fe", fontSize: 14, fontWeight: 700, cursor: "pointer", textAlign: "center" }}>
+                          <div style={{ fontSize: 22 }}>{icons[ty]}</div>
+                          <div style={{ textTransform: "capitalize" }}>{ty}</div>
+                          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{n} owned</div>
+                        </button>;
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>, document.body);
+            })()}
 
             {/* v199.113: Deck peek + rearrange picker. Shows top 3 cards face-up; player
                 clicks in the order they want them placed back on the deck (first click
