@@ -3351,8 +3351,29 @@ export default function Headliners() {
   // and opens the pick-1-of-3 modal. pickFameCard commits the choice to the player and
   // sends the other 2 to the discard pile. Humans see the modal; AI will be auto-picked
   // in a later phase (v199.98). For now, if an AI gains Fame we auto-pick a random one.
+  // v199.182: deferred-draw queue. When a modal is already open and another Fame-card
+  // draw comes in (two Fame gains in quick succession — e.g. Bruised Brothers claiming
+  // an Indie microtrend AND then its own "Gain 1 Fame" sub-effect), the second draw
+  // used to overwrite the first via setFameDrawModal, silently discarding the first
+  // pick. Now the second (and later) draws push { pid, source } into this queue, and
+  // pickFameCard's commit path drains it by firing the next draw.
+  // The fameDrawInProgressRef is a SYNCHRONOUS mirror of "a modal is currently open" —
+  // the React state `fameDrawModal` closure can lag within a single tick (two draws
+  // firing from the same event handler batch would both see null), so the ref ensures
+  // the second one correctly detects the first and queues.
+  const pendingFameDrawQueueRef = useRef([]);
+  const fameDrawInProgressRef = useRef(false);
   const drawFameCardsForPlayer = (pid, source) => {
     if (gameModeRef.current !== "quickYear") return;
+    // v199.182: if a Fame-draw modal is already open for ANY player, queue this draw
+    // instead of overwriting. Humans see each pick-1-of-3 in sequence; AI auto-picks
+    // bypass the modal entirely so they never create a backlog.
+    const player = players.find(pl => pl.id === pid);
+    if (fameDrawInProgressRef.current && !(player && player.isAI)) {
+      pendingFameDrawQueueRef.current.push({ pid, source });
+      addLog("🔥 Fame", `${player?.festivalName || "?"}: another Fame-card pick queued (${source || "fame gain"}).`);
+      return;
+    }
     // v199.120: cap uses weighted slot sum (not card count). The "+2 Fame Card"
     // declares slotWeight: 2, so it counts as 2 slots when checking the 5-slot tray cap.
     const current = (playerFameCardsRef.current[pid] || []);
@@ -3361,7 +3382,6 @@ export default function Headliners() {
       addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (${usedSlots}/5). ${source || "Fame gain"} skipped.`);
       return;
     }
-    const player = players.find(pl => pl.id === pid);
     // v199.128: NO side effects inside setFameDeck updater (was causing React error #185
     // via duplicate updater runs). Read refs, compute flat, commit each state separately.
     let deck = [...(fameDeckRef.current || fameDeck)];
@@ -3401,6 +3421,7 @@ export default function Headliners() {
         setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
       }
     } else {
+      fameDrawInProgressRef.current = true;
       setFameDrawModal({ pid, choices });
     }
   };
@@ -3430,10 +3451,18 @@ export default function Headliners() {
       setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...kept] }));
       setFameDiscardPile(d => [...d, ...discards]);
       setFameDrawModal(null);
+      fameDrawInProgressRef.current = false;
       addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame cards "${kept.map(c => c.name).join('", "')}".`);
       kept.forEach(k => {
         if (k.trigger === "on_draw") setTimeout(() => fireFameCardEffect(pid, k, { onDraw: true }), 60);
       });
+      // v199.182: drain any pending Fame-draw queued while this modal was open.
+      setTimeout(() => {
+        if (pendingFameDrawQueueRef.current.length > 0) {
+          const next = pendingFameDrawQueueRef.current.shift();
+          drawFameCardsForPlayer(next.pid, next.source);
+        }
+      }, 120);
       return;
     }
     // Single-pick path (original behavior).
@@ -3443,10 +3472,18 @@ export default function Headliners() {
     setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
     setFameDiscardPile(d => [...d, ...discards]);
     setFameDrawModal(null);
+    fameDrawInProgressRef.current = false;
     addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame card "${picked.name}".`);
     if (picked.trigger === "on_draw") {
       setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
     }
+    // v199.182: drain any pending Fame-draw queued while this modal was open.
+    setTimeout(() => {
+      if (pendingFameDrawQueueRef.current.length > 0) {
+        const next = pendingFameDrawQueueRef.current.shift();
+        drawFameCardsForPlayer(next.pid, next.source);
+      }
+    }, 120);
   };
 
   // v199.156: Reshuffle the artist discard pile back into the deck when the deck is
@@ -15010,6 +15047,8 @@ export default function Headliners() {
     setFameKeepOnePicker(null);
     setFameFreeAmenityPicker(null);
     setFameDeckPeekPicker(null);
+    pendingFameDrawQueueRef.current = []; // v199.182: drop any queued extra draws
+    fameDrawInProgressRef.current = false;
     setActionTaken(false);
     setTurnAction(null);
     setSelectedArtist(null);
@@ -15673,6 +15712,36 @@ export default function Headliners() {
         addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: Fame draw auto-picked (turn ended) — kept "${choices[0].name}".`);
       }
       setFameDrawModal(null);
+      fameDrawInProgressRef.current = false;
+    }
+    // v199.182: auto-resolve queued draws the same way — pull top 3 per queued entry
+    // and keep the first. Prevents the player losing additional Fame-card picks they
+    // earned but didn't get to click through before the turn ended.
+    if (pendingFameDrawQueueRef.current.length > 0) {
+      const queue = pendingFameDrawQueueRef.current;
+      pendingFameDrawQueueRef.current = [];
+      let deck = [...(fameDeckRef.current || fameDeck)];
+      queue.forEach(entry => {
+        if (entry.pid !== endingPid) return; // sanity: only end-of-turn-player's draws
+        if (deck.length < 3) {
+          const disc = fameDiscardPileRef.current || fameDiscardPile;
+          if (disc.length > 0) {
+            deck = [...deck, ...disc];
+            for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+            setFameDiscardPile([]);
+          }
+        }
+        if (deck.length === 0) return;
+        const take = Math.min(3, deck.length);
+        const choices = deck.slice(0, take);
+        deck = deck.slice(take);
+        const picked = { ...choices[0], receivedInSeason: quickYearSeasonRef.current };
+        const extras = choices.slice(1);
+        setPlayerFameCards(pc => ({ ...pc, [endingPid]: [...(pc[endingPid] || []), picked] }));
+        setFameDiscardPile(d => [...d, ...extras]);
+        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: queued Fame draw auto-picked (turn ended) — kept "${picked.name}".`);
+      });
+      setFameDeck(deck);
     }
     addLog(currentPlayer?.festivalName || "?", "ended their turn");
     // v190: freeze current turn actions as the "last turn" record for this player, then
@@ -24013,7 +24082,7 @@ export default function Headliners() {
               setDraftCards([]); setDraftOrder([]); setDraftIndex(0);
               // v199.104: reset all Fame card system state so Fame starts fresh in the new game.
               setFameDeck([]); setFameDiscardPile([]); setPlayerFameCards({});
-              setFameDrawModal(null); setFameAmenityPending(null); setFameSeasonPicker(null);
+              setFameDrawModal(null); setFameAmenityPending(null); setFameSeasonPicker(null); pendingFameDrawQueueRef.current = []; fameDrawInProgressRef.current = false;
               setFameDrawPicker(null); setFameKeepOnePicker(null); setFameFreeAmenityPicker(null); setFameDeckPeekPicker(null); setPendingReactiveEffects({}); setPendingAfterTriggers({}); setPlayersNeedingSeasonStart({});
               // v199.135: reset artist-effect pickers.
               setSpecialGuestPicker(null); setArtistOrChoice(null); setExtraPlayPicker(null);
