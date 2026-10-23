@@ -9647,7 +9647,13 @@ export default function Headliners() {
     // commas inside parenthetical notes like CRUEL MISTRESS's "(stages, or Fame included)"
     // are rhetorical, not compound separators.
     const hasParens = raw.includes("(") || raw.includes(")");
-    if ((t.includes(" and ") || (!hasParens && t.includes(","))) && t !== "draw 1 artist and place 1 amenity from the dice") {
+    // v199.168: Lil Angry's effect ("Continue drawing...until you have a 4 Fame and a
+    // 5 Fame artist. Keep those artists and discard the rest.") contains " and " THREE
+    // times, so the compound splitter was shredding it into three useless halves and
+    // the effect never fired. Add an exception so the handler further down sees the
+    // full text and matches its regex. Mirrors the existing CMAT exception pattern.
+    const isLilAngryText = /continue\s+drawing\s+artists\s+from\s+the\s+deck\s+until\s+you\s+have\s+a\s+4\s+fame\s+and\s+a\s+5\s+fame/i.test(t);
+    if ((t.includes(" and ") || (!hasParens && t.includes(","))) && t !== "draw 1 artist and place 1 amenity from the dice" && !isLilAngryText) {
       // Normalize "A, B and C" to "A and B and C" so a single split works. Only applied
       // when there are no parens (guard above).
       const normalized = hasParens ? raw : raw.replace(/,\s+/g, " and ");
