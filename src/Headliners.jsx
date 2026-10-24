@@ -4443,6 +4443,7 @@ export default function Headliners() {
     ));
     if (matchIdx < 0) {
       addLog("🔥 Fame", `${festName}: "${card.name}" — trend already claimed or vanished, no effect.`);
+      setFameSeasonPicker(null);
       return;
     }
     let fresh = null;
@@ -4455,8 +4456,11 @@ export default function Headliners() {
     setMicrotrends(nextTrends);
     microtrendsRef.current = nextTrends;
     addLog("🔥 Fame", `${festName}: "${card.name}" — discarded ${trendChoice.label}${fresh ? `, revealed new ${fresh.kind === "genre" ? fresh.genre : AMENITY_LABELS[fresh.amenity]} microtrend` : ""}.`);
-    // Grant the reward.
+    // Grant the reward. The resolver owns the fameSeasonPicker here: every branch that
+    // does NOT open the pool picker must setFameSeasonPicker(null) explicitly, so the
+    // trend-discard picker closes once the resolver takes over.
     if (trendChoice.kind === "amenity") {
+      setFameSeasonPicker(null); // close trend-discard picker; amenity reward uses a different picker
       const amenityType = trendChoice.amenity;
       if (player?.isAI) {
         // AI auto-places inline. Same pattern as fameFreeAmenityPicker's click handler.
@@ -4486,16 +4490,20 @@ export default function Headliners() {
       const emptyStageIndices = stages.map((sa, i) => (Array.isArray(sa) && sa.length < 3) ? i : -1).filter(i => i >= 0);
       if (emptyStageIndices.length === 0) {
         addLog("🔥 Fame", `${festName}: "${card.name}" — no empty stage, genre reward forfeited.`);
+        setFameSeasonPicker(null);
       } else {
         const eligible = pool
           .map((a, i) => ({ a, i }))
           .filter(x => x.a && !x.a.isFavour && (x.a.fame || 0) <= fameHave && (x.a.genre || "").split(",").map(g => g.trim()).includes(trendChoice.genre));
         if (eligible.length === 0) {
           addLog("🔥 Fame", `${festName}: "${card.name}" — no Fame-affordable ${trendChoice.genre} artist in pool, genre reward forfeited.`);
+          setFameSeasonPicker(null);
         } else if (player?.isAI) {
           const best = eligible.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
           resolveFreePoolPlay(pid, best.i, emptyStageIndices[0], card.name);
+          setFameSeasonPicker(null);
         } else {
+          // ONLY branch that replaces (not nulls) the picker: open the pool picker.
           setFameSeasonPicker({
             pid, cardName: card.name, cardEffect: card.effect,
             step: "pick_pool_artist_free", pickedPoolIdx: null,
@@ -22823,13 +22831,19 @@ export default function Headliners() {
                   }
                   setFameSeasonPicker(null);
                 } else if (p.step === "pick_trend_to_discard") {
-                  // v199.184: player chose which microtrend to discard.
+                  // v199.184/190: player chose which microtrend to discard. The resolver
+                  // handles picker state itself — closes it for amenity/bail paths, or
+                  // opens the pool picker for the genre→human path. Do NOT null the
+                  // picker here (would override the resolver's pool-picker open since
+                  // both setState calls are batched in the same tick).
                   const chosen = (p.availableTrends || [])[p.pickedTrendIdx];
                   if (chosen) {
                     const cardObj = (playerFameCardsRef.current[p.pid] || []).find(c => c.instanceId === p.cardInstanceId);
                     if (cardObj) resolveTrendRewriter(p.pid, chosen, cardObj);
+                    else setFameSeasonPicker(null); // card gone — close picker as fallback
+                  } else {
+                    setFameSeasonPicker(null);
                   }
-                  setFameSeasonPicker(null);
                 } else if (p.step === "pick_pool_artist_free") {
                   // v199.183: Universal Favour — chose a pool artist. If only one empty
                   // stage, resolve now; else move to the stage picker.
