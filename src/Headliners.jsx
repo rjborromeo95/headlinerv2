@@ -10910,18 +10910,38 @@ export default function Headliners() {
     }
 
     // Slot-conditional: "If Opening Set: X", "Opening Set: X" etc.
-    m = eff.match(/^(?:If\s+)?(Opening Set|Middle Slot|Headliner):\s*(.+)$/i);
-    if (m) {
-      const slot = m[1].toLowerCase();
-      const sub = m[2];
+    // v199.192: supports multiple slot conditions in one effect like Horsegiirl's
+    // "If Opening Set: Gain 1 Fame. If Middle Slot: Open a stage." — splits on sentence
+    // boundaries so each condition gets its own slot check. The old handler's greedy
+    // regex captured everything after the first colon into the sub-effect, so if the
+    // artist wasn't in the first condition's slot, the handler logged "not met" and
+    // returned without ever evaluating the second condition.
+    if (/^(?:if\s+)?(?:opening set|middle slot|headliner):/i.test(eff)) {
       const slotMap = { "opening set": 0, "middle slot": 1, "headliner": 2 };
-      const needSlot = slotMap[slot];
-      if (slotIdx === needSlot) {
-        applyArtistSubEffect(pid, artist, stageIdx, sub);
-      } else {
-        addLog("🎸 Artist Effect", `${festival}: ${artist.name} — slot condition "${slot}" not met (artist is in slot ${slotIdx + 1}).`);
-      }
-      return true;
+      // Split on sentence boundaries. Each sentence is a candidate slot condition.
+      const sentences = eff.split(/\.\s+/).map(s => s.replace(/\.+$/, "").trim()).filter(s => s.length > 0);
+      let handled = false;
+      sentences.forEach(sentence => {
+        const sm = sentence.match(/^(?:If\s+)?(Opening Set|Middle Slot|Headliner):\s*(.+)$/i);
+        if (!sm) {
+          // Non-slot sentence inside a slot-conditional effect — fire it unconditionally
+          // so patterns like "If Opening Set: X. Y" (where Y is unconditional) still work.
+          applyArtistSubEffect(pid, artist, stageIdx, sentence + ".");
+          handled = true;
+          return;
+        }
+        const slot = sm[1].toLowerCase();
+        const sub = sm[2];
+        const needSlot = slotMap[slot];
+        if (slotIdx === needSlot) {
+          applyArtistSubEffect(pid, artist, stageIdx, sub);
+          handled = true;
+        } else {
+          addLog("🎸 Artist Effect", `${festival}: ${artist.name} — slot condition "${slot}" not met (artist is in slot ${slotIdx + 1}).`);
+          handled = true;
+        }
+      });
+      if (handled) return true;
     }
 
     // Previous-player action conditional
