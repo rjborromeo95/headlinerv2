@@ -2788,6 +2788,52 @@ function RotaryDial({ agents, resultIndex, onComplete, playerName }) {
 // ═══════════════════════════════════════════════════════════
 export default function Headliners() {
   // Phase management
+  // ═══════════════════════════════════════════════════════════
+  // v199.181: TEMPORARY — React #185 loop detector. Remove once bug is found.
+  // Catches two shapes of runaway behavior:
+  //   1. Render counter — if the component re-renders more than 30 times in 500ms,
+  //      console.trace() the render stack. Tells us a loop is happening but not which.
+  //   2. Setter wrappers — if any wrapped setState fires more than 20 times in 300ms,
+  //      console.trace() the call stack at the offending call site. Tells us WHICH.
+  // The traces print full function names in a dev console (minified in prod bundle, but
+  // enough to narrow down the originating file region).
+  // ═══════════════════════════════════════════════════════════
+  const _loopGuardRef = useRef({ renders: [], setters: {} });
+  const _now = Date.now();
+  _loopGuardRef.current.renders = _loopGuardRef.current.renders.filter(t => _now - t < 500);
+  _loopGuardRef.current.renders.push(_now);
+  if (_loopGuardRef.current.renders.length > 30) {
+    console.error(`🔁 LOOP: ${_loopGuardRef.current.renders.length} renders in 500ms`);
+    // v199.193: dump every setter that fired in the last 500ms, sorted by frequency.
+    // Even if no single setter exceeds the 10-call threshold, the top-N list shows which
+    // setters are cascading together.
+    const windowStart = _now - 500;
+    const freq = [];
+    for (const [name, ts] of Object.entries(_loopGuardRef.current.setters)) {
+      const recent = ts.filter(t => t >= windowStart);
+      if (recent.length > 0) freq.push([name, recent.length]);
+    }
+    freq.sort((a, b) => b[1] - a[1]);
+    console.error(`🔁 Setter frequency (last 500ms):`);
+    freq.slice(0, 15).forEach(([name, n]) => console.error(`    ${name}: ${n}x`));
+    console.trace("Render loop trace");
+    _loopGuardRef.current.renders = [];
+    _loopGuardRef.current.setters = {}; // reset to avoid console flood on next render
+  }
+  const _guardSetter = (name, raw) => (...args) => {
+    const now = Date.now();
+    const arr = (_loopGuardRef.current.setters[name] || []).filter(t => now - t < 500);
+    arr.push(now);
+    _loopGuardRef.current.setters[name] = arr;
+    // v199.193: threshold lowered 20 → 10 to catch finer-grained loops.
+    if (arr.length > 10) {
+      console.error(`🔁 LOOP: ${name} called ${arr.length}x in 500ms`);
+      console.trace(`${name} call site`);
+      _loopGuardRef.current.setters[name] = [];
+    }
+    return raw(...args);
+  };
+
   const [phase, _rawSetPhase] = useState("lobby");
   const setPhase = _guardSetter("setPhase", _rawSetPhase);
   const [players, _rawSetPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
@@ -3100,51 +3146,6 @@ export default function Headliners() {
   useEffect(() => { stageOpenFameBonusRef.current = stageOpenFameBonus; }, [stageOpenFameBonus]);
   useEffect(() => { temptModeRef.current = temptMode; }, [temptMode]);
   useEffect(() => { antiLeadMechanicsRef.current = antiLeadMechanics; }, [antiLeadMechanics]);
-  // ═══════════════════════════════════════════════════════════
-  // v199.181: TEMPORARY — React #185 loop detector. Remove once bug is found.
-  // Catches two shapes of runaway behavior:
-  //   1. Render counter — if the component re-renders more than 30 times in 500ms,
-  //      console.trace() the render stack. Tells us a loop is happening but not which.
-  //   2. Setter wrappers — if any wrapped setState fires more than 20 times in 300ms,
-  //      console.trace() the call stack at the offending call site. Tells us WHICH.
-  // The traces print full function names in a dev console (minified in prod bundle, but
-  // enough to narrow down the originating file region).
-  // ═══════════════════════════════════════════════════════════
-  const _loopGuardRef = useRef({ renders: [], setters: {} });
-  const _now = Date.now();
-  _loopGuardRef.current.renders = _loopGuardRef.current.renders.filter(t => _now - t < 500);
-  _loopGuardRef.current.renders.push(_now);
-  if (_loopGuardRef.current.renders.length > 30) {
-    console.error(`🔁 LOOP: ${_loopGuardRef.current.renders.length} renders in 500ms`);
-    // v199.193: dump every setter that fired in the last 500ms, sorted by frequency.
-    // Even if no single setter exceeds the 10-call threshold, the top-N list shows which
-    // setters are cascading together.
-    const windowStart = _now - 500;
-    const freq = [];
-    for (const [name, ts] of Object.entries(_loopGuardRef.current.setters)) {
-      const recent = ts.filter(t => t >= windowStart);
-      if (recent.length > 0) freq.push([name, recent.length]);
-    }
-    freq.sort((a, b) => b[1] - a[1]);
-    console.error(`🔁 Setter frequency (last 500ms):`);
-    freq.slice(0, 15).forEach(([name, n]) => console.error(`    ${name}: ${n}x`));
-    console.trace("Render loop trace");
-    _loopGuardRef.current.renders = [];
-    _loopGuardRef.current.setters = {}; // reset to avoid console flood on next render
-  }
-  const _guardSetter = (name, raw) => (...args) => {
-    const now = Date.now();
-    const arr = (_loopGuardRef.current.setters[name] || []).filter(t => now - t < 500);
-    arr.push(now);
-    _loopGuardRef.current.setters[name] = arr;
-    // v199.193: threshold lowered 20 → 10 to catch finer-grained loops.
-    if (arr.length > 10) {
-      console.error(`🔁 LOOP: ${name} called ${arr.length}x in 500ms`);
-      console.trace(`${name} call site`);
-      _loopGuardRef.current.setters[name] = [];
-    }
-    return raw(...args);
-  };
 
   const [playerData, _rawSetPlayerData] = useState({});
   const setPlayerData = _guardSetter("setPlayerData", _rawSetPlayerData);
