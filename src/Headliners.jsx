@@ -539,6 +539,7 @@ const FAME_CARDS = [
   // who can't meet the current microtrend force the next one — and potentially claim it
   // the same turn.
   { id: "FM_CYCLE_MICROTREND", name: "Cycle Microtrend",          category: "you_may",      trigger: "any_time",    effect: "cycle_microtrend",               copies: 1, desc: "On your turn (any time): discard the current microtrend and reveal the next one." },
+  { id: "FM_TREND_REWRITER",   name: "Trend Rewriter",            category: "you_may",      trigger: "any_time",    effect: "trend_rewriter_once_per_season", copies: 1, desc: "Once per season, on your turn: discard the current microtrend of your choice (genre or amenity) and gain its reward — an artist of that genre free from the pool (Fame required), or that amenity placed on a field." },
   // THIS FAME CARD — passive bonus Fame on draw. Badge renders "THIS FAME CARD".
   { id: "FM_SELF_2FAME",       name: "Counts as 2 Fame",          category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "Adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
   // AFTER BUILD — badge renders "AFTER BUILD ACTION".
@@ -571,7 +572,7 @@ const FAME_CARDS = [
   { id: "FM_SS_GAIN_1_FAME",   name: "Gain +1 Fame",              category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
   { id: "FM_SS_PLACE_AMEN",    name: "Place 1 Amenity",           category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
   { id: "FM_SS_DRAW_TO_FULL",  name: "Draw Until Hand Full",      category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
-  { id: "FM_SS_NEW_STAGE",     name: "Open a New Stage",          category: "season_start", trigger: "season_start", effect: "ss_open_stage",                 copies: 1, desc: "Season start: open a new stage (max 3 total)." },
+  { id: "FM_SS_NEW_STAGE",     name: "Open a Stage + Play (Once)", category: "you_may",      trigger: "any_time",    effect: "open_stage_play_once",           copies: 1, desc: "Once per game, on your turn: open a new stage (max 3 total) and play an artist from your hand on it (Fame and amenities required as normal — the card saves you the main action, not the cost). Disabled after use." },
   { id: "FM_SS_CYCLE",         name: "Discard N → Draw N",        category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
   // v199.130: FM_SS_RECLAIM (Reclaim 2 from discard) removed as requested.
   { id: "FM_SS_PLAY_FREE",     name: "Play Any Artist Free",      category: "season_start", trigger: "season_start", effect: "ss_play_free_artist",           copies: 1, desc: "Season start: play an artist (that you can afford) on an empty stage." },
@@ -3796,10 +3797,24 @@ export default function Headliners() {
     // but with an added expiry check — if the card's receivedInSeason doesn't match the
     // current season, the card is dormant and the click is a no-op (visual says "expired").
     if (card.category === "season_active") {
-      if (card.receivedInSeason && card.receivedInSeason !== quickYearSeasonRef.current) {
-        addLog("🔥 Fame", `${festName}: "${card.name}" — expired at end of ${card.receivedInSeason}.`);
+      // v199.184: tighten the gate. The only valid state is "stamp matches current
+      // season"; both missing stamp AND mismatched stamp count as expired. Previously
+      // missing stamps (from draw paths that forgot to stamp) made the card unlimited.
+      if (card.receivedInSeason !== quickYearSeasonRef.current) {
+        const where = card.receivedInSeason ? `end of ${card.receivedInSeason}` : "(no season stamp)";
+        addLog("🔥 Fame", `${festName}: "${card.name}" — expired at ${where}.`);
         return;
       }
+    }
+    // v199.184: per-season lockout for cards that spend a use per season (e.g. Trend
+    // Rewriter). The usedThisSeason flag is set on the card instance when the card's
+    // effect commits; if it matches the current season, the card is locked for this
+    // season. No cross-season reset needed — the check just doesn't match once the
+    // season advances. The disabled flag (once-per-game) and this flag (once-per-season)
+    // compose cleanly: either one blocks activation.
+    if (card.usedThisSeason === quickYearSeasonRef.current) {
+      addLog("🔥 Fame", `${festName}: "${card.name}" — already used this season.`);
+      return;
     }
     // Case 1: YOU MAY card (or season_active, treated the same for activation purposes)
     if (card.category === "you_may" || card.category === "season_active") {
@@ -3856,6 +3871,98 @@ export default function Headliners() {
         // v199.176: play_artist_once (replaces FM_SS_PLAY_HEADLINER). One-time YOU MAY —
         // click to play an artist from hand on an empty stage, Fame-cost free. After use,
         // the card is permanently disabled in the tray (uses the existing `disabled` flag).
+        case "free_pool_play_once": {
+          // v199.184: Universal Favour routing fix. The full logic lives in
+          // fireFameCardEffect; activateFameCard just delegates. (Previously the case
+          // was missing entirely and clicks silently did nothing.) Lockout is via the
+          // `disabled` flag set after the pool play commits, not markFameCardUsedThisTurn.
+          fireFameCardEffect(pid, card, {});
+          break;
+        }
+        case "trend_rewriter_once_per_season": {
+          // v199.184: Trend Rewriter — pick one unclaimed microtrend to discard; its
+          // reward (genre→free pool artist of that genre; amenity→place that amenity)
+          // is granted. Lockout is per-season via card.usedThisSeason.
+          const trends = microtrendsRef.current || microtrends || [];
+          const unclaimed = trends.filter(mt => mt && mt.claimedBy === null);
+          if (unclaimed.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no unclaimed microtrends to discard.`);
+            break;
+          }
+          if (player?.isAI) {
+            // AI heuristic: discard the amenity trend if available, else genre. Grant reward.
+            const choice = unclaimed.find(mt => mt.kind === "amenity") || unclaimed[0];
+            resolveTrendRewriter(pid, choice, card);
+          } else {
+            setFameSeasonPicker({
+              pid, cardName: card.name, cardEffect: card.effect,
+              step: "pick_trend_to_discard",
+              availableTrends: unclaimed.map(mt => ({
+                kind: mt.kind,
+                genre: mt.genre || null,
+                amenity: mt.amenity || null,
+                label: mt.kind === "genre" ? `${mt.genre} microtrend` : `${AMENITY_LABELS[mt.amenity]} microtrend`,
+              })),
+              cardInstanceId: card.instanceId,
+            });
+          }
+          break;
+        }
+        case "open_stage_play_once": {
+          // v199.184: Open-a-Stage + Play (Once). Opens a new stage AND disables the
+          // card immediately — so if the player skips the artist picker, they still get
+          // the stage opening but forfeit the free play. Then opens the hand picker
+          // forcing play onto the newly opened stage. Amenity cost waived, Fame still
+          // required (via canAffordArtistWithRewards which checks Fame).
+          const pdNow = (playerDataRef.current || playerData)[pid] || {};
+          const stageCount = (pdNow.stages || []).length;
+          if (stageCount >= 3) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — already at 3 stages, skipped.`);
+            break;
+          }
+          const usedNames = pdNow.stageNames || [];
+          const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+          const sName = availNames[Math.floor(Math.random() * availNames.length)] || `Stage ${stageCount + 1}`;
+          const sColor = (typeof STAGE_COLORS !== "undefined" ? STAGE_COLORS : ["#a78bfa"])[stageCount % (typeof STAGE_COLORS !== "undefined" ? STAGE_COLORS.length : 1)];
+          const newStageIdx = stageCount;
+          setPlayerData(prev => {
+            const cur = prev[pid] || {};
+            return {
+              ...prev,
+              [pid]: {
+                ...cur,
+                stages: [...(cur.stages || []), { fameRequired: 0 }],
+                stageArtists: [...(cur.stageArtists || []), []],
+                stageNames: [...(cur.stageNames || []), sName],
+                stageColors: [...(cur.stageColors || []), sColor],
+              },
+            };
+          });
+          // Disable the card immediately.
+          setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? { ...c, disabled: true } : c) }));
+          addLog("🔥 Fame", `${festName}: "${card.name}" — opened new stage "${sName}".`);
+          if (!player?.isAI) showFloatingBonus(`🔥 New Stage: ${sName}`, "#fbbf24");
+          // Try to play an artist on it.
+          const hand = pdNow.hand || [];
+          const affordable = hand.map((a, i) => ({ a, i })).filter(x => canAffordArtistWithRewards(x.a, pdNow, pid));
+          if (affordable.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no affordable artist in hand; stage opened but no play.`);
+            break;
+          }
+          if (player?.isAI) {
+            const best = affordable.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
+            // Defer slightly so the stage-open setPlayerData commits first.
+            setTimeout(() => resolvePlayFreeArtist(pid, best.i, newStageIdx, card.name), 100);
+          } else {
+            setFameSeasonPicker({
+              pid, cardName: card.name, cardEffect: card.effect,
+              step: "pick_artist_to_play", pickedArtistIdx: null,
+              affordableIndices: affordable.map(x => x.i),
+              emptyStageIndices: [newStageIdx], // force play on the newly opened stage
+            });
+          }
+          break;
+        }
         case "play_artist_once": {
           const pd = (playerDataRef.current || playerData)[pid] || {};
           const hand = pd.hand || [];
@@ -4320,6 +4427,87 @@ export default function Headliners() {
       if (!player?.isAI) showFloatingBonus(`🔥 +1 Fame (traded 2 artists)`, "#fcd34d");
       setTimeout(() => recalcTickets(), 30);
     }, 60);
+  };
+
+  // v199.184: Trend Rewriter resolver. Removes the chosen microtrend from the bag,
+  // pops a fresh one in its place, then opens the reward picker. For AI, auto-picks.
+  // Marks the card.usedThisSeason to enforce the per-season lockout.
+  const resolveTrendRewriter = (pid, trendChoice, card) => {
+    const player = players.find(pl => pl.id === pid);
+    const festName = player?.festivalName || "?";
+    // Pop a replacement from the appropriate bag. Mirrors the end-of-turn microtrend
+    // replacement logic — but only the one trend of the player's choice is swapped.
+    const curTrends = microtrendsRef.current || microtrends || [];
+    const matchIdx = curTrends.findIndex(mt => mt && mt.kind === trendChoice.kind && (
+      trendChoice.kind === "genre" ? mt.genre === trendChoice.genre : mt.amenity === trendChoice.amenity
+    ));
+    if (matchIdx < 0) {
+      addLog("🔥 Fame", `${festName}: "${card.name}" — trend already claimed or vanished, no effect.`);
+      return;
+    }
+    let fresh = null;
+    try {
+      fresh = trendChoice.kind === "amenity" ? popAmenityFromBag(curTrends[matchIdx]) : popGenreFromBag(curTrends[matchIdx]);
+    } catch (err) {
+      addLog("🔥 Fame", `${festName}: "${card.name}" — trend bag empty, no replacement.`);
+    }
+    const nextTrends = curTrends.map((mt, i) => i === matchIdx ? (fresh || null) : mt);
+    setMicrotrends(nextTrends);
+    microtrendsRef.current = nextTrends;
+    addLog("🔥 Fame", `${festName}: "${card.name}" — discarded ${trendChoice.label}${fresh ? `, revealed new ${fresh.kind === "genre" ? fresh.genre : AMENITY_LABELS[fresh.amenity]} microtrend` : ""}.`);
+    // Grant the reward.
+    if (trendChoice.kind === "amenity") {
+      const amenityType = trendChoice.amenity;
+      if (player?.isAI) {
+        // AI auto-places inline. Same pattern as fameFreeAmenityPicker's click handler.
+        const pdNow = (playerDataRef.current || playerData)[pid] || {};
+        const fields = pdNow.fields || emptyFields();
+        let targetField = 0;
+        for (let i = 0; i < fields.length; i++) {
+          const f = fields[i] || {};
+          const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+          if (count < 5) { targetField = i; break; }
+        }
+        setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, amenityType, +1) }));
+        addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[amenityType]} in Field ${targetField + 1}.`);
+        setTimeout(() => claimAmenityMicrotrend(pid, amenityType), 50);
+        setTimeout(() => recalcTickets(), 50);
+      } else {
+        // Open the free-amenity picker, constrained to this one amenity type via
+        // forcedAmenityType. Picker renders a single-choice variant.
+        setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 1, forcedAmenityType: amenityType });
+      }
+    } else {
+      // Genre — open the pool picker filtered to that genre. Fame still required.
+      const pool = artistPoolRef.current || artistPool;
+      const pdNow = (playerDataRef.current || playerData)[pid] || {};
+      const fameHave = pdNow.fame || 0;
+      const stages = pdNow.stageArtists || [];
+      const emptyStageIndices = stages.map((sa, i) => (Array.isArray(sa) && sa.length < 3) ? i : -1).filter(i => i >= 0);
+      if (emptyStageIndices.length === 0) {
+        addLog("🔥 Fame", `${festName}: "${card.name}" — no empty stage, genre reward forfeited.`);
+      } else {
+        const eligible = pool
+          .map((a, i) => ({ a, i }))
+          .filter(x => x.a && !x.a.isFavour && (x.a.fame || 0) <= fameHave && (x.a.genre || "").split(",").map(g => g.trim()).includes(trendChoice.genre));
+        if (eligible.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no Fame-affordable ${trendChoice.genre} artist in pool, genre reward forfeited.`);
+        } else if (player?.isAI) {
+          const best = eligible.sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))[0];
+          resolveFreePoolPlay(pid, best.i, emptyStageIndices[0], card.name);
+        } else {
+          setFameSeasonPicker({
+            pid, cardName: card.name, cardEffect: card.effect,
+            step: "pick_pool_artist_free", pickedPoolIdx: null,
+            eligiblePoolIndices: eligible.map(x => x.i),
+            emptyStageIndices,
+            // No disableCardAfterPlay here — we use usedThisSeason instead (set below).
+          });
+        }
+      }
+    }
+    // Mark the card used this season (not permanently disabled).
+    setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? { ...c, usedThisSeason: quickYearSeasonRef.current } : c) }));
   };
 
   // v199.183: free pool-play resolver for the Universal Favour Fame card. Takes a pool
@@ -10329,7 +10517,9 @@ export default function Headliners() {
           const i = Math.floor(Math.random() * choices.length);
           if (!idxs.includes(i)) idxs.push(i);
         }
-        const picked = idxs.map(i => choices[i]);
+        // v199.184: stamp receivedInSeason so season_active cards picked via Kara Okay's
+        // AI path expire correctly at season boundary (same as every other draw path).
+        const picked = idxs.map(i => ({ ...choices[i], receivedInSeason: quickYearSeasonRef.current }));
         const discards = choices.filter((_, i) => !idxs.includes(i));
         setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...picked] }));
         setFameDiscardPile(d => [...d, ...discards]);
@@ -15743,9 +15933,11 @@ export default function Headliners() {
       // player loses the card entirely.
       const choices = fameDrawModal.choices;
       if (choices && choices.length > 0) {
-        setPlayerFameCards(pc => ({ ...pc, [endingPid]: [...(pc[endingPid] || []), choices[0]] }));
+        // v199.184: stamp receivedInSeason so season_active cards picked here expire correctly.
+        const stamped = { ...choices[0], receivedInSeason: quickYearSeasonRef.current };
+        setPlayerFameCards(pc => ({ ...pc, [endingPid]: [...(pc[endingPid] || []), stamped] }));
         setFameDiscardPile(d => [...d, ...choices.slice(1)]);
-        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: Fame draw auto-picked (turn ended) — kept "${choices[0].name}".`);
+        addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: Fame draw auto-picked (turn ended) — kept "${stamped.name}".`);
       }
       setFameDrawModal(null);
       fameDrawInProgressRef.current = false;
@@ -20359,7 +20551,11 @@ export default function Headliners() {
                     // v199.176: a season_active card whose receivedInSeason differs from the
                     // current season is "expired" — treated like disabled for interactivity.
                     const isExpired = isSeasonActive && card.receivedInSeason && card.receivedInSeason !== quickYearSeason;
-                    const youMayClickable = isYouMay && !usedThisTurn && !isDisabled;
+                    // v199.184: per-season lockout — card.usedThisSeason === current season
+                    // means this card has had its once-per-season use. Shown greyed with
+                    // "Season Used" label; resets when the season advances.
+                    const isSeasonUsed = !!(card && card.usedThisSeason === quickYearSeason);
+                    const youMayClickable = isYouMay && !usedThisTurn && !isDisabled && !isSeasonUsed;
                     const seasonActiveClickable = isSeasonActive && !usedThisTurn && !isDisabled && !isExpired;
                     const afterActionClickable = isPendingTrigger && !isDisabled;
                     const clickable = youMayClickable || seasonActiveClickable || afterActionClickable;
@@ -20367,14 +20563,14 @@ export default function Headliners() {
                       display: "flex", flexDirection: "column",
                       padding: 4, borderRadius: 6,
                       background: catBg,
-                      border: `${clickable ? 2 : 1}px solid ${(isDisabled || isExpired) ? "#475569" : catBorder}`,
+                      border: `${clickable ? 2 : 1}px solid ${(isDisabled || isExpired || isSeasonUsed) ? "#475569" : catBorder}`,
                       minHeight: 86,
                       justifyContent: empty ? "center" : "flex-start",
                       gap: 2,
                       transition: "all 0.2s",
                       cursor: clickable ? "pointer" : "default",
-                      opacity: (isDisabled || isExpired) ? 0.4 : (card && usedThisTurn ? 0.4 : 1),
-                      filter: (isDisabled || isExpired) ? "grayscale(100%)" : "none",
+                      opacity: (isDisabled || isExpired || isSeasonUsed) ? 0.4 : (card && usedThisTurn ? 0.4 : 1),
+                      filter: (isDisabled || isExpired || isSeasonUsed) ? "grayscale(100%)" : "none",
                       boxShadow: clickable ? `0 0 14px ${catBorder}, 0 0 24px ${catBorder}60` : "none",
                       animation: clickable ? "affordPulse 1.4s ease-in-out infinite" : "none",
                       position: "relative",
@@ -20383,16 +20579,17 @@ export default function Headliners() {
                       <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
                     ) : (
                       <>
-                        <div style={{ fontSize: 7, fontWeight: 800, color: (isDisabled || isExpired) ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                        <div style={{ fontSize: 7, fontWeight: 800, color: (isDisabled || isExpired || isSeasonUsed) ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
                           {isDisabled ? "Disabled" :
                            isExpired ? "Expired" :
+                           isSeasonUsed ? "Season Used" :
                            afterActionClickable ? "Fire!" :
                            card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
                            card.category === "season_active" ? (usedThisTurn ? "Used" : "Click") :
                            card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" :
                            fameCardCategoryLabel(card)}
                         </div>
-                        <div style={{ fontSize: 8, color: (isDisabled || isExpired) ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: (isDisabled || isExpired) ? "line-through" : "none" }}>
+                        <div style={{ fontSize: 8, color: (isDisabled || isExpired || isSeasonUsed) ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: (isDisabled || isExpired || isSeasonUsed) ? "line-through" : "none" }}>
                           <div>{card.name}</div>
                           {/* v199.106: live game-end tally for END cards. */}
                           {card.category === "game_end" && !isDisabled && (() => {
@@ -21745,10 +21942,12 @@ export default function Headliners() {
                 <div style={{ textAlign: "center", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, color: "#fcd34d", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 Fame Card</div>
                   <h2 style={{ color: "#fef3c7", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>{fameFreeAmenityPicker.cardName}</h2>
-                  <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>Pick an amenity to place ({fameFreeAmenityPicker.remaining} remaining).</p>
+                  <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>{fameFreeAmenityPicker.forcedAmenityType
+                    ? `Place a ${AMENITY_LABELS[fameFreeAmenityPicker.forcedAmenityType]} (type is fixed by the microtrend).`
+                    : `Pick an amenity to place (${fameFreeAmenityPicker.remaining} remaining).`}</p>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-                  {["campsite", "security", "catering", "portaloo"].map(type => (
+                <div style={{ display: "grid", gridTemplateColumns: fameFreeAmenityPicker.forcedAmenityType ? "1fr" : "repeat(2, 1fr)", gap: 10 }}>
+                  {(fameFreeAmenityPicker.forcedAmenityType ? [fameFreeAmenityPicker.forcedAmenityType] : ["campsite", "security", "catering", "portaloo"]).map(type => (
                     <button key={type}
                       onClick={() => {
                         const pid = fameFreeAmenityPicker.pid;
@@ -22526,6 +22725,7 @@ export default function Headliners() {
                 if (picker.step === "pick_stage_to_play") return picker.pickedStageIdx == null;
                 if (picker.step === "pick_pool_artist_free") return picker.pickedPoolIdx == null;
                 if (picker.step === "pick_pool_stage_free") return picker.pickedStageIdx == null;
+                if (picker.step === "pick_trend_to_discard") return picker.pickedTrendIdx == null;
                 return true;
               })();
               const onConfirm = () => {
@@ -22569,6 +22769,14 @@ export default function Headliners() {
                     setPlayerFameCards(pc => ({ ...pc, [p.pid]: (pc[p.pid] || []).map(c => c.instanceId === p.disableCardAfterPlay ? { ...c, disabled: true } : c) }));
                   }
                   setFameSeasonPicker(null);
+                } else if (p.step === "pick_trend_to_discard") {
+                  // v199.184: player chose which microtrend to discard.
+                  const chosen = (p.availableTrends || [])[p.pickedTrendIdx];
+                  if (chosen) {
+                    const cardObj = (playerFameCardsRef.current[p.pid] || []).find(c => c.instanceId === p.cardInstanceId);
+                    if (cardObj) resolveTrendRewriter(p.pid, chosen, cardObj);
+                  }
+                  setFameSeasonPicker(null);
                 } else if (p.step === "pick_pool_artist_free") {
                   // v199.183: Universal Favour — chose a pool artist. If only one empty
                   // stage, resolve now; else move to the stage picker.
@@ -22606,6 +22814,7 @@ export default function Headliners() {
                       {(picker.step === "pick_stage_to_play") && "Pick a stage to play the artist on."}
                       {(picker.step === "pick_pool_artist_free") && "Pick an artist from the pool. Fame still required; amenities waived."}
                       {(picker.step === "pick_pool_stage_free") && "Pick a stage to play the artist on."}
+                      {(picker.step === "pick_trend_to_discard") && "Pick which microtrend to discard. You'll gain its reward."}
                     </p>
                   </div>
                   {/* ARTIST PICKER (discard or play) */}
@@ -22711,6 +22920,37 @@ export default function Headliners() {
                           <div style={{ fontSize: 12, fontWeight: 700 }}>Stage {sIdx + 1}</div>
                         </button>
                       ))}
+                    </div>
+                  )}
+                  {/* v199.184: TREND PICKER — Trend Rewriter. Shows each unclaimed trend
+                      as a chunky button; picking one triggers the resolver which handles
+                      the reward step (another picker opens for amenity/genre reward). */}
+                  {picker.step === "pick_trend_to_discard" && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center", marginBottom: 14 }}>
+                      {(picker.availableTrends || []).map((t, i) => {
+                        const isSelected = picker.pickedTrendIdx === i;
+                        return <button
+                          key={i}
+                          onClick={() => setFameSeasonPicker({ ...picker, pickedTrendIdx: i })}
+                          style={{
+                            padding: 16, borderRadius: 10,
+                            border: `2px solid ${isSelected ? "#fbbf24" : "#7c3aed"}`,
+                            background: isSelected ? "rgba(251,191,36,0.15)" : "rgba(30,27,75,0.5)",
+                            cursor: "pointer",
+                            color: "#f3f4f6",
+                            minWidth: 180,
+                            textAlign: "center",
+                            fontSize: 13,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <div style={{ fontSize: 28, marginBottom: 6 }}>{t.kind === "genre" ? "🎵" : (AMENITY_ICONS[t.amenity] || "🏕️")}</div>
+                          <div>{t.label}</div>
+                          <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4, fontWeight: 500 }}>
+                            {t.kind === "genre" ? `Reward: free ${t.genre} artist from pool` : `Reward: place a ${AMENITY_LABELS[t.amenity]}`}
+                          </div>
+                        </button>;
+                      })}
                     </div>
                   )}
                   {/* v199.183: POOL ARTIST PICKER — Universal Favour (free_pool_play_once).
