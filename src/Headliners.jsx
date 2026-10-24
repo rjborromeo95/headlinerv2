@@ -1384,12 +1384,9 @@ function PrincipleCard({ principle, amenities, stageCount, maxStages, amenityIco
 }
 
 function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
-  const [rolling, _rawSetRolling] = useState(false);
-  const setRolling = _guardSetter("setRolling", _rawSetRolling);
-  const [animFrames, _rawSetAnimFrames] = useState([]);
-  const setAnimFrames = _guardSetter("setAnimFrames", _rawSetAnimFrames);
-  const [finalResults, _rawSetFinalResults] = useState(null);
-  const setFinalResults = _guardSetter("setFinalResults", _rawSetFinalResults);
+  const [rolling, setRolling] = useState(false);
+  const [animFrames, setAnimFrames] = useState([]);
+  const [finalResults, setFinalResults] = useState(null);
 
   const doRoll = () => {
     if (rolling) return;
