@@ -1384,9 +1384,12 @@ function PrincipleCard({ principle, amenities, stageCount, maxStages, amenityIco
 }
 
 function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
-  const [rolling, setRolling] = useState(false);
-  const [animFrames, setAnimFrames] = useState([]);
-  const [finalResults, setFinalResults] = useState(null);
+  const [rolling, _rawSetRolling] = useState(false);
+  const setRolling = _guardSetter("setRolling", _rawSetRolling);
+  const [animFrames, _rawSetAnimFrames] = useState([]);
+  const setAnimFrames = _guardSetter("setAnimFrames", _rawSetAnimFrames);
+  const [finalResults, _rawSetFinalResults] = useState(null);
+  const setFinalResults = _guardSetter("setFinalResults", _rawSetFinalResults);
 
   const doRoll = () => {
     if (rolling) return;
@@ -2788,9 +2791,12 @@ function RotaryDial({ agents, resultIndex, onComplete, playerName }) {
 // ═══════════════════════════════════════════════════════════
 export default function Headliners() {
   // Phase management
-  const [phase, setPhase] = useState("lobby");
-  const [players, setPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
-  const [playerCount, setPlayerCount] = useState(2);
+  const [phase, _rawSetPhase] = useState("lobby");
+  const setPhase = _guardSetter("setPhase", _rawSetPhase);
+  const [players, _rawSetPlayers] = useState([{ id: 0, name: "Player 1", festivalName: "", isAI: false }, { id: 1, name: "Player 2", festivalName: "", isAI: false }]);
+  const setPlayers = _guardSetter("setPlayers", _rawSetPlayers);
+  const [playerCount, _rawSetPlayerCount] = useState(2);
+  const setPlayerCount = _guardSetter("setPlayerCount", _rawSetPlayerCount);
   // Game mode options — set in lobby, immutable once a game starts.
   // stageOpenFameBonus: ON (default) gives +1 Fame for opening a new stage during pre-round.
   //   OFF disables that one-shot bonus.
@@ -2816,30 +2822,41 @@ export default function Headliners() {
   // Removed entirely: strictComparativeMode, contractsMode, agentMicrotrendClaim,
   // agent effects (were tied to councils), preRoundArtistDraws.
   // Two remaining toggles: 4-year mode (with 6/7/8/8 schedule) + stage-open fame bonus.
-  const [stageOpenFameBonus, setStageOpenFameBonus] = useState(false); // v189: default OFF (was ON)
-  const [temptMode, setTemptMode] = useState(true); // permanent — kept as state var so refs still work
-  const [antiLeadMechanics, setAntiLeadMechanics] = useState(true); // permanent
-  const [identitiesMode, setIdentitiesMode] = useState(true); // v189: default ON, permanent
+  const [stageOpenFameBonus, _rawSetStageOpenFameBonus] = useState(false);
+  const setStageOpenFameBonus = _guardSetter("setStageOpenFameBonus", _rawSetStageOpenFameBonus); // v189: default OFF (was ON)
+  const [temptMode, _rawSetTemptMode] = useState(true);
+  const setTemptMode = _guardSetter("setTemptMode", _rawSetTemptMode); // permanent — kept as state var so refs still work
+  const [antiLeadMechanics, _rawSetAntiLeadMechanics] = useState(true);
+  const setAntiLeadMechanics = _guardSetter("setAntiLeadMechanics", _rawSetAntiLeadMechanics); // permanent
+  const [identitiesMode, _rawSetIdentitiesMode] = useState(true);
+  const setIdentitiesMode = _guardSetter("setIdentitiesMode", _rawSetIdentitiesMode); // v189: default ON, permanent
   const identitiesModeRef = useRef(true);
   useEffect(() => { identitiesModeRef.current = identitiesMode; }, [identitiesMode]);
   // Stage-open mode — trends only now (councils gone means no alternative path).
-  const [stageOpenMode, setStageOpenMode] = useState("trends");
+  const [stageOpenMode, _rawSetStageOpenMode] = useState("trends");
+  const setStageOpenMode = _guardSetter("setStageOpenMode", _rawSetStageOpenMode);
   const stageOpenModeRef = useRef("trends");
   useEffect(() => { stageOpenModeRef.current = stageOpenMode; }, [stageOpenMode]);
   // v189: flat turn schedule is now default for 3-year games. 4-year mode uses 6/7/8/8.
-  const [flatTurnsMode, setFlatTurnsMode] = useState(true);
+  const [flatTurnsMode, _rawSetFlatTurnsMode] = useState(true);
+  const setFlatTurnsMode = _guardSetter("setFlatTurnsMode", _rawSetFlatTurnsMode);
   const flatTurnsModeRef = useRef(true);
   useEffect(() => { flatTurnsModeRef.current = flatTurnsMode; }, [flatTurnsMode]);
   // Per-player: which identity did they pick? { pid: identityId }
-  const [playerIdentities, setPlayerIdentities] = useState({});
+  const [playerIdentities, _rawSetPlayerIdentities] = useState({});
+  const setPlayerIdentities = _guardSetter("setPlayerIdentities", _rawSetPlayerIdentities);
   const playerIdentitiesRef = useRef({});
   useEffect(() => { playerIdentitiesRef.current = playerIdentities; }, [playerIdentities]);
   // Per-player log of every ticket/fame movement caused by their identity.
-  const [identityLog, setIdentityLog] = useState({});
+  const [identityLog, _rawSetIdentityLog] = useState({});
+  const setIdentityLog = _guardSetter("setIdentityLog", _rawSetIdentityLog);
   // Identity picker state — during phase "identityChoice", each player picks 1 of 3.
-  const [identityDealt, setIdentityDealt] = useState({}); // { pid: [id, id, id] }
-  const [identityPickerIdx, setIdentityPickerIdx] = useState(0);
-  const [totalYears, setTotalYears] = useState(3); // v189: default 3 (was 4)
+  const [identityDealt, _rawSetIdentityDealt] = useState({});
+  const setIdentityDealt = _guardSetter("setIdentityDealt", _rawSetIdentityDealt); // { pid: [id, id, id] }
+  const [identityPickerIdx, _rawSetIdentityPickerIdx] = useState(0);
+  const setIdentityPickerIdx = _guardSetter("setIdentityPickerIdx", _rawSetIdentityPickerIdx);
+  const [totalYears, _rawSetTotalYears] = useState(3);
+  const setTotalYears = _guardSetter("setTotalYears", _rawSetTotalYears); // v189: default 3 (was 4)
   const totalYearsRef = useRef(3);
   const stageOpenFameBonusRef = useRef(false);
   const preRoundArtistDrawsRef = useRef(false);
@@ -2847,7 +2864,8 @@ export default function Headliners() {
   // grants a game-specific benefit to whoever leads strictly (ties = no benefit).
   // At game start, one of 3 reward variants is drawn per amenity type (12 total variants,
   // 4 drawn per game). Toggles the whole system on/off.
-  const [infraRewardsMode, setInfraRewardsMode] = useState(false);
+  const [infraRewardsMode, _rawSetInfraRewardsMode] = useState(false);
+  const setInfraRewardsMode = _guardSetter("setInfraRewardsMode", _rawSetInfraRewardsMode);
   const infraRewardsModeRef = useRef(false);
   useEffect(() => { infraRewardsModeRef.current = infraRewardsMode; }, [infraRewardsMode]);
   // v198: game mode toggle. "classic" = the existing 3-year/18-turn game (default,
@@ -2858,17 +2876,20 @@ export default function Headliners() {
   // branch. Known branches at build time: season tracker, objective framework,
   // Fame spend menu, Fame overflow cap, infra draw count, game-end effect routing,
   // stage decay removal, year-end draft skip.
-  const [gameMode, setGameMode] = useState("classic");
+  const [gameMode, _rawSetGameMode] = useState("classic");
+  const setGameMode = _guardSetter("setGameMode", _rawSetGameMode);
   const gameModeRef = useRef("classic");
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   // v198: Quick Play state. All only used when gameMode === "quickYear".
   // quickYearSeason: current season label ("autumn" | "winter" | "spring" | "summer")
-  const [quickYearSeason, setQuickYearSeason] = useState("autumn");
+  const [quickYearSeason, _rawSetQuickYearSeason] = useState("autumn");
+  const setQuickYearSeason = _guardSetter("setQuickYearSeason", _rawSetQuickYearSeason);
   const quickYearSeasonRef = useRef("autumn");
   useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
   // nPlayers * 3, 6, 9 — season boundary. nPlayers * 12 — game end.
-  const [quickYearTurnsTaken, setQuickYearTurnsTaken] = useState(0);
+  const [quickYearTurnsTaken, _rawSetQuickYearTurnsTaken] = useState(0);
+  const setQuickYearTurnsTaken = _guardSetter("setQuickYearTurnsTaken", _rawSetQuickYearTurnsTaken);
   // v199.64: ref mirror for synchronous read inside endTurn's defensive game-end guard.
   // The ref stays strictly in sync with the state via the useEffect below.
   const quickYearTurnsTakenRef = useRef(0);
@@ -2880,15 +2901,18 @@ export default function Headliners() {
   // their turn — it's almost certainly a state-propagation race.
   const seasonJustTransitionedAtRef = useRef(0);
   // Season-end scoring modal state. Null when idle; { season, seasonScores, isGameEnd, nextPlayerIdx } when open.
-  const [seasonEndScoring, setSeasonEndScoring] = useState(null);
+  const [seasonEndScoring, _rawSetSeasonEndScoring] = useState(null);
+  const setSeasonEndScoring = _guardSetter("setSeasonEndScoring", _rawSetSeasonEndScoring);
   // v199.9: season objectives re-introduced. 1 per season, drawn at game start from
   // QUICKYEAR_OBJECTIVE_POOL (unique — no repeats across seasons).
   // seasonObjectives: { autumn: obj, winter: obj, spring: obj, summer: obj }
   // seasonObjectiveClaims: { autumn: { first: pid|null, second: pid|null }, ... }
-  const [seasonObjectives, setSeasonObjectives] = useState({});
+  const [seasonObjectives, _rawSetSeasonObjectives] = useState({});
+  const setSeasonObjectives = _guardSetter("setSeasonObjectives", _rawSetSeasonObjectives);
   const seasonObjectivesRef = useRef({});
   useEffect(() => { seasonObjectivesRef.current = seasonObjectives; }, [seasonObjectives]);
-  const [seasonObjectiveClaims, setSeasonObjectiveClaims] = useState({});
+  const [seasonObjectiveClaims, _rawSetSeasonObjectiveClaims] = useState({});
+  const setSeasonObjectiveClaims = _guardSetter("setSeasonObjectiveClaims", _rawSetSeasonObjectiveClaims);
   const seasonObjectiveClaimsRef = useRef({});
   useEffect(() => { seasonObjectiveClaimsRef.current = seasonObjectiveClaims; }, [seasonObjectiveClaims]);
   // Per-season per-player counters. Reset at season boundary.
@@ -2898,7 +2922,8 @@ export default function Headliners() {
   //   genrePlays: { "Rock": n, "Pop": n, ... },   // v199.21: for legendary play_genre reqs
   //   genreTempts: { "Pop": n, "Funk": n, ... },  // v199.21: for legendary tempt_genre reqs
   // } }
-  const [seasonCounters, setSeasonCounters] = useState({});
+  const [seasonCounters, _rawSetSeasonCounters] = useState({});
+  const setSeasonCounters = _guardSetter("setSeasonCounters", _rawSetSeasonCounters);
   const seasonCountersRef = useRef({});
   useEffect(() => { seasonCountersRef.current = seasonCounters; }, [seasonCounters]);
   // v199.21: Legendary Artists / Festival Contracts state.
@@ -2910,33 +2935,39 @@ export default function Headliners() {
   //   Max tokens per player per artist = 3 (one per qualifying season).
   // legendaryResolution: null | { results: [{ artist, winner, tokens, outcome, rolls? }] }
   //   Set at Summer close, drives the Legendary Lineup resolution modal shown before game-over.
-  const [gameLegendaryArtists, setGameLegendaryArtists] = useState([]);
+  const [gameLegendaryArtists, _rawSetGameLegendaryArtists] = useState([]);
+  const setGameLegendaryArtists = _guardSetter("setGameLegendaryArtists", _rawSetGameLegendaryArtists);
   const gameLegendaryArtistsRef = useRef([]);
   useEffect(() => { gameLegendaryArtistsRef.current = gameLegendaryArtists; }, [gameLegendaryArtists]);
-  const [legendaryTokens, setLegendaryTokens] = useState({});
+  const [legendaryTokens, _rawSetLegendaryTokens] = useState({});
+  const setLegendaryTokens = _guardSetter("setLegendaryTokens", _rawSetLegendaryTokens);
   const legendaryTokensRef = useRef({});
   useEffect(() => { legendaryTokensRef.current = legendaryTokens; }, [legendaryTokens]);
   // v199.60: shared seasonal tokens are PER-PLAYER, not per-legendary. Each player earns
   // at most 1 token per season (3 total across autumn/winter/spring), plus up to 3 Summer
   // signature tokens (one per legendary). Max per player = 6 tokens × 2 tickets = 12 tickets.
   // Shape: { pid: { autumn: bool, winter: bool, spring: bool } }
-  const [sharedSeasonalTokens, setSharedSeasonalTokens] = useState({});
+  const [sharedSeasonalTokens, _rawSetSharedSeasonalTokens] = useState({});
+  const setSharedSeasonalTokens = _guardSetter("setSharedSeasonalTokens", _rawSetSharedSeasonalTokens);
   const sharedSeasonalTokensRef = useRef({});
   useEffect(() => { sharedSeasonalTokensRef.current = sharedSeasonalTokens; }, [sharedSeasonalTokens]);
   // v199.49: Shared seasonal objectives. One req per season, drawn fresh at the start
   // of that season. Autumn is drawn at game start; Winter/Spring at their season boundaries.
   // Summer uses each Legendary's own `summer` signature (not drawn here).
   // Shape: { autumn: req | null, winter: req | null, spring: req | null }
-  const [seasonalObjectives, setSeasonalObjectives] = useState({ autumn: null, winter: null, spring: null });
+  const [seasonalObjectives, _rawSetSeasonalObjectives] = useState({ autumn: null, winter: null, spring: null });
+  const setSeasonalObjectives = _guardSetter("setSeasonalObjectives", _rawSetSeasonalObjectives);
   const seasonalObjectivesRef = useRef({ autumn: null, winter: null, spring: null });
   useEffect(() => { seasonalObjectivesRef.current = seasonalObjectives; }, [seasonalObjectives]);
-  const [legendaryResolution, setLegendaryResolution] = useState(null);
+  const [legendaryResolution, _rawSetLegendaryResolution] = useState(null);
+  const setLegendaryResolution = _guardSetter("setLegendaryResolution", _rawSetLegendaryResolution);
   // v199.25: Festival Principles state.
   // playerPrinciples: { pid: [{id, name, emoji, reqs, desc, used}] } — hidden hand per player.
   // "used" flag persists forever once set (principle spent to open a stage). "Complete" is
   // derived dynamically by checking current amenity counts against reqs — if used is false
   // AND reqs are met, the principle is actionable (can be spent to open a stage).
-  const [playerPrinciples, setPlayerPrinciples] = useState({});
+  const [playerPrinciples, _rawSetPlayerPrinciples] = useState({});
+  const setPlayerPrinciples = _guardSetter("setPlayerPrinciples", _rawSetPlayerPrinciples);
   const playerPrinciplesRef = useRef({});
   useEffect(() => { playerPrinciplesRef.current = playerPrinciples; }, [playerPrinciples]);
   // v199.23: snapshot of fame per player at the start of the current season. Used by the
@@ -2947,7 +2978,8 @@ export default function Headliners() {
   // { pid: { autumn: { fame, fameDelta, ticketsThisSeason, artistsThisSeason, totalTickets, totalArtists }, ... } }
   // Populated at each runQuickYearSeasonEnd call. Game-over uses this to show per-season
   // breakdown columns alongside the game totals.
-  const [quickYearHistory, setQuickYearHistory] = useState({});
+  const [quickYearHistory, _rawSetQuickYearHistory] = useState({});
+  const setQuickYearHistory = _guardSetter("setQuickYearHistory", _rawSetQuickYearHistory);
   const quickYearHistoryRef = useRef({});
   useEffect(() => { quickYearHistoryRef.current = quickYearHistory; }, [quickYearHistory]);
   // v199.132: track each player's running END-card ticket total across seasons so we can
@@ -2967,26 +2999,33 @@ export default function Headliners() {
   // one player (there's only one of each). As players spin and keep an agent, that agent
   // is marked taken for the current season and removed from subsequent players' dials.
   // At each season boundary, the taken set resets and all 9 are available again.
-  const [gameAgentPool, setGameAgentPool] = useState([]);
+  const [gameAgentPool, _rawSetGameAgentPool] = useState([]);
+  const setGameAgentPool = _guardSetter("setGameAgentPool", _rawSetGameAgentPool);
   const gameAgentPoolRef = useRef([]);
   useEffect(() => { gameAgentPoolRef.current = gameAgentPool; }, [gameAgentPool]);
   // seasonAgentsTaken: Set of agentIds assigned to a player this season. Reset at each
   // season boundary. Dial pool for a player = gameAgentPool.filter(a => !taken.has(a.id)).
-  const [seasonAgentsTaken, setSeasonAgentsTaken] = useState(new Set());
+  const [seasonAgentsTaken, _rawSetSeasonAgentsTaken] = useState(new Set());
+  const setSeasonAgentsTaken = _guardSetter("setSeasonAgentsTaken", _rawSetSeasonAgentsTaken);
   const seasonAgentsTakenRef = useRef(new Set());
   useEffect(() => { seasonAgentsTakenRef.current = seasonAgentsTaken; }, [seasonAgentsTaken]);
-  const [hotlineAgents, setHotlineAgents] = useState({});
+  const [hotlineAgents, _rawSetHotlineAgents] = useState({});
+  const setHotlineAgents = _guardSetter("setHotlineAgents", _rawSetHotlineAgents);
   const hotlineAgentsRef = useRef({});
   useEffect(() => { hotlineAgentsRef.current = hotlineAgents; }, [hotlineAgents]);
-  const [hotlineUsed, setHotlineUsed] = useState({});
+  const [hotlineUsed, _rawSetHotlineUsed] = useState({});
+  const setHotlineUsed = _guardSetter("setHotlineUsed", _rawSetHotlineUsed);
   const hotlineUsedRef = useRef({});
   useEffect(() => { hotlineUsedRef.current = hotlineUsed; }, [hotlineUsed]);
-  const [hotlineSpinQueue, setHotlineSpinQueue] = useState([]);
+  const [hotlineSpinQueue, _rawSetHotlineSpinQueue] = useState([]);
+  const setHotlineSpinQueue = _guardSetter("setHotlineSpinQueue", _rawSetHotlineSpinQueue);
   // Modal state for showing the spin UI. "idle" | "spinning" | "revealed"
-  const [hotlineSpinPhase, setHotlineSpinPhase] = useState("idle");
+  const [hotlineSpinPhase, _rawSetHotlineSpinPhase] = useState("idle");
+  const setHotlineSpinPhase = _guardSetter("setHotlineSpinPhase", _rawSetHotlineSpinPhase);
   // The agent that just landed from the current spin, held between spin-complete and
   // user clicks "Confirm" / "Re-spin for 1 Fame".
-  const [hotlineLandedAgent, setHotlineLandedAgent] = useState(null);
+  const [hotlineLandedAgent, _rawSetHotlineLandedAgent] = useState(null);
+  const setHotlineLandedAgent = _guardSetter("setHotlineLandedAgent", _rawSetHotlineLandedAgent);
   // Pending tempt flags added by agent effects — read at tempt resolution.
   // { pid: { freeFame?: true, amenityDiscount?: 2, multiTempt?: true } }
   const hotlineTemptFlagsRef = useRef({});
@@ -2995,20 +3034,27 @@ export default function Headliners() {
   // preetiPicker: { pid, artists: [5] } — pick 1 of 5 after Preeti wins.
   // frankiePicker: { pid, artist, availableStages: [idx] } — pick a stage to play the free artist.
   // leannePending: { pid } — Leanne Legacy's "tempt from discard" mode toggle for the tempt UI.
-  const [tonyPicker, setTonyPicker] = useState(null);
-  const [preetiPicker, setPreetiPicker] = useState(null);
-  const [frankiePicker, setFrankiePicker] = useState(null);
+  const [tonyPicker, _rawSetTonyPicker] = useState(null);
+  const setTonyPicker = _guardSetter("setTonyPicker", _rawSetTonyPicker);
+  const [preetiPicker, _rawSetPreetiPicker] = useState(null);
+  const setPreetiPicker = _guardSetter("setPreetiPicker", _rawSetPreetiPicker);
+  const [frankiePicker, _rawSetFrankiePicker] = useState(null);
+  const setFrankiePicker = _guardSetter("setFrankiePicker", _rawSetFrankiePicker);
   // v199.28: Problem-Solver Parv's "play from hand on loss" picker.
-  const [parvPicker, setParvPicker] = useState(null);
+  const [parvPicker, _rawSetParvPicker] = useState(null);
+  const setParvPicker = _guardSetter("setParvPicker", _rawSetParvPicker);
   // v199.32: Favour free-play mode. When a player clicks a Favour in their hand,
   // this holds { pid, handIdx, genre } and opens a pool picker filtered to matching
   // artists. Picking an artist triggers playFavouredArtist (Fame waived, amenities req'd,
   // free bonus action, overrides tempts). Null when idle.
-  const [favourPlayMode, setFavourPlayMode] = useState(null);
-  const [leannePending, setLeannePending] = useState(null);
+  const [favourPlayMode, _rawSetFavourPlayMode] = useState(null);
+  const setFavourPlayMode = _guardSetter("setFavourPlayMode", _rawSetFavourPlayMode);
+  const [leannePending, _rawSetLeannePending] = useState(null);
+  const setLeannePending = _guardSetter("setLeannePending", _rawSetLeannePending);
   // Which reward variant is in play this game, per amenity type. Set at game start.
   //   { campsite: "camp_2", portaloo: "port_1", catering: "cat_3", security: "sec_2" }
-  const [infraRewards, setInfraRewards] = useState(null);
+  const [infraRewards, _rawSetInfraRewards] = useState(null);
+  const setInfraRewards = _guardSetter("setInfraRewards", _rawSetInfraRewards);
   const infraRewardsRef = useRef(null);
   useEffect(() => { infraRewardsRef.current = infraRewards; }, [infraRewards]);
   // Per-turn / per-year usage trackers for rewards that fire once per turn/year.
@@ -3022,9 +3068,11 @@ export default function Headliners() {
   // isn't declared until ~line 1929.
   const infraLeaderRef = useRef({ campsite: null, portaloo: null, catering: null, security: null });
   // Draw-3-keep-1 modal for sec_2. { pid, cards: [3 artists] } | null
-  const [sec2Draw, setSec2Draw] = useState(null);
+  const [sec2Draw, _rawSetSec2Draw] = useState(null);
+  const setSec2Draw = _guardSetter("setSec2Draw", _rawSetSec2Draw);
   // Choose-amenity modal for sec_1. { pid, availableTypes: [...] } | null
-  const [sec1Choice, setSec1Choice] = useState(null);
+  const [sec1Choice, _rawSetSec1Choice] = useState(null);
+  const setSec1Choice = _guardSetter("setSec1Choice", _rawSetSec1Choice);
   // v189: retained as always-false constants (removed toggles) so downstream code that
   // reads these refs continues to work without touching every callsite.
   const preRoundArtistDraws = false;
@@ -3045,8 +3093,10 @@ export default function Headliners() {
   const setAgentMicrotrendClaim = () => {};
   const setStrictComparativeMode = () => {};
   const setContractsMode = () => {};
-  const [sharedContracts, setSharedContracts] = useState([]);
-  const [pendingContractClaim, setPendingContractClaim] = useState(null);
+  const [sharedContracts, _rawSetSharedContracts] = useState([]);
+  const setSharedContracts = _guardSetter("setSharedContracts", _rawSetSharedContracts);
+  const [pendingContractClaim, _rawSetPendingContractClaim] = useState(null);
+  const setPendingContractClaim = _guardSetter("setPendingContractClaim", _rawSetPendingContractClaim);
   const temptModeRef = useRef(true);
   const antiLeadMechanicsRef = useRef(true);
   useEffect(() => { totalYearsRef.current = totalYears; }, [totalYears]);
@@ -3069,18 +3119,32 @@ export default function Headliners() {
   _loopGuardRef.current.renders.push(_now);
   if (_loopGuardRef.current.renders.length > 30) {
     console.error(`🔁 LOOP: ${_loopGuardRef.current.renders.length} renders in 500ms`);
+    // v199.193: dump every setter that fired in the last 500ms, sorted by frequency.
+    // Even if no single setter exceeds the 10-call threshold, the top-N list shows which
+    // setters are cascading together.
+    const windowStart = _now - 500;
+    const freq = [];
+    for (const [name, ts] of Object.entries(_loopGuardRef.current.setters)) {
+      const recent = ts.filter(t => t >= windowStart);
+      if (recent.length > 0) freq.push([name, recent.length]);
+    }
+    freq.sort((a, b) => b[1] - a[1]);
+    console.error(`🔁 Setter frequency (last 500ms):`);
+    freq.slice(0, 15).forEach(([name, n]) => console.error(`    ${name}: ${n}x`));
     console.trace("Render loop trace");
-    _loopGuardRef.current.renders = []; // reset to avoid console flood
+    _loopGuardRef.current.renders = [];
+    _loopGuardRef.current.setters = {}; // reset to avoid console flood on next render
   }
   const _guardSetter = (name, raw) => (...args) => {
     const now = Date.now();
-    const arr = (_loopGuardRef.current.setters[name] || []).filter(t => now - t < 300);
+    const arr = (_loopGuardRef.current.setters[name] || []).filter(t => now - t < 500);
     arr.push(now);
     _loopGuardRef.current.setters[name] = arr;
-    if (arr.length > 20) {
-      console.error(`🔁 LOOP: ${name} called ${arr.length}x in 300ms`);
+    // v199.193: threshold lowered 20 → 10 to catch finer-grained loops.
+    if (arr.length > 10) {
+      console.error(`🔁 LOOP: ${name} called ${arr.length}x in 500ms`);
       console.trace(`${name} call site`);
-      _loopGuardRef.current.setters[name] = []; // reset
+      _loopGuardRef.current.setters[name] = [];
     }
     return raw(...args);
   };
@@ -3091,18 +3155,24 @@ export default function Headliners() {
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
   const playerDataRef = useRef(playerData);
   useEffect(() => { playerDataRef.current = playerData; }, [playerData]);
-  const [setupIndex, setSetupIndex] = useState(0);
-  const [setupStep, setSetupStep] = useState("pickAmenity");
-  const [setupSelectedAmenity, setSetupSelectedAmenity] = useState(null);
-  const [setupSelectedField, setSetupSelectedField] = useState(null);
+  const [setupIndex, _rawSetSetupIndex] = useState(0);
+  const setSetupIndex = _guardSetter("setSetupIndex", _rawSetSetupIndex);
+  const [setupStep, _rawSetSetupStep] = useState("pickAmenity");
+  const setSetupStep = _guardSetter("setSetupStep", _rawSetSetupStep);
+  const [setupSelectedAmenity, _rawSetSetupSelectedAmenity] = useState(null);
+  const setSetupSelectedAmenity = _guardSetter("setSetupSelectedAmenity", _rawSetSetupSelectedAmenity);
+  const [setupSelectedField, _rawSetSetupSelectedField] = useState(null);
+  const setSetupSelectedField = _guardSetter("setSetupSelectedField", _rawSetSetupSelectedField);
 
   // Game state
-  const [year, setYear] = useState(1);
+  const [year, _rawSetYear] = useState(1);
+  const setYear = _guardSetter("setYear", _rawSetYear);
   // yearRef so functions wrapped in useCallback([]) (recalcTickets, recalcAfterUpdate)
   // always read the current year, not the first render's year.
   const yearRef = useRef(1);
   useEffect(() => { yearRef.current = year; }, [year]);
-  const [turnOrder, setTurnOrder] = useState([]);
+  const [turnOrder, _rawSetTurnOrder] = useState([]);
+  const setTurnOrder = _guardSetter("setTurnOrder", _rawSetTurnOrder);
   const [currentPlayerIdx, _rawSetCurrentPlayerIdx] = useState(0);
   const setCurrentPlayerIdx = _guardSetter("setCurrentPlayerIdx", _rawSetCurrentPlayerIdx);
   const [turnsLeft, _setTurnsLeft] = useState({});
@@ -3117,12 +3187,14 @@ export default function Headliners() {
   };
   const [dice, _rawSetDice] = useState([]);
   const setDice = _guardSetter("setDice", _rawSetDice);
-  const [turnAction, setTurnAction] = useState(null);
+  const [turnAction, _rawSetTurnAction] = useState(null);
+  const setTurnAction = _guardSetter("setTurnAction", _rawSetTurnAction);
   // v199.10: Quick Play Fame-scaled action picks. On action start we set this to the
   // Fame-tiered max (amenity: 1 at Fame 0-1, 2 at Fame 2+; artist: 1 at Fame 0-1, 2 at
   // Fame 2-3, 3 at Fame 4-5). Each pick decrements; action ends when counter hits 0.
   // Only active in Quick Play; classic multi-year mode keeps its 1-pick-per-action flow.
-  const [qyPicksLeft, setQyPicksLeft] = useState(0);
+  const [qyPicksLeft, _rawSetQyPicksLeft] = useState(0);
+  const setQyPicksLeft = _guardSetter("setQyPicksLeft", _rawSetQyPicksLeft);
   const qyPicksLeftRef = useRef(0);
   useEffect(() => { qyPicksLeftRef.current = qyPicksLeft; }, [qyPicksLeft]);
   // v199.45: N-action turn system. Each Quick Play turn, a player can take N actions
@@ -3142,49 +3214,65 @@ export default function Headliners() {
   // v199.39: once a pool/deck draw happens in an artist action, lock out book-from-hand
   // for the rest of this action. A single artist action is EITHER draws OR a hand book,
   // not both. Reset when a new artist action starts.
-  const [qyDrewThisAction, setQyDrewThisAction] = useState(false);
+  const [qyDrewThisAction, _rawSetQyDrewThisAction] = useState(false);
+  const setQyDrewThisAction = _guardSetter("setQyDrewThisAction", _rawSetQyDrewThisAction);
   const qyDrewThisActionRef = useRef(false);
   useEffect(() => { qyDrewThisActionRef.current = qyDrewThisAction; }, [qyDrewThisAction]);
   // v199.24: tracks whether Fame 4+ players have used their once-per-action pool refresh.
   // Reset at the start of each artist action.
-  const [qyPoolRefreshUsed, setQyPoolRefreshUsed] = useState(false);
+  const [qyPoolRefreshUsed, _rawSetQyPoolRefreshUsed] = useState(false);
+  const setQyPoolRefreshUsed = _guardSetter("setQyPoolRefreshUsed", _rawSetQyPoolRefreshUsed);
   const qyPoolRefreshUsedRef = useRef(false);
   useEffect(() => { qyPoolRefreshUsedRef.current = qyPoolRefreshUsed; }, [qyPoolRefreshUsed]);
   // v199.52: Fame 4+ dice re-roll — once per turn, re-roll the amenity dice. Parallel to
   // the pool refresh (also Fame 4+). Reset at endTurn (not at action start, since Quick
   // Play is now 1 action per turn and both refreshes are turn-scoped Fame perks).
-  const [qyDiceRefreshUsed, setQyDiceRefreshUsed] = useState(false);
+  const [qyDiceRefreshUsed, _rawSetQyDiceRefreshUsed] = useState(false);
+  const setQyDiceRefreshUsed = _guardSetter("setQyDiceRefreshUsed", _rawSetQyDiceRefreshUsed);
   const qyDiceRefreshUsedRef = useRef(false);
   useEffect(() => { qyDiceRefreshUsedRef.current = qyDiceRefreshUsed; }, [qyDiceRefreshUsed]);
-  const [actionTaken, setActionTaken] = useState(false);
-  const [undoSnapshot, setUndoSnapshot] = useState(null);
+  const [actionTaken, _rawSetActionTaken] = useState(false);
+  const setActionTaken = _guardSetter("setActionTaken", _rawSetActionTaken);
+  const [undoSnapshot, _rawSetUndoSnapshot] = useState(null);
+  const setUndoSnapshot = _guardSetter("setUndoSnapshot", _rawSetUndoSnapshot);
 
   // Goals system
-  const [activeGoals, setActiveGoals] = useState([]); // DEPRECATED — kept for compat
-  const [goalProgress, setGoalProgress] = useState({});
-  const [goalReq1Claimed, setGoalReq1Claimed] = useState({});
+  const [activeGoals, _rawSetActiveGoals] = useState([]);
+  const setActiveGoals = _guardSetter("setActiveGoals", _rawSetActiveGoals); // DEPRECATED — kept for compat
+  const [goalProgress, _rawSetGoalProgress] = useState({});
+  const setGoalProgress = _guardSetter("setGoalProgress", _rawSetGoalProgress);
+  const [goalReq1Claimed, _rawSetGoalReq1Claimed] = useState({});
+  const setGoalReq1Claimed = _guardSetter("setGoalReq1Claimed", _rawSetGoalReq1Claimed);
   // Lineup Objectives — public genre targets
-  const [lineupObjectives, setLineupObjectives] = useState([]); // [{ genres: ["Pop","Rock","Funk"], claimed1st: null, claimed2nd: null }, ...]
-  const [lineupObjDeck, setLineupObjDeck] = useState([]);
+  const [lineupObjectives, _rawSetLineupObjectives] = useState([]);
+  const setLineupObjectives = _guardSetter("setLineupObjectives", _rawSetLineupObjectives); // [{ genres: ["Pop","Rock","Funk"], claimed1st: null, claimed2nd: null }, ...]
+  const [lineupObjDeck, _rawSetLineupObjDeck] = useState([]);
+  const setLineupObjDeck = _guardSetter("setLineupObjDeck", _rawSetLineupObjDeck);
   const goalClaimsRef = useRef({}); // { "goalId_req2": pid, "goalId_req3": pid } — sync tracking
   const lastObjChoiceRef = useRef(null); // dedup AI objective auto-choice
-  const [selectedDie, setSelectedDie] = useState(null);
+  const [selectedDie, _rawSetSelectedDie] = useState(null);
+  const setSelectedDie = _guardSetter("setSelectedDie", _rawSetSelectedDie);
   // v166: choiceAmenity state removed — compound die faces were deleted, so the
   // "choose between two amenities" modal state is no longer needed.
-  const [pickingFieldFor, setPickingFieldFor] = useState(null); // amenityType when waiting for field click
+  const [pickingFieldFor, _rawSetPickingFieldFor] = useState(null);
+  const setPickingFieldFor = _guardSetter("setPickingFieldFor", _rawSetPickingFieldFor); // amenityType when waiting for field click
   // (placingAmenity / placingStage / movingFrom / movedThisTurn / hoverHex removed —
   //  amenities are now counters, no spatial picking required)
-  const [pendingDiceRoll, setPendingDiceRoll] = useState(null); // { count, results, rolled, pid, artistName, callback }
-  const [pendingPortalooRefresh, setPendingPortalooRefresh] = useState(0);
+  const [pendingDiceRoll, _rawSetPendingDiceRoll] = useState(null);
+  const setPendingDiceRoll = _guardSetter("setPendingDiceRoll", _rawSetPendingDiceRoll); // { count, results, rolled, pid, artistName, callback }
+  const [pendingPortalooRefresh, _rawSetPendingPortalooRefresh] = useState(0);
+  const setPendingPortalooRefresh = _guardSetter("setPendingPortalooRefresh", _rawSetPendingPortalooRefresh);
   
   // Agent system: each player has 1 agent they can deploy for free
   // agentPlacements: { pid: { type: "dice"|"pool", amenityType?: string, poolIdx?: number, artistName?: string, placedTurn?: number } | null }
-  const [agentPlacements, setAgentPlacements] = useState({});
+  const [agentPlacements, _rawSetAgentPlacements] = useState({});
+  const setAgentPlacements = _guardSetter("setAgentPlacements", _rawSetAgentPlacements);
   // v131: under tempt mode, players may hold up to 2 pending pool-artist tempts at once.
   // temptPlacements is a per-player ARRAY of pending placements. agentPlacements is unused
   // under tempt mode — this array is authoritative. Standard mode ignores this state.
   //   Shape: { pid: Array<{ type: "pool", poolIdx, artistName, placedTurn }> }
-  const [temptPlacements, setTemptPlacements] = useState({});
+  const [temptPlacements, _rawSetTemptPlacements] = useState({});
+  const setTemptPlacements = _guardSetter("setTemptPlacements", _rawSetTemptPlacements);
   // v139: ref-mirror so async callbacks (checkNextTempt setTimeout) read latest state
   // instead of the closure snapshot at scheduling time — otherwise a just-resolved tempt
   // still appears "live" and re-fires the pendingAgentArtist modal for the same artist.
@@ -3196,28 +3284,32 @@ export default function Headliners() {
   // which cards to discard rather than the auto-cull-lowest-value behavior. AI players
   // still auto-discard (via existing logic) since no picker is possible for them.
   //   Shape: { pid: number, needToDiscard: number } | null
-  const [pendingHandDiscard, setPendingHandDiscard] = useState(null);
+  const [pendingHandDiscard, _rawSetPendingHandDiscard] = useState(null);
+  const setPendingHandDiscard = _guardSetter("setPendingHandDiscard", _rawSetPendingHandDiscard);
 
   // v147: contest winners can now choose their stage. When a contest resolves for the
   // CURRENT player, the pendingAgentArtist modal opens (same UX as uncontested tempts).
   // When the winner is a DIFFERENT player (they tempted on an earlier turn), the artist
   // is queued here and the modal opens on their next turn.
   //   Shape: Array<{ pid: number, artist: object }>
-  const [pendingContestPlacements, setPendingContestPlacements] = useState([]);
+  const [pendingContestPlacements, _rawSetPendingContestPlacements] = useState([]);
+  const setPendingContestPlacements = _guardSetter("setPendingContestPlacements", _rawSetPendingContestPlacements);
 
   // v143: win condition. Chosen at game start by the first non-AI player (or randomly
   // picked when all-AI). Determines how the game's winner is decided at game over.
   //   "consistency"    — most years led in tickets sold. Ties → cumulative total.
   //   "following"      — highest cumulative tickets across all years. (The default win rule.)
   //   "talkOfTheTown"  — highest single-year ticket count wins.
-  const [winCondition, setWinCondition] = useState(null);
+  const [winCondition, _rawSetWinCondition] = useState(null);
+  const setWinCondition = _guardSetter("setWinCondition", _rawSetWinCondition);
   const winConditionRef = useRef(null);
   useEffect(() => { winConditionRef.current = winCondition; }, [winCondition]);
   // v132: ledger of ticket-gain sources per player. Every time bonusTickets increases,
   // an entry is appended here for the hover breakdown UI. Losses (negative deltas) are
   // logged too so the sum reconciles with the actual bonusTickets value.
   //   Shape: { pid: Array<{ source: string, amount: number, year: number }> }
-  const [ticketsLog, setTicketsLog] = useState({});
+  const [ticketsLog, _rawSetTicketsLog] = useState({});
+  const setTicketsLog = _guardSetter("setTicketsLog", _rawSetTicketsLog);
   const logTicketGain = (pid, amount, source) => {
     if (!amount || pid == null) return;
     setTicketsLog(prev => ({
@@ -3237,8 +3329,10 @@ export default function Headliners() {
   // Displayed on OTHER players' turns so everyone can catch up on what each opponent did.
   // `currentTurnActions[pid]` — working array of actions during the player's active turn.
   // On endTurn, currentTurnActions[pid] snapshots to lastAction[pid] and clears.
-  const [lastAction, setLastAction] = useState({});
-  const [currentTurnActions, setCurrentTurnActions] = useState({});
+  const [lastAction, _rawSetLastAction] = useState({});
+  const setLastAction = _guardSetter("setLastAction", _rawSetLastAction);
+  const [currentTurnActions, _rawSetCurrentTurnActions] = useState({});
+  const setCurrentTurnActions = _guardSetter("setCurrentTurnActions", _rawSetCurrentTurnActions);
   // v190: per-year, per-player statistics for the game data table. Populated
   // incrementally through the year for counter-type stats (microtrends, tempts),
   // and snapshotted at year end for state-type stats (artists on stages, stage count,
@@ -3247,7 +3341,8 @@ export default function Headliners() {
   //     microtrends, temptsPlaced, temptsWon,
   //     artistsOnStages, stageCount, ticketsFromArtists,
   //   }
-  const [yearlyStats, setYearlyStats] = useState({});
+  const [yearlyStats, _rawSetYearlyStats] = useState({});
+  const setYearlyStats = _guardSetter("setYearlyStats", _rawSetYearlyStats);
   const bumpYearlyStat = (pid, key, delta = 1) => {
     const y = yearRef.current || year || 1;
     setYearlyStats(prev => {
@@ -3272,11 +3367,13 @@ export default function Headliners() {
   // instead of scrolling past in the log. Only queues for human players (AI gains are
   // silent to avoid making the game a click-through slog).
   //   Shape: Array<{ pid: number, amount: number, source: string, ts: number }>
-  const [fameGainQueue, setFameGainQueue] = useState([]);
+  const [fameGainQueue, _rawSetFameGainQueue] = useState([]);
+  const setFameGainQueue = _guardSetter("setFameGainQueue", _rawSetFameGainQueue);
   // v148: parallel to ticketsLog — a persistent per-year fame ledger. Every fame gain
   // AND loss flows through here so the hover tooltip can show sources both ways.
   //   Shape: { pid: Array<{ source, amount, year }> }
-  const [fameLog, setFameLog] = useState({});
+  const [fameLog, _rawSetFameLog] = useState({});
+  const setFameLog = _guardSetter("setFameLog", _rawSetFameLog);
   const logFameGain = (pid, amount, source, yearOverride) => {
     if (!amount || pid == null) return;
     const y = yearOverride != null ? yearOverride : (yearRef.current || year || 1);
@@ -4046,7 +4143,8 @@ export default function Headliners() {
   // v199.98: pending reactive effects queue. When an opponent takes an action, every
   // other player's matching reactive Fame cards queue an entry here. At the holder's
   // next turn start, these entries fire. Shape: { pid: [{ card, context }] }
-  const [pendingReactiveEffects, setPendingReactiveEffects] = useState({});
+  const [pendingReactiveEffects, _rawSetPendingReactiveEffects] = useState({});
+  const setPendingReactiveEffects = _guardSetter("setPendingReactiveEffects", _rawSetPendingReactiveEffects);
   const pendingReactiveEffectsRef = useRef({});
   useEffect(() => { pendingReactiveEffectsRef.current = pendingReactiveEffects; }, [pendingReactiveEffects]);
   // v199.171: reactiveSpentRef tracks which Fame cards (by instanceId) have already fired
@@ -4060,7 +4158,8 @@ export default function Headliners() {
   // at THEIR turn start. Fixes the issue where multiple players' season_start pickers
   // tried to open at the same moment (first player's picker got clobbered or didn't
   // render because they weren't current).
-  const [playersNeedingSeasonStart, setPlayersNeedingSeasonStart] = useState({});
+  const [playersNeedingSeasonStart, _rawSetPlayersNeedingSeasonStart] = useState({});
+  const setPlayersNeedingSeasonStart = _guardSetter("setPlayersNeedingSeasonStart", _rawSetPlayersNeedingSeasonStart);
   const playersNeedingSeasonStartRef = useRef({});
   useEffect(() => { playersNeedingSeasonStartRef.current = playersNeedingSeasonStart; }, [playersNeedingSeasonStart]);
   // v199.99: Season-start Fame card picker. Covers DISCARD_1, DISCARD_2, DISCARD_AM,
@@ -4075,7 +4174,8 @@ export default function Headliners() {
   // then glows those cards, and the player clicks each one to activate its effect. AI
   // auto-processes these before endTurn so the game progresses without human input.
   // Shape: { pid: [{ cardInstanceId, context }] }
-  const [pendingAfterTriggers, setPendingAfterTriggers] = useState({});
+  const [pendingAfterTriggers, _rawSetPendingAfterTriggers] = useState({});
+  const setPendingAfterTriggers = _guardSetter("setPendingAfterTriggers", _rawSetPendingAfterTriggers);
   const pendingAfterTriggersRef = useRef({});
   useEffect(() => { pendingAfterTriggersRef.current = pendingAfterTriggers; }, [pendingAfterTriggers]);
   // v199.101: Fame draw picker — opens when a draw-type Fame effect fires for a human.
@@ -5650,7 +5750,8 @@ export default function Headliners() {
   // v135: Alternative Artist Objectives — lobby toggle. When ON, this system replaces the
   // fame-based stage-opening progression. Players draw objectives and complete them to earn
   // stage-open rewards.
-  const [altObjectivesMode, setAltObjectivesMode] = useState(false);
+  const [altObjectivesMode, _rawSetAltObjectivesMode] = useState(false);
+  const setAltObjectivesMode = _guardSetter("setAltObjectivesMode", _rawSetAltObjectivesMode);
   const altObjectivesModeRef = useRef(true);
   useEffect(() => { altObjectivesModeRef.current = altObjectivesMode; }, [altObjectivesMode]);
 
@@ -5662,13 +5763,20 @@ export default function Headliners() {
   //   pendingObjectivePicker: { pid, kind, options } — currently showing picker
   //   yearObjectiveAssignments: { year: { pid: objId | null } } — the "current year" objective
   //     tracked per year so we know what failure evaluation needs to check against
-  const [activeObjectives, setActiveObjectives] = useState({});
-  const [completedObjectives, setCompletedObjectives] = useState({});
-  const [yearEvents, setYearEvents] = useState({});
-  const [altObjectiveDeck, setAltObjectiveDeck] = useState([]);
-  const [pendingObjectivePicker, setPendingObjectivePicker] = useState(null);
-  const [pendingObjectivePickerQueue, setPendingObjectivePickerQueue] = useState([]);
-  const [yearObjectiveAssignments, setYearObjectiveAssignments] = useState({});
+  const [activeObjectives, _rawSetActiveObjectives] = useState({});
+  const setActiveObjectives = _guardSetter("setActiveObjectives", _rawSetActiveObjectives);
+  const [completedObjectives, _rawSetCompletedObjectives] = useState({});
+  const setCompletedObjectives = _guardSetter("setCompletedObjectives", _rawSetCompletedObjectives);
+  const [yearEvents, _rawSetYearEvents] = useState({});
+  const setYearEvents = _guardSetter("setYearEvents", _rawSetYearEvents);
+  const [altObjectiveDeck, _rawSetAltObjectiveDeck] = useState([]);
+  const setAltObjectiveDeck = _guardSetter("setAltObjectiveDeck", _rawSetAltObjectiveDeck);
+  const [pendingObjectivePicker, _rawSetPendingObjectivePicker] = useState(null);
+  const setPendingObjectivePicker = _guardSetter("setPendingObjectivePicker", _rawSetPendingObjectivePicker);
+  const [pendingObjectivePickerQueue, _rawSetPendingObjectivePickerQueue] = useState([]);
+  const setPendingObjectivePickerQueue = _guardSetter("setPendingObjectivePickerQueue", _rawSetPendingObjectivePickerQueue);
+  const [yearObjectiveAssignments, _rawSetYearObjectiveAssignments] = useState({});
+  const setYearObjectiveAssignments = _guardSetter("setYearObjectiveAssignments", _rawSetYearObjectiveAssignments);
 
   // Increment a per-year event counter for the current player.
   // v196.2: was gated on altObjectivesModeRef, which meant Curated identity (and any
@@ -5684,19 +5792,24 @@ export default function Headliners() {
     }));
   };
   // Tracks which players have successfully used their agent this year (exhausted until next year)
-  const [agentExhausted, setAgentExhausted] = useState({});
+  const [agentExhausted, _rawSetAgentExhausted] = useState({});
+  const setAgentExhausted = _guardSetter("setAgentExhausted", _rawSetAgentExhausted);
   // Tracks how many bonus agent uses each player has consumed this year (granted by "+N Agents" councils).
   // Each qualifying "agents" council reward provides perYear[yIdx] extra deployments after the base agent
   // is exhausted. Resets to {} each year transition.
-  const [agentBonusUsesUsed, setAgentBonusUsesUsed] = useState({});
+  const [agentBonusUsesUsed, _rawSetAgentBonusUsesUsed] = useState({});
+  const setAgentBonusUsesUsed = _guardSetter("setAgentBonusUsesUsed", _rawSetAgentBonusUsesUsed);
   // Per-player Set of artist names booked via agent this year. Used to surface
   // year-end agent effects (e.g. Kendrick Lamar's "+8 VP at Year End" agentEffect)
   // in the year-end resolution. Reset at year transition along with the other agent state.
-  const [agentBookedThisYear, setAgentBookedThisYear] = useState({});
+  const [agentBookedThisYear, _rawSetAgentBookedThisYear] = useState({});
+  const setAgentBookedThisYear = _guardSetter("setAgentBookedThisYear", _rawSetAgentBookedThisYear);
   // Pending agent amenity placements (player needs to place amenity gained from agent)
-  const [pendingAgentAmenity, setPendingAgentAmenity] = useState([]); // [{ pid, amenityType }]
+  const [pendingAgentAmenity, _rawSetPendingAgentAmenity] = useState([]);
+  const setPendingAgentAmenity = _guardSetter("setPendingAgentAmenity", _rawSetPendingAgentAmenity); // [{ pid, amenityType }]
   // Pending agent artist booking (uncontested pool claim)
-  const [pendingAgentArtist, setPendingAgentArtist] = useState(null); // { pid, artist, poolIdx }
+  const [pendingAgentArtist, _rawSetPendingAgentArtist] = useState(null);
+  const setPendingAgentArtist = _guardSetter("setPendingAgentArtist", _rawSetPendingAgentArtist); // { pid, artist, poolIdx }
   // Agent contest state (multiple agents on same artist).
   // Shape: { artist, contestants, rolledFace, contestantData, winnerId, isAuto }
   //   contestants: array of { pid, placedTurn } (raw input)
@@ -5704,7 +5817,8 @@ export default function Headliners() {
   //   contestantData: array of { pid, festivalName, value, tickets, placedTurn, isWinner }
   //   winnerId: the winning player's id
   //   isAuto: true if no human is involved (auto-dismiss the modal after a brief reveal)
-  const [agentContest, setAgentContest] = useState(null);
+  const [agentContest, _rawSetAgentContest] = useState(null);
+  const setAgentContest = _guardSetter("setAgentContest", _rawSetAgentContest);
   // Auto-commit contest modal when it's an AI-only resolution. Use a ref to guard against
   // the effect firing twice in React 18 StrictMode dev (the second fire would commit twice).
   const agentContestAutoFiredRef = useRef(false);
@@ -5736,30 +5850,44 @@ export default function Headliners() {
     return () => clearTimeout(t);
   }, [agentContest]);
   // (hoverHex / displacedAmenities / displacedPlaceIdx removed — no spatial UI)
-  const [showTurnStart, setShowTurnStart] = useState(false);
-  const [showLog, setShowLog] = useState(false);
-  const [gameLog, setGameLog] = useState([]);
-  const [allTickets, setAllTickets] = useState({});
-  const [revealIndex, setRevealIndex] = useState(0);
-  const [leaderboardRevealed, setLeaderboardRevealed] = useState(false);
+  const [showTurnStart, _rawSetShowTurnStart] = useState(false);
+  const setShowTurnStart = _guardSetter("setShowTurnStart", _rawSetShowTurnStart);
+  const [showLog, _rawSetShowLog] = useState(false);
+  const setShowLog = _guardSetter("setShowLog", _rawSetShowLog);
+  const [gameLog, _rawSetGameLog] = useState([]);
+  const setGameLog = _guardSetter("setGameLog", _rawSetGameLog);
+  const [allTickets, _rawSetAllTickets] = useState({});
+  const setAllTickets = _guardSetter("setAllTickets", _rawSetAllTickets);
+  const [revealIndex, _rawSetRevealIndex] = useState(0);
+  const setRevealIndex = _guardSetter("setRevealIndex", _rawSetRevealIndex);
+  const [leaderboardRevealed, _rawSetLeaderboardRevealed] = useState(false);
+  const setLeaderboardRevealed = _guardSetter("setLeaderboardRevealed", _rawSetLeaderboardRevealed);
   // v197.9: between-year draft phase. When a year ends, 5 fresh artists are drawn from
   // the deck and players pick one each in order of end-of-year Fame (highest first,
   // ties broken by tickets sold). This gives every player one guaranteed high-value
   // pickup entering the new year — improves Y2/Y3 pacing so a good Y1 doesn't leave
   // players' second/third years feeling like a downhill slide.
-  const [draftCards, setDraftCards] = useState([]);
-  const [draftOrder, setDraftOrder] = useState([]); // pids in pick order
-  const [draftIndex, setDraftIndex] = useState(0);
+  const [draftCards, _rawSetDraftCards] = useState([]);
+  const setDraftCards = _guardSetter("setDraftCards", _rawSetDraftCards);
+  const [draftOrder, _rawSetDraftOrder] = useState([]);
+  const setDraftOrder = _guardSetter("setDraftOrder", _rawSetDraftOrder); // pids in pick order
+  const [draftIndex, _rawSetDraftIndex] = useState(0);
+  const setDraftIndex = _guardSetter("setDraftIndex", _rawSetDraftIndex);
 
   // Pre-round
-  const [preRoundIndex, setPreRoundIndex] = useState(0);
-  const [preRoundStep, setPreRoundStep] = useState("notify");
+  const [preRoundIndex, _rawSetPreRoundIndex] = useState(0);
+  const setPreRoundIndex = _guardSetter("setPreRoundIndex", _rawSetPreRoundIndex);
+  const [preRoundStep, _rawSetPreRoundStep] = useState("notify");
+  const setPreRoundStep = _guardSetter("setPreRoundStep", _rawSetPreRoundStep);
   // freeAmenity state declared early so the AI dispatcher useEffect deps array can reference
   // freeAmenityPlaced without hitting a temporal dead zone (it was previously declared
   // far below in the pre-round block, which TDZ'd on render).
-  const [freeAmenityCount, setFreeAmenityCount] = useState(0);
-  const [freeAmenityPlaced, setFreeAmenityPlaced] = useState(0);
-  const [freeAmenityType, setFreeAmenityType] = useState(null);
+  const [freeAmenityCount, _rawSetFreeAmenityCount] = useState(0);
+  const setFreeAmenityCount = _guardSetter("setFreeAmenityCount", _rawSetFreeAmenityCount);
+  const [freeAmenityPlaced, _rawSetFreeAmenityPlaced] = useState(0);
+  const setFreeAmenityPlaced = _guardSetter("setFreeAmenityPlaced", _rawSetFreeAmenityPlaced);
+  const [freeAmenityType, _rawSetFreeAmenityType] = useState(null);
+  const setFreeAmenityType = _guardSetter("setFreeAmenityType", _rawSetFreeAmenityType);
   // (displacedAmenities / displacedPlaceIdx removed)
 
   // Artist system
@@ -5774,15 +5902,19 @@ export default function Headliners() {
   useEffect(() => { artistDeckRef.current = artistDeck; }, [artistDeck]);
   useEffect(() => { artistPoolRef.current = artistPool; }, [artistPool]);
   useEffect(() => { discardPileRef.current = discardPile; }, [discardPile]);
-  const [showDiscard, setShowDiscard] = useState(false);
-  const [firstFullLineup, setFirstFullLineup] = useState(false);
+  const [showDiscard, _rawSetShowDiscard] = useState(false);
+  const setShowDiscard = _guardSetter("setShowDiscard", _rawSetShowDiscard);
+  const [firstFullLineup, _rawSetFirstFullLineup] = useState(false);
+  const setFirstFullLineup = _guardSetter("setFirstFullLineup", _rawSetFirstFullLineup);
   // v169: track the LAST artist played by each player, and who was the most recent player
   // to play an artist. Used by Eminem's "inherit tickets from previous player's last artist" effect.
-  const [lastArtistByPid, setLastArtistByPid] = useState({}); // { pid: artistCard }
+  const [lastArtistByPid, _rawSetLastArtistByPid] = useState({});
+  const setLastArtistByPid = _guardSetter("setLastArtistByPid", _rawSetLastArtistByPid); // { pid: artistCard }
   // v199.133: Special Guest picker. Opens after an artist with "Special Guest: N" is
   // played. Player tucks up to N artists from their hand behind the host; each guest
   // scores +1 ticket at game end. Shape: { pid, host, stageIdx, maxGuests }.
-  const [specialGuestPicker, setSpecialGuestPicker] = useState(null);
+  const [specialGuestPicker, _rawSetSpecialGuestPicker] = useState(null);
+  const setSpecialGuestPicker = _guardSetter("setSpecialGuestPicker", _rawSetSpecialGuestPicker);
   // v199.133: Artist OR-choice modal. For effects like "Gain 1 Fame OR place an amenity".
   // Shape: { pid, cardName, optA, optB, artistRef }.
   const [artistOrChoice, _rawSetArtistOrChoice] = useState(null);
@@ -5802,22 +5934,27 @@ export default function Headliners() {
   // MISTRESS ("Gain 3 amenities (stages, or Fame included) from the amenity dice"). Shape:
   // { pid, count, filter: "amenity"|"any", cardName }. Shows the current dice pool;
   // player clicks N dice; each click immediately claims the die's effect and removes it.
-  const [diceClaimPicker, setDiceClaimPicker] = useState(null);
+  const [diceClaimPicker, _rawSetDiceClaimPicker] = useState(null);
+  const setDiceClaimPicker = _guardSetter("setDiceClaimPicker", _rawSetDiceClaimPicker);
   // v199.156: deck-reshuffle animation overlay. When a draw-until effect hits an empty
   // deck mid-draw, we pause ~900ms to shuffle the discard pile into the deck with a
   // visual, then the effect continues. null when idle; set to a short label while shown.
-  const [deckReshuffleAnimation, setDeckReshuffleAnimation] = useState(null);
+  const [deckReshuffleAnimation, _rawSetDeckReshuffleAnimation] = useState(null);
+  const setDeckReshuffleAnimation = _guardSetter("setDeckReshuffleAnimation", _rawSetDeckReshuffleAnimation);
   // v199.161: Remix picker (Flume, Chase and Status, L'Imperatrice). Shows the player's
   // hand; they pick one artist to discard and fire its effect this turn. Game End-only
   // effects don't fire (the card is still discarded). Shape: { pid, cardName }.
-  const [remixPicker, setRemixPicker] = useState(null);
+  const [remixPicker, _rawSetRemixPicker] = useState(null);
+  const setRemixPicker = _guardSetter("setRemixPicker", _rawSetRemixPicker);
   // v199.161: Fame-kill picker (Remi Wolf, RAYE). Player selects one of their active
   // Fame cards to disable (actually: moved to the Fame discard pile so it stops firing).
   // Then the trailing effect runs. Shape: { pid, cardName, trailingEffect }.
-  const [fameKillPicker, setFameKillPicker] = useState(null);
+  const [fameKillPicker, _rawSetFameKillPicker] = useState(null);
+  const setFameKillPicker = _guardSetter("setFameKillPicker", _rawSetFameKillPicker);
   // v199.161: Discard-amenity picker (Ja Rule, Dave). Player picks one amenity type they
   // own and loses one of it. Shape: { pid, cardName, remaining }.
-  const [discardAmenityPicker, setDiscardAmenityPicker] = useState(null);
+  const [discardAmenityPicker, _rawSetDiscardAmenityPicker] = useState(null);
+  const setDiscardAmenityPicker = _guardSetter("setDiscardAmenityPicker", _rawSetDiscardAmenityPicker);
   // v199.166: Lil Angry interactive picker. Player clicks the deck one card at a time;
   // the first F4 drawn and the first F5 drawn are kept (gold glow), every other card
   // drawn is discarded (greyed out). Picker auto-completes when both have landed OR
@@ -5834,28 +5971,39 @@ export default function Headliners() {
   const lastActionByPidRef = useRef({});
   const lastFameGainedByPidRef = useRef({});
   const currentTurnFameGainedRef = useRef(false); // flips true if the current turn gains Fame
-  const [lastArtistPid, setLastArtistPid] = useState(null); // pid of who just played
+  const [lastArtistPid, _rawSetLastArtistPid] = useState(null);
+  const setLastArtistPid = _guardSetter("setLastArtistPid", _rawSetLastArtistPid); // pid of who just played
   // v170: hard cap of 2 artist plays per turn. Increments on every bookArtistToStage
   // call; gates chain-play effects (Sadchild, Lil Angry, Clairo tempt, Wolf Alice,
   // Rage Against, Ms Banks) so a "play another" effect from the SECOND play cannot
   // trigger a third.
-  const [playsThisTurn, setPlaysThisTurn] = useState(0);
+  const [playsThisTurn, _rawSetPlaysThisTurn] = useState(0);
+  const setPlaysThisTurn = _guardSetter("setPlaysThisTurn", _rawSetPlaysThisTurn);
   const playsThisTurnRef = useRef(0);
   useEffect(() => { playsThisTurnRef.current = playsThisTurn; }, [playsThisTurn]);
 
   // Artist action sub-states
-  const [artistAction, setArtistAction] = useState(null); // "bookFromPool","bookFromHand","reserveFromPool","reserveFromDeck","pickStage"
-  const [selectedArtist, setSelectedArtist] = useState(null);
-  const [selectedStageIdx, setSelectedStageIdx] = useState(null);
-  const [showHeadliner, setShowHeadliner] = useState(null); // { artist, festival }
-  const [showBookedArtist, setShowBookedArtist] = useState(null); // { artist, stageName, isHeadliner, festival }
-  const [showCouncilDrawBonus, setShowCouncilDrawBonus] = useState(null); // { drawn: [Artist], festival, pid }
-  const [floatingBonuses, setFloatingBonuses] = useState([]); // [{ id, text, color, x }]
-  const [showHand, setShowHand] = useState(false);
+  const [artistAction, _rawSetArtistAction] = useState(null);
+  const setArtistAction = _guardSetter("setArtistAction", _rawSetArtistAction); // "bookFromPool","bookFromHand","reserveFromPool","reserveFromDeck","pickStage"
+  const [selectedArtist, _rawSetSelectedArtist] = useState(null);
+  const setSelectedArtist = _guardSetter("setSelectedArtist", _rawSetSelectedArtist);
+  const [selectedStageIdx, _rawSetSelectedStageIdx] = useState(null);
+  const setSelectedStageIdx = _guardSetter("setSelectedStageIdx", _rawSetSelectedStageIdx);
+  const [showHeadliner, _rawSetShowHeadliner] = useState(null);
+  const setShowHeadliner = _guardSetter("setShowHeadliner", _rawSetShowHeadliner); // { artist, festival }
+  const [showBookedArtist, _rawSetShowBookedArtist] = useState(null);
+  const setShowBookedArtist = _guardSetter("setShowBookedArtist", _rawSetShowBookedArtist); // { artist, stageName, isHeadliner, festival }
+  const [showCouncilDrawBonus, _rawSetShowCouncilDrawBonus] = useState(null);
+  const setShowCouncilDrawBonus = _guardSetter("setShowCouncilDrawBonus", _rawSetShowCouncilDrawBonus); // { drawn: [Artist], festival, pid }
+  const [floatingBonuses, _rawSetFloatingBonuses] = useState([]);
+  const setFloatingBonuses = _guardSetter("setFloatingBonuses", _rawSetFloatingBonuses); // [{ id, text, color, x }]
+  const [showHand, _rawSetShowHand] = useState(false);
+  const setShowHand = _guardSetter("setShowHand", _rawSetShowHand);
   // v199.72/v199.84: collapsible pool drawer at top of main area. Default CLOSED so the
   // game opens clean — players tap "Artists and Amenities" to expand. (showHand drawer
   // was already closed by default — now both match.)
-  const [poolDrawerOpen, setPoolDrawerOpen] = useState(false);
+  const [poolDrawerOpen, _rawSetPoolDrawerOpen] = useState(false);
+  const setPoolDrawerOpen = _guardSetter("setPoolDrawerOpen", _rawSetPoolDrawerOpen);
   // v199.84/v199.85: Fame tray is portal-rendered at document.body with position:fixed to
   // escape the sidebar's overflow clipping. actionsBoxRef points at the stacked-buttons
   // container; fameTrayPos tracks its right-edge screen coordinates so the tray can anchor
@@ -5864,7 +6012,8 @@ export default function Headliners() {
   // treats as a state change, so every render triggered another measurement, which set
   // state again, which triggered another render...
   const actionsBoxRef = useRef(null);
-  const [fameTrayPos, setFameTrayPos] = useState({ top: 0, left: 0, height: 0 });
+  const [fameTrayPos, _rawSetFameTrayPos] = useState({ top: 0, left: 0, height: 0 });
+  const setFameTrayPos = _guardSetter("setFameTrayPos", _rawSetFameTrayPos);
   useLayoutEffect(() => {
     const measure = () => {
       if (!actionsBoxRef.current) return;
@@ -5885,26 +6034,39 @@ export default function Headliners() {
       window.removeEventListener("scroll", measure, true);
     };
   });
-  const [deckDrawnCard, setDeckDrawnCard] = useState(null); // card drawn from deck awaiting confirm
-  const [deckCardRevealed, setDeckCardRevealed] = useState(false);
+  const [deckDrawnCard, _rawSetDeckDrawnCard] = useState(null);
+  const setDeckDrawnCard = _guardSetter("setDeckDrawnCard", _rawSetDeckDrawnCard); // card drawn from deck awaiting confirm
+  const [deckCardRevealed, _rawSetDeckCardRevealed] = useState(false);
+  const setDeckCardRevealed = _guardSetter("setDeckCardRevealed", _rawSetDeckCardRevealed);
   // Draw 2 flow: player picks 2 artists from any combo of pool/deck
-  const [draw2Picks, setDraw2Picks] = useState([]); // artists picked so far (0, 1, or 2)
-  const [draw2DeckCard, setDraw2DeckCard] = useState(null); // deck card drawn but not yet decided
+  const [draw2Picks, _rawSetDraw2Picks] = useState([]);
+  const setDraw2Picks = _guardSetter("setDraw2Picks", _rawSetDraw2Picks); // artists picked so far (0, 1, or 2)
+  const [draw2DeckCard, _rawSetDraw2DeckCard] = useState(null);
+  const setDraw2DeckCard = _guardSetter("setDraw2DeckCard", _rawSetDraw2DeckCard); // deck card drawn but not yet decided
   useEffect(() => { deckDrawnCardRef.current = deckDrawnCard; }, [deckDrawnCard]);
   useEffect(() => { draw2PicksRef.current = draw2Picks; }, [draw2Picks]);
 
   // Setup artist draft
-  const [setupDraftOptions, setSetupDraftOptions] = useState([]); // 4 cards offered to current setup player
-  const [setupDraftSelected, setSetupDraftSelected] = useState(null);
-  const [draftRemaining0, setDraftRemaining0] = useState([]); // pool of 0-fame artists for drafting
-  const [draftRemaining5, setDraftRemaining5] = useState([]); // pool of 5-fame artists for drafting
-  const [undraftedArtists, setUndraftedArtists] = useState([]); // unchosen draft cards to shuffle back
+  const [setupDraftOptions, _rawSetSetupDraftOptions] = useState([]);
+  const setSetupDraftOptions = _guardSetter("setSetupDraftOptions", _rawSetSetupDraftOptions); // 4 cards offered to current setup player
+  const [setupDraftSelected, _rawSetSetupDraftSelected] = useState(null);
+  const setSetupDraftSelected = _guardSetter("setSetupDraftSelected", _rawSetSetupDraftSelected);
+  const [draftRemaining0, _rawSetDraftRemaining0] = useState([]);
+  const setDraftRemaining0 = _guardSetter("setDraftRemaining0", _rawSetDraftRemaining0); // pool of 0-fame artists for drafting
+  const [draftRemaining5, _rawSetDraftRemaining5] = useState([]);
+  const setDraftRemaining5 = _guardSetter("setDraftRemaining5", _rawSetDraftRemaining5); // pool of 5-fame artists for drafting
+  const [undraftedArtists, _rawSetUndraftedArtists] = useState([]);
+  const setUndraftedArtists = _guardSetter("setUndraftedArtists", _rawSetUndraftedArtists); // unchosen draft cards to shuffle back
 
   // Objectives
-  const [objectiveDeck, setObjectiveDeck] = useState([]);
-  const [playerObjectives, setPlayerObjectives] = useState({}); // { playerId: [{ obj, completed, vpAwarded }] }
-  const [pendingObjectiveChoice, setPendingObjectiveChoice] = useState(null); // { playerId, options: [obj, obj] }
-  const [trendingObjective, setTrendingObjective] = useState(null);
+  const [objectiveDeck, _rawSetObjectiveDeck] = useState([]);
+  const setObjectiveDeck = _guardSetter("setObjectiveDeck", _rawSetObjectiveDeck);
+  const [playerObjectives, _rawSetPlayerObjectives] = useState({});
+  const setPlayerObjectives = _guardSetter("setPlayerObjectives", _rawSetPlayerObjectives); // { playerId: [{ obj, completed, vpAwarded }] }
+  const [pendingObjectiveChoice, _rawSetPendingObjectiveChoice] = useState(null);
+  const setPendingObjectiveChoice = _guardSetter("setPendingObjectiveChoice", _rawSetPendingObjectiveChoice); // { playerId, options: [obj, obj] }
+  const [trendingObjective, _rawSetTrendingObjective] = useState(null);
+  const setTrendingObjective = _guardSetter("setTrendingObjective", _rawSetTrendingObjective);
   const [microtrends, _rawSetMicrotrends] = useState([]); // v189: always [amenity, genre] pair
   const setMicrotrends = _guardSetter("setMicrotrends", _rawSetMicrotrends);
   // v199.143: sync refs for microtrends + both forecast tracks. endTurn's claim-refresh
@@ -5919,8 +6081,10 @@ export default function Headliners() {
   // v189: two separate forecasts — one for amenity, one for genre. nextMicrotrend kept as
   // an alias to nextAmenityMicrotrend for legacy code paths (most read it for genre logic
   // and now we're clarifying which type they mean).
-  const [nextAmenityMicrotrend, setNextAmenityMicrotrend] = useState(null);
-  const [nextGenreMicrotrend, setNextGenreMicrotrend] = useState(null);
+  const [nextAmenityMicrotrend, _rawSetNextAmenityMicrotrend] = useState(null);
+  const setNextAmenityMicrotrend = _guardSetter("setNextAmenityMicrotrend", _rawSetNextAmenityMicrotrend);
+  const [nextGenreMicrotrend, _rawSetNextGenreMicrotrend] = useState(null);
+  const setNextGenreMicrotrend = _guardSetter("setNextGenreMicrotrend", _rawSetNextGenreMicrotrend);
   useEffect(() => { nextAmenityMicrotrendRef.current = nextAmenityMicrotrend; }, [nextAmenityMicrotrend]);
   useEffect(() => { nextGenreMicrotrendRef.current = nextGenreMicrotrend; }, [nextGenreMicrotrend]);
   // Legacy alias — most callers use this for genre-based forecast logic
@@ -5937,16 +6101,21 @@ export default function Headliners() {
   // Legacy history state kept for backward compatibility but no longer drives generation —
   // the bag handles all variety guarantees now. Left declared to avoid breaking anything
   // that might reference it (the leaderboard does for the microtrendsCompletedCount stat).
-  const [microtrendHistory, setMicrotrendHistory] = useState([]);
+  const [microtrendHistory, _rawSetMicrotrendHistory] = useState([]);
+  const setMicrotrendHistory = _guardSetter("setMicrotrendHistory", _rawSetMicrotrendHistory);
   const microtrendHistoryRef = useRef([]);
   useEffect(() => { microtrendHistoryRef.current = microtrendHistory; }, [microtrendHistory]);
-  const [showObjectives, setShowObjectives] = useState(false);
-  const [showStageDetail, setShowStageDetail] = useState(null);
-  const [sidebarTab, setSidebarTab] = useState("my");
+  const [showObjectives, _rawSetShowObjectives] = useState(false);
+  const setShowObjectives = _guardSetter("setShowObjectives", _rawSetShowObjectives);
+  const [showStageDetail, _rawSetShowStageDetail] = useState(null);
+  const setShowStageDetail = _guardSetter("setShowStageDetail", _rawSetShowStageDetail);
+  const [sidebarTab, _rawSetSidebarTab] = useState("my");
+  const setSidebarTab = _guardSetter("setSidebarTab", _rawSetSidebarTab);
   // v199.88: sidebar quick-view ↔ objectives toggle. "default" shows the player stat rows
   // + Actions panel + deck info + supporting panels. "objectives" hides those and surfaces
   // the Legendary Lineup panel instead. Toggle button sits under the microtrend banner.
-  const [sidebarView, setSidebarView] = useState("default");
+  const [sidebarView, _rawSetSidebarView] = useState("default");
+  const setSidebarView = _guardSetter("setSidebarView", _rawSetSidebarView);
   // v199.95: Fame card system state. fameDeck is the shuffled draw pile, fameDiscardPile
   // holds discards (unused when a player picks 1 of 3), playerFameCards maps pid → [cards]
   // (max 5 per player). fameDrawModal is the "pick 1 of 3" modal state: { pid, choices: [3] }.
@@ -5967,31 +6136,41 @@ export default function Headliners() {
   const fameDiscardPileRef = useRef([]);
   useEffect(() => { fameDeckRef.current = fameDeck; }, [fameDeck]);
   useEffect(() => { fameDiscardPileRef.current = fameDiscardPile; }, [fameDiscardPile]);
-  const [showYearAnnouncement, setShowYearAnnouncement] = useState(false);
+  const [showYearAnnouncement, _rawSetShowYearAnnouncement] = useState(false);
+  const setShowYearAnnouncement = _guardSetter("setShowYearAnnouncement", _rawSetShowYearAnnouncement);
 
-  const [viewingPlayerId, setViewingPlayerId] = useState(null);
+  const [viewingPlayerId, _rawSetViewingPlayerId] = useState(null);
+  const setViewingPlayerId = _guardSetter("setViewingPlayerId", _rawSetViewingPlayerId);
 
   // Pending effects queue (for effects that need player interaction)
   const [pendingEffect, _rawSetPendingEffect] = useState(null);
   const setPendingEffect = _guardSetter("setPendingEffect", _rawSetPendingEffect); // { type: "placeAmenity"|"placeSpecific"|"signArtist", amenityType?, artistName? }
   const [pendingEffectPid, _rawSetPendingEffectPid] = useState(null);
   const setPendingEffectPid = _guardSetter("setPendingEffectPid", _rawSetPendingEffectPid);
-  const [deferPoolRefresh, setDeferPoolRefresh] = useState(false);
-  const [poolRefreshedByEffect, setPoolRefreshedByEffect] = useState(false);
+  const [deferPoolRefresh, _rawSetDeferPoolRefresh] = useState(false);
+  const setDeferPoolRefresh = _guardSetter("setDeferPoolRefresh", _rawSetDeferPoolRefresh);
+  const [poolRefreshedByEffect, _rawSetPoolRefreshedByEffect] = useState(false);
+  const setPoolRefreshedByEffect = _guardSetter("setPoolRefreshedByEffect", _rawSetPoolRefreshedByEffect);
   // Counter for council "refreshPool" usage this turn. The number of qualifying
   // refreshPool councils a player has equals their cap (each council = +1 refresh).
   // Reset to 0 at the start of each turn via the turnAction reset block.
-  const [councilRefreshesUsedThisTurn, setCouncilRefreshesUsedThisTurn] = useState(0);
+  const [councilRefreshesUsedThisTurn, _rawSetCouncilRefreshesUsedThisTurn] = useState(0);
+  const setCouncilRefreshesUsedThisTurn = _guardSetter("setCouncilRefreshesUsedThisTurn", _rawSetCouncilRefreshesUsedThisTurn);
   // Counter for council "refreshDice" usage this turn. Each qualifying refreshDice
   // council (Secret Sauce / Quiet Camping / Urinals and Cubicles) grants +1 dice-reroll
   // charge per turn. Stacks just like the pool refresh: 2 qualifying councils = 2 rerolls.
-  const [councilDiceRefreshesUsedThisTurn, setCouncilDiceRefreshesUsedThisTurn] = useState(0);
+  const [councilDiceRefreshesUsedThisTurn, _rawSetCouncilDiceRefreshesUsedThisTurn] = useState(0);
+  const setCouncilDiceRefreshesUsedThisTurn = _guardSetter("setCouncilDiceRefreshesUsedThisTurn", _rawSetCouncilDiceRefreshesUsedThisTurn);
 
   // Special Guest phase
-  const [specialGuestPlayer, setSpecialGuestPlayer] = useState(0); // index in players array
-  const [specialGuestCard, setSpecialGuestCard] = useState(null); // the drawn artist
-  const [specialGuestDrawnPool, setSpecialGuestDrawnPool] = useState([]); // all options drawn (>1 when council bonus active); cleared after pick
-  const [specialGuestEligible, setSpecialGuestEligible] = useState([]); // stage indices with 2/3 artists
+  const [specialGuestPlayer, _rawSetSpecialGuestPlayer] = useState(0);
+  const setSpecialGuestPlayer = _guardSetter("setSpecialGuestPlayer", _rawSetSpecialGuestPlayer); // index in players array
+  const [specialGuestCard, _rawSetSpecialGuestCard] = useState(null);
+  const setSpecialGuestCard = _guardSetter("setSpecialGuestCard", _rawSetSpecialGuestCard); // the drawn artist
+  const [specialGuestDrawnPool, _rawSetSpecialGuestDrawnPool] = useState([]);
+  const setSpecialGuestDrawnPool = _guardSetter("setSpecialGuestDrawnPool", _rawSetSpecialGuestDrawnPool); // all options drawn (>1 when council bonus active); cleared after pick
+  const [specialGuestEligible, _rawSetSpecialGuestEligible] = useState([]);
+  const setSpecialGuestEligible = _guardSetter("setSpecialGuestEligible", _rawSetSpecialGuestEligible); // stage indices with 2/3 artists
   // Idempotency latch: setupSpecialGuestForPlayer can be called from multiple paths
   // (render fallback + placeSpecialGuest/declineSpecialGuest setTimeouts). The ref tracks
   // the last pIdx that setup ran for so duplicate calls in the same window no-op.
@@ -6000,7 +6179,8 @@ export default function Headliners() {
   // ─── Star Dice system (replaces the old Event system) ───
   // Shared dice pool — sized by player count: 2P=12, 3P=16, 4P=23
   const STAR_DICE_POOL_BY_PLAYER_COUNT = { 2: 12, 3: 16, 4: 23 };
-  const [dicePool, setDicePool] = useState(0); // initialized at game start
+  const [dicePool, _rawSetDicePool] = useState(0);
+  const setDicePool = _guardSetter("setDicePool", _rawSetDicePool); // initialized at game start
   const dicePoolRef = useRef(dicePool);
   useEffect(() => { dicePoolRef.current = dicePool; }, [dicePool]);
   // ─── Refs for synchronous-fresh reads of zone state inside chained event handlers ───
@@ -6019,17 +6199,25 @@ export default function Headliners() {
   // Per-player fame high-water mark is pd.fameHighWater (for "new fame level → +1 die" trigger)
   // Per-player filled-stage-count high-water is pd.filledStagesHighWater (for "stage filled → +1 die" trigger)
   // Star dice rolling phase
-  const [starRollPhase, setStarRollPhase] = useState(null); // null | "intro" | "rolling" | "resolving"
-  const [starRollPlayer, setStarRollPlayer] = useState(0); // index in players[]
-  const [starRollResult, setStarRollResult] = useState(null); // { stars, amenityFaces: ["campsite", "security"...], absorbed: [...], lost: [...] }
+  const [starRollPhase, _rawSetStarRollPhase] = useState(null);
+  const setStarRollPhase = _guardSetter("setStarRollPhase", _rawSetStarRollPhase); // null | "intro" | "rolling" | "resolving"
+  const [starRollPlayer, _rawSetStarRollPlayer] = useState(0);
+  const setStarRollPlayer = _guardSetter("setStarRollPlayer", _rawSetStarRollPlayer); // index in players[]
+  const [starRollResult, _rawSetStarRollResult] = useState(null);
+  const setStarRollResult = _guardSetter("setStarRollResult", _rawSetStarRollResult); // { stars, amenityFaces: ["campsite", "security"...], absorbed: [...], lost: [...] }
   // Per-year tracking for "+VP per negative star face avoided" effects
-  const [negStarFacesAvoidedThisYear, setNegStarFacesAvoidedThisYear] = useState({}); // { pid: count }
+  const [negStarFacesAvoidedThisYear, _rawSetNegStarFacesAvoidedThisYear] = useState({});
+  const setNegStarFacesAvoidedThisYear = _guardSetter("setNegStarFacesAvoidedThisYear", _rawSetNegStarFacesAvoidedThisYear); // { pid: count }
 
   // Year-End Effects phase state
-  const [yearEndEffectsPlayer, setYearEndEffectsPlayer] = useState(0);
-  const [yearEndEffectsList, setYearEndEffectsList] = useState([]); // [{ artist, effectDesc, type, resolved, result }]
-  const [yearEndEffectIdx, setYearEndEffectIdx] = useState(0);
-  const [yearEndDiceRoll, setYearEndDiceRoll] = useState(null); // { count, callback } for interactive rolls
+  const [yearEndEffectsPlayer, _rawSetYearEndEffectsPlayer] = useState(0);
+  const setYearEndEffectsPlayer = _guardSetter("setYearEndEffectsPlayer", _rawSetYearEndEffectsPlayer);
+  const [yearEndEffectsList, _rawSetYearEndEffectsList] = useState([]);
+  const setYearEndEffectsList = _guardSetter("setYearEndEffectsList", _rawSetYearEndEffectsList); // [{ artist, effectDesc, type, resolved, result }]
+  const [yearEndEffectIdx, _rawSetYearEndEffectIdx] = useState(0);
+  const setYearEndEffectIdx = _guardSetter("setYearEndEffectIdx", _rawSetYearEndEffectIdx);
+  const [yearEndDiceRoll, _rawSetYearEndDiceRoll] = useState(null);
+  const setYearEndDiceRoll = _guardSetter("setYearEndDiceRoll", _rawSetYearEndDiceRoll); // { count, callback } for interactive rolls
 
   // Logging
   const addLog = useCallback((label, text) => setGameLog(p => [...p, { label, text, type: "entry" }]), []);
@@ -8620,7 +8808,8 @@ export default function Headliners() {
   };
   
   // Track turn number for agent ordering
-  const [turnNumber, setTurnNumber] = useState(0);
+  const [turnNumber, _rawSetTurnNumber] = useState(0);
+  const setTurnNumber = _guardSetter("setTurnNumber", _rawSetTurnNumber);
   
   // v131: under tempt mode reads across all players' temptPlacements arrays; under standard
   // mode reads agentPlacements. Returns [{ pid, placement }] for anyone with a placement on
@@ -13169,8 +13358,10 @@ export default function Headliners() {
   // ─── Council Draft + Assign ───
   // After draftArtist, the player is shown their 5 dealt councils and picks 3 to keep.
   // Then assigns each kept council to one of 3 fields. Both steps must complete before pickAmenity.
-  const [setupCouncilSelected, setSetupCouncilSelected] = useState([]); // array of council IDs (max 3)
-  const [setupCouncilAssignments, setSetupCouncilAssignments] = useState({}); // { councilId: fieldIdx }
+  const [setupCouncilSelected, _rawSetSetupCouncilSelected] = useState([]);
+  const setSetupCouncilSelected = _guardSetter("setSetupCouncilSelected", _rawSetSetupCouncilSelected); // array of council IDs (max 3)
+  const [setupCouncilAssignments, _rawSetSetupCouncilAssignments] = useState({});
+  const setSetupCouncilAssignments = _guardSetter("setSetupCouncilAssignments", _rawSetSetupCouncilAssignments); // { councilId: fieldIdx }
 
   const toggleCouncilKeep = (cid) => {
     setSetupCouncilSelected(prev => {
@@ -13615,7 +13806,8 @@ export default function Headliners() {
   // Auto-recalculate tickets whenever playerData changes
   const recalcTicketsRef = useRef(recalcTickets);
   recalcTicketsRef.current = recalcTickets;
-  const [recalcTrigger, setRecalcTrigger] = useState(0);
+  const [recalcTrigger, _rawSetRecalcTrigger] = useState(0);
+  const setRecalcTrigger = _guardSetter("setRecalcTrigger", _rawSetRecalcTrigger);
   useEffect(() => {
     const timer = setTimeout(() => recalcTicketsRef.current(), 100);
     return () => clearTimeout(timer);
@@ -17824,7 +18016,8 @@ export default function Headliners() {
   // ═══════════════════════════════════════════════════════════
   // RESPONSIVE
   // ═══════════════════════════════════════════════════════════
-  const [winWidth, setWinWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [winWidth, _rawSetWinWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const setWinWidth = _guardSetter("setWinWidth", _rawSetWinWidth);
   useEffect(() => {
     const onResize = () => setWinWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
@@ -17840,10 +18033,14 @@ export default function Headliners() {
   const bp = { padding: isMobile ? "12px 24px" : "10px 24px", borderRadius: isMobile ? 12 : 10, border: "none", fontWeight: 700, background: "linear-gradient(135deg, #7c3aed, #6d28d9)", color: "#fff", cursor: "pointer", fontSize: isMobile ? 15 : 14, transition: "all 0.2s" };
   const bs = { ...bp, background: "rgba(124,58,237,0.2)", border: "1px solid #7c3aed" };
   const bd = { ...bp, background: "linear-gradient(135deg, #dc2626, #b91c1c)" };
-  const [showUpdateNotes, setShowUpdateNotes] = useState(false);
-  const [showPopupObjectives, setShowPopupObjectives] = useState(false);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [showUpdateNotes, _rawSetShowUpdateNotes] = useState(false);
+  const setShowUpdateNotes = _guardSetter("setShowUpdateNotes", _rawSetShowUpdateNotes);
+  const [showPopupObjectives, _rawSetShowPopupObjectives] = useState(false);
+  const setShowPopupObjectives = _guardSetter("setShowPopupObjectives", _rawSetShowPopupObjectives);
+  const [showLeaderboard, _rawSetShowLeaderboard] = useState(false);
+  const setShowLeaderboard = _guardSetter("setShowLeaderboard", _rawSetShowLeaderboard);
+  const [showHowToPlay, _rawSetShowHowToPlay] = useState(false);
+  const setShowHowToPlay = _guardSetter("setShowHowToPlay", _rawSetShowHowToPlay);
   const logBtn = <button onClick={() => setShowLog(!showLog)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.2)", color: "#c4b5fd", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📜</button>;
   const discardBtn = phase !== "lobby" && phase !== "setup" ? <button onClick={() => setShowDiscard(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #6b7280", background: "rgba(107,114,128,0.2)", color: "#94a3b8", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>🗑️</button> : null;
   const updateNotesBtn = <button onClick={() => setShowUpdateNotes(true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #22c55e", background: "rgba(34,197,94,0.2)", color: "#4ade80", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>📋</button>;
