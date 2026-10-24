@@ -3103,7 +3103,8 @@ export default function Headliners() {
   const yearRef = useRef(1);
   useEffect(() => { yearRef.current = year; }, [year]);
   const [turnOrder, setTurnOrder] = useState([]);
-  const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
+  const [currentPlayerIdx, _rawSetCurrentPlayerIdx] = useState(0);
+  const setCurrentPlayerIdx = _guardSetter("setCurrentPlayerIdx", _rawSetCurrentPlayerIdx);
   const [turnsLeft, _setTurnsLeft] = useState({});
   const turnsLeftRef = useRef({});
   const setTurnsLeft = (val) => {
@@ -3133,7 +3134,8 @@ export default function Headliners() {
   // of the game let the current player take 2 actions before End Turn appeared (the
   // decrement from 2 → 1 didn't trigger actionTaken=true). Later turns were fine because
   // endTurn resets using the constant. Hardcoding 1 here fixes turn 1.
-  const [actionsLeftThisTurn, setActionsLeftThisTurn] = useState(1);
+  const [actionsLeftThisTurn, _rawSetActionsLeftThisTurn] = useState(1);
+  const setActionsLeftThisTurn = _guardSetter("setActionsLeftThisTurn", _rawSetActionsLeftThisTurn);
   const actionsLeftRef = useRef(1);
   useEffect(() => { actionsLeftRef.current = actionsLeftThisTurn; }, [actionsLeftThisTurn]);
   const QUICKYEAR_ACTIONS_PER_TURN = 1;
@@ -4039,7 +4041,8 @@ export default function Headliners() {
   // player can select which die face to grant them.
   //   fameAmenityPending: { pid, cardName, remaining } | null
   // Remaining counts how many amenity picks the Fame card still owes.
-  const [fameAmenityPending, setFameAmenityPending] = useState(null);
+  const [fameAmenityPending, _rawSetFameAmenityPending] = useState(null);
+  const setFameAmenityPending = _guardSetter("setFameAmenityPending", _rawSetFameAmenityPending);
   // v199.98: pending reactive effects queue. When an opponent takes an action, every
   // other player's matching reactive Fame cards queue an entry here. At the holder's
   // next turn start, these entries fire. Shape: { pid: [{ card, context }] }
@@ -4065,7 +4068,8 @@ export default function Headliners() {
   //   { pid, cardName, cardEffect, step, selectedIndices?: [], pickedArtistIdx?: n }
   // step values: "discard_artists_1" / "discard_artists_2" / "discard_amenities_2" /
   //              "place_amenity_after_discard" / "pick_artist_to_play" / "pick_stage_to_play"
-  const [fameSeasonPicker, setFameSeasonPicker] = useState(null);
+  const [fameSeasonPicker, _rawSetFameSeasonPicker] = useState(null);
+  const setFameSeasonPicker = _guardSetter("setFameSeasonPicker", _rawSetFameSeasonPicker);
   // v199.100: pending after-action Fame triggers. When a player takes a Build/Browse/Book
   // action, matching after-action cards go HERE instead of auto-firing. The Fame tray
   // then glows those cards, and the player clicks each one to activate its effect. AI
@@ -4079,18 +4083,22 @@ export default function Headliners() {
   //   { pid, cardName, remaining, picked: [cards], allowDeck: bool }
   //     - allowDeck=true for draw_2_artists (deck+pool)
   //     - allowDeck=false for draw_N_from_pool (pool only, reactive effects)
-  const [fameDrawPicker, setFameDrawPicker] = useState(null);
+  const [fameDrawPicker, _rawSetFameDrawPicker] = useState(null);
+  const setFameDrawPicker = _guardSetter("setFameDrawPicker", _rawSetFameDrawPicker);
   // v199.112: "draw N, keep 1" picker — reveals N cards face-up, player picks 1 to keep,
   // others go to discard. Used for FM_BUILD_DRAW2_KEEP1 and FM_BROWSE_DRAW3_KEEP1.
   //   { pid, cardName, revealed: [cards] }
-  const [fameKeepOnePicker, setFameKeepOnePicker] = useState(null);
+  const [fameKeepOnePicker, _rawSetFameKeepOnePicker] = useState(null);
+  const setFameKeepOnePicker = _guardSetter("setFameKeepOnePicker", _rawSetFameKeepOnePicker);
   // v199.113: pickers for the new Fame cards.
   //   fameFreeAmenityPicker: pick ANY amenity type (not die-constrained). Used by
   //     FM_BUILD_ANY_AMEN and FM_SS_PLACE_2_AMEN. Shape: { pid, cardName, remaining }.
   //   fameDeckPeekPicker: look at top 3 of deck, rearrange. Used by FM_PEEK_REARRANGE.
   //     Shape: { pid, cardName, cards: [3 cards], orderedIdx: [] }
-  const [fameFreeAmenityPicker, setFameFreeAmenityPicker] = useState(null);
-  const [fameDeckPeekPicker, setFameDeckPeekPicker] = useState(null);
+  const [fameFreeAmenityPicker, _rawSetFameFreeAmenityPicker] = useState(null);
+  const setFameFreeAmenityPicker = _guardSetter("setFameFreeAmenityPicker", _rawSetFameFreeAmenityPicker);
+  const [fameDeckPeekPicker, _rawSetFameDeckPeekPicker] = useState(null);
+  const setFameDeckPeekPicker = _guardSetter("setFameDeckPeekPicker", _rawSetFameDeckPeekPicker);
   // v199.101/v199.103/v199.107: Fame draw picker handlers. One click = one draw.
   // v199.107 CRITICAL FIX: previous version put side effects (setPlayerData, setFame-
   // DrawPicker, setTimeout, addLog) INSIDE the setArtistPool/setArtistDeck updater
@@ -5759,7 +5767,8 @@ export default function Headliners() {
   const setArtistDeck = _guardSetter("setArtistDeck", _rawSetArtistDeck);
   const [artistPool, _rawSetArtistPool] = useState([]);
   const setArtistPool = _guardSetter("setArtistPool", _rawSetArtistPool);
-  const [discardPile, setDiscardPile] = useState([]);
+  const [discardPile, _rawSetDiscardPile] = useState([]);
+  const setDiscardPile = _guardSetter("setDiscardPile", _rawSetDiscardPile);
   // Keep refs in sync with state so functions called inside chained event handlers
   // can see the latest values without waiting for React to flush.
   useEffect(() => { artistDeckRef.current = artistDeck; }, [artistDeck]);
@@ -5776,16 +5785,19 @@ export default function Headliners() {
   const [specialGuestPicker, setSpecialGuestPicker] = useState(null);
   // v199.133: Artist OR-choice modal. For effects like "Gain 1 Fame OR place an amenity".
   // Shape: { pid, cardName, optA, optB, artistRef }.
-  const [artistOrChoice, setArtistOrChoice] = useState(null);
+  const [artistOrChoice, _rawSetArtistOrChoice] = useState(null);
+  const setArtistOrChoice = _guardSetter("setArtistOrChoice", _rawSetArtistOrChoice);
   // v199.134: "Play another artist" picker for Limp Bizkit (pool), FISHER (hand),
   // The Kooks Indie, Nile Rogers & Chic etc. Shape: { pid, source: "hand"|"pool", cardName }.
   // When the player picks an affordable artist, it's booked onto the first open stage
   // (free of action cost; amenity/Fame costs still enforced by the affordability filter).
-  const [extraPlayPicker, setExtraPlayPicker] = useState(null);
+  const [extraPlayPicker, _rawSetExtraPlayPicker] = useState(null);
+  const setExtraPlayPicker = _guardSetter("setExtraPlayPicker", _rawSetExtraPlayPicker);
   // v199.155: draw-until picker for Sadchild/Djo/Backseat. Shape:
   // { pid, mode: "ticketSum"|"fameSum"|"allGenres", target, cardName }.
   // Human picks "Draw from Deck" / "Draw from Pool" each tick until threshold met.
-  const [extraDrawPicker, setExtraDrawPicker] = useState(null);
+  const [extraDrawPicker, _rawSetExtraDrawPicker] = useState(null);
+  const setExtraDrawPicker = _guardSetter("setExtraDrawPicker", _rawSetExtraDrawPicker);
   // v199.155: dice-claim picker for Sitting Ducks ("Roll 3 amenity dice") and CRUEL
   // MISTRESS ("Gain 3 amenities (stages, or Fame included) from the amenity dice"). Shape:
   // { pid, count, filter: "amenity"|"any", cardName }. Shows the current dice pool;
@@ -5938,11 +5950,14 @@ export default function Headliners() {
   // v199.95: Fame card system state. fameDeck is the shuffled draw pile, fameDiscardPile
   // holds discards (unused when a player picks 1 of 3), playerFameCards maps pid → [cards]
   // (max 5 per player). fameDrawModal is the "pick 1 of 3" modal state: { pid, choices: [3] }.
-  const [fameDeck, setFameDeck] = useState([]);
-  const [fameDiscardPile, setFameDiscardPile] = useState([]);
+  const [fameDeck, _rawSetFameDeck] = useState([]);
+  const setFameDeck = _guardSetter("setFameDeck", _rawSetFameDeck);
+  const [fameDiscardPile, _rawSetFameDiscardPile] = useState([]);
+  const setFameDiscardPile = _guardSetter("setFameDiscardPile", _rawSetFameDiscardPile);
   const [playerFameCards, _rawSetPlayerFameCards] = useState({});
   const setPlayerFameCards = _guardSetter("setPlayerFameCards", _rawSetPlayerFameCards);
-  const [fameDrawModal, setFameDrawModal] = useState(null);
+  const [fameDrawModal, _rawSetFameDrawModal] = useState(null);
+  const setFameDrawModal = _guardSetter("setFameDrawModal", _rawSetFameDrawModal);
   const playerFameCardsRef = useRef({});
   useEffect(() => { playerFameCardsRef.current = playerFameCards; }, [playerFameCards]);
   // v199.128: refs so drawFameCardsForPlayer can read latest deck/discard without stale
@@ -5957,8 +5972,10 @@ export default function Headliners() {
   const [viewingPlayerId, setViewingPlayerId] = useState(null);
 
   // Pending effects queue (for effects that need player interaction)
-  const [pendingEffect, setPendingEffect] = useState(null); // { type: "placeAmenity"|"placeSpecific"|"signArtist", amenityType?, artistName? }
-  const [pendingEffectPid, setPendingEffectPid] = useState(null);
+  const [pendingEffect, _rawSetPendingEffect] = useState(null);
+  const setPendingEffect = _guardSetter("setPendingEffect", _rawSetPendingEffect); // { type: "placeAmenity"|"placeSpecific"|"signArtist", amenityType?, artistName? }
+  const [pendingEffectPid, _rawSetPendingEffectPid] = useState(null);
+  const setPendingEffectPid = _guardSetter("setPendingEffectPid", _rawSetPendingEffectPid);
   const [deferPoolRefresh, setDeferPoolRefresh] = useState(false);
   const [poolRefreshedByEffect, setPoolRefreshedByEffect] = useState(false);
   // Counter for council "refreshPool" usage this turn. The number of qualifying
