@@ -6021,11 +6021,12 @@ export default function Headliners() {
   // ResizeObserver so a measurement only fires when the element's size genuinely
   // changes, and the window listeners catch viewport-level changes.
   useLayoutEffect(() => {
-    if (!actionsBoxRef.current) return;
     const el = actionsBoxRef.current;
+    if (!el) return; // DOM not rendered yet (e.g. lobby/setup phase); effect re-runs on phase change
     const measure = () => {
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
+      const cur = actionsBoxRef.current;
+      if (!cur) return;
+      const rect = cur.getBoundingClientRect();
       setFameTrayPos(prev => {
         if (prev.top === rect.top && prev.left === rect.right && prev.height === rect.height) {
           return prev;
@@ -6046,7 +6047,7 @@ export default function Headliners() {
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, []); // Empty deps: install observers once, don't re-measure on every component render.
+  }, [phase]); // v199.199: re-install observers when phase changes so the actionsBoxRef gets picked up once the game-phase div renders.
   const [deckDrawnCard, _rawSetDeckDrawnCard] = useState(null);
   const setDeckDrawnCard = _guardSetter("setDeckDrawnCard", _rawSetDeckDrawnCard); // card drawn from deck awaiting confirm
   const [deckCardRevealed, _rawSetDeckCardRevealed] = useState(false);
