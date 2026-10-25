@@ -6012,12 +6012,21 @@ export default function Headliners() {
   const actionsBoxRef = useRef(null);
   const [fameTrayPos, _rawSetFameTrayPos] = useState({ top: 0, left: 0, height: 0 });
   const setFameTrayPos = _guardSetter("setFameTrayPos", _rawSetFameTrayPos);
+  // v199.198: install the measurement observers ONCE on mount (empty deps array). The
+  // previous no-deps version re-ran measure() after every component render, and if the
+  // DOMRect values jittered by sub-pixel amounts between renders (log entries appending
+  // shift the sidebar, scrollbar appearance tweaks width, etc.), the === guard would
+  // miss and setFameTrayPos would fire → re-render → measure() runs again → another
+  // tiny shift → cascade → React #185. Now we observe the actual DOM element with
+  // ResizeObserver so a measurement only fires when the element's size genuinely
+  // changes, and the window listeners catch viewport-level changes.
   useLayoutEffect(() => {
+    if (!actionsBoxRef.current) return;
+    const el = actionsBoxRef.current;
     const measure = () => {
-      if (!actionsBoxRef.current) return;
-      const rect = actionsBoxRef.current.getBoundingClientRect();
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
       setFameTrayPos(prev => {
-        // Only update state if the position actually changed. Prevents infinite re-render.
         if (prev.top === rect.top && prev.left === rect.right && prev.height === rect.height) {
           return prev;
         }
@@ -6025,13 +6034,19 @@ export default function Headliners() {
       });
     };
     measure();
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(measure);
+      ro.observe(el);
+    }
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
     return () => {
+      if (ro) ro.disconnect();
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  });
+  }, []); // Empty deps: install observers once, don't re-measure on every component render.
   const [deckDrawnCard, _rawSetDeckDrawnCard] = useState(null);
   const setDeckDrawnCard = _guardSetter("setDeckDrawnCard", _rawSetDeckDrawnCard); // card drawn from deck awaiting confirm
   const [deckCardRevealed, _rawSetDeckCardRevealed] = useState(false);
@@ -10228,6 +10243,41 @@ export default function Headliners() {
       // Fire the custom-count picker.
       setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Choose ${pickN === 2 ? "both" : pickN} Fame Card${pickN === 1 ? "" : "s"} from a set of ${setN}.`), 220);
       return true;
+    }
+
+    // v199.197: Beabadoobee — "Draw N artists. You may refresh the artist pool at any
+    // point." Must be caught BEFORE the period splitter because the two sentences are
+    // bound together: the second grants a RIGHT (optional, player-triggered) during the
+    // first's draws, not a separate action. Previously the splitter fired "Draw 3" and
+    // "You may refresh" as independent sub-effects at +180ms, which auto-refreshed the
+    // pool before the player had a chance to look at the original cards.
+    {
+      const beabaMatch = raw.match(/^draw\s+(\d+)\s+artists?\.\s+you may refresh the artist pool at any point/i);
+      if (beabaMatch) {
+        const n = parseInt(beabaMatch[1], 10);
+        if (isAI) {
+          // AI auto-choice: refresh first (always helpful) then draw N from the fresh pool.
+          const curPool = artistPoolRef.current || artistPool;
+          setDiscardPile(prev => [...prev, ...curPool]);
+          setArtistPool([]);
+          setTimeout(() => {
+            refillPool();
+            setTimeout(() => {
+              const curDeck = artistDeckRef.current || artistDeck;
+              const take = Math.min(n, curDeck.length);
+              const drawn = curDeck.slice(0, take);
+              setArtistDeck(curDeck.slice(take));
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
+              addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} refreshed pool, drew ${drawn.map(a => a.name).join(", ")}.`);
+            }, 100);
+          }, 60);
+        } else {
+          // Human: open the pool picker with the N-pick count AND the refresh affordance.
+          setFameDrawPicker({ pid, cardName: artist.name, remaining: n, picked: [], allowDeck: true, allowRefresh: true, refreshUsed: false });
+          setPoolDrawerOpen(true);
+        }
+        return true;
+      }
     }
 
     // v199.187: Ensemble — "Draw one artist. Then draw another 2 artists who share the
@@ -22958,6 +23008,25 @@ export default function Headliners() {
                       {fameDrawPicker.picked.length > 0 && <span style={{ color: "#a78bfa", fontStyle: "italic" }}> · Drew: {fameDrawPicker.picked.join(", ")}</span>}
                     </div>
                   </div>
+                  {/* v199.197: Refresh Pool button for Beabadoobee. Only shows when
+                      allowRefresh is set AND hasn't been used yet (one-shot per play). */}
+                  {fameDrawPicker.allowRefresh && !fameDrawPicker.refreshUsed && (
+                    <button
+                      onClick={() => {
+                        const curPool = artistPoolRef.current || artistPool;
+                        setDiscardPile(prev => [...prev, ...curPool]);
+                        setArtistPool([]);
+                        setTimeout(() => refillPool(), 60);
+                        setFameDrawPicker(p => p ? { ...p, refreshUsed: true } : p);
+                        addLog("🎸 Artist Effect", `${pickerPlayer?.festivalName || "?"}: ${fameDrawPicker.cardName} → refreshed the artist pool.`);
+                        showFloatingBonus("🎴 Pool refreshed!", "#86efac");
+                      }}
+                      style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#86efac", border: "1px solid #86efac", background: "rgba(22,101,52,0.4)", fontWeight: 700 }}
+                      title="Discard the current pool and draw 5 new artists. Can be used once this effect."
+                    >
+                      🔄 Refresh
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       addLog("🔥 Fame", `${pickerPlayer?.festivalName || "?"}: skipped remaining draws from "${fameDrawPicker.cardName}".`);
