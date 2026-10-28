@@ -4384,8 +4384,59 @@ export default function Headliners() {
         return;
       }
       const face = dice[dieFaceIdx];
-      if (!face || face === "fame" || face === "stage") {
-        addLog("🔥 Fame", `${cardName}: skipped — pick an amenity die (not fame or stage).`);
+      if (!face) {
+        addLog("🔥 Fame", `${cardName}: skipped — no die face.`);
+        return;
+      }
+      // v199.217: Fame-card amenity picks can now take the Fame or Stage faces too, not
+      // just the 4 amenity types. Consume the die and apply the matching effect.
+      const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+      if (face === "fame") {
+        setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+        logFameGain(pid, 1, `Fame die (via "${cardName}")`);
+        addLog("🔥 Fame", `${festName}: "${cardName}" → picked 🔥 Fame die → +1 Fame.`);
+        if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("🔥 +1 Fame!", "#f97316");
+        if (fameAmenityPending && fameAmenityPending.choiceMode) setFameDrawPicker(null);
+        setFameAmenityPending(null);
+        setTimeout(() => {
+          if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+        }, 120);
+        setTimeout(() => recalcTickets(), 50);
+        return;
+      }
+      if (face === "stage") {
+        setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
+        const curStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
+        if (curStages < QUICKYEAR_MAX_STAGES) {
+          const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
+          const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
+          setPlayerData(p => ({
+            ...p,
+            [pid]: {
+              ...p[pid],
+              stages: [...(p[pid].stages || []), { fameRequired: 0 }],
+              stageArtists: [...(p[pid].stageArtists || []), []],
+              stageNames: [...(p[pid].stageNames || []), sName],
+              stageColors: [...(p[pid].stageColors || []), sColor],
+            }
+          }));
+          addLog("🔥 Fame", `${festName}: "${cardName}" → picked 🎪 Stage die → opened new stage "${sName}".`);
+          if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
+          sfx.placeStage && sfx.placeStage();
+        } else {
+          // At max — fall back to Fame so the pick isn't wasted (mirrors Build-mode Stage logic).
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+          logFameGain(pid, 1, `Stage die at max stages → Fame (via "${cardName}")`);
+          addLog("🔥 Fame", `${festName}: "${cardName}" → picked 🎪 Stage die at max stages → +1 🔥 Fame.`);
+          if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("🔥 +1 Fame!", "#f97316");
+        }
+        if (fameAmenityPending && fameAmenityPending.choiceMode) setFameDrawPicker(null);
+        setFameAmenityPending(null);
+        setTimeout(() => {
+          if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
+        }, 120);
+        setTimeout(() => recalcTickets(), 50);
         return;
       }
       // v199.107: compute everything OUTSIDE the setPlayerData updater (React can call
@@ -5430,38 +5481,70 @@ export default function Headliners() {
         // v199.97: Fame card wants to place a free amenity from the dice. For AI, auto-pick
         // the first amenity face in the current dice and auto-place. For humans, open the
         // picker modal.
-        const amenityFaces = ["campsite", "security", "catering", "portaloo"];
-        const availableFace = dice.find(d => amenityFaces.includes(d));
-        console.log(`🔎BROWSE_FAME [3/3 effect dispatch]: card="${card.name}" dice=${JSON.stringify(dice)} availableFace=${availableFace} isAI=${player?.isAI}`);
-        if (!availableFace) {
-          addLog("🔥 Fame", `${festName}: "${card.name}" — no amenity die face available, skipped.`);
-          console.log(`🔎BROWSE_FAME [3/3 effect dispatch]: BAIL — no amenity face in dice`);
+        // v199.217: humans can now pick ANY face (fame/stage included) from the dice, not
+        // just the 4 amenity types. Picker opens as long as dice has at least 1 face.
+        if (!dice || dice.length === 0) {
+          addLog("🔥 Fame", `${festName}: "${card.name}" — no dice available, skipped.`);
           return;
         }
         if (player && player.isAI) {
-          // Auto-pick the first available face.
-          const faceIdx = dice.findIndex(d => amenityFaces.includes(d));
-          const pd = (playerDataRef.current || playerData)[pid] || {};
-          const fields = pd.fields || emptyFields();
-          let targetField = 0;
-          for (let i = 0; i < fields.length; i++) {
-            const f = fields[i] || {};
-            const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-            if (count < 5) { targetField = i; break; }
+          // AI prefers amenity faces; falls back to fame/stage if that's all that's left.
+          const amenityFaces = ["campsite", "security", "catering", "portaloo"];
+          let faceIdx = dice.findIndex(d => amenityFaces.includes(d));
+          if (faceIdx < 0) faceIdx = dice.findIndex(d => d === "fame" || d === "stage");
+          if (faceIdx < 0) {
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — no usable die face, skipped.`);
+            return;
           }
           const face = dice[faceIdx];
-          setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, face, +1) }));
-          // v199.103: consume the die face so a second AI Fame card can't claim the same face.
-          setDice(prev => prev.filter((_, i) => i !== faceIdx));
-          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
-          // v199.110: Fame-placed amenity should also qualify for Council Incentive microtrends.
-          setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
+          if (face === "fame") {
+            setDice(prev => prev.filter((_, i) => i !== faceIdx));
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+            logFameGain(pid, 1, `Fame die (via "${card.name}", AI)`);
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → picked 🔥 Fame die → +1 Fame.`);
+          } else if (face === "stage") {
+            setDice(prev => prev.filter((_, i) => i !== faceIdx));
+            const curStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
+            if (curStages < QUICKYEAR_MAX_STAGES) {
+              const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
+              const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
+              setPlayerData(p => ({
+                ...p,
+                [pid]: {
+                  ...p[pid],
+                  stages: [...(p[pid].stages || []), { fameRequired: 0 }],
+                  stageArtists: [...(p[pid].stageArtists || []), []],
+                  stageNames: [...(p[pid].stageNames || []), sName],
+                  stageColors: [...(p[pid].stageColors || []), sColor],
+                }
+              }));
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → picked 🎪 Stage die → opened new stage "${sName}".`);
+            } else {
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+              logFameGain(pid, 1, `Stage die at max → Fame (via "${card.name}", AI)`);
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → Stage die at max → +1 🔥 Fame.`);
+            }
+          } else {
+            // Amenity face
+            const pd = (playerDataRef.current || playerData)[pid] || {};
+            const fields = pd.fields || emptyFields();
+            let targetField = 0;
+            for (let i = 0; i < fields.length; i++) {
+              const f = fields[i] || {};
+              const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+              if (count < 5) { targetField = i; break; }
+            }
+            setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, face, +1) }));
+            setDice(prev => prev.filter((_, i) => i !== faceIdx));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
+            setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
+          }
           setTimeout(() => recalcTickets(), 50);
         } else {
-          // Open picker modal for human.
+          // Open picker modal for human. Any face is pickable.
           setFameAmenityPending({ pid, cardName: card.name });
-          setPoolDrawerOpen(true);  // ensure dice are visible
-          addLog("🔥 Fame", `${festName}: "${card.name}" — pick a die face.`);
+          setPoolDrawerOpen(true);
+          addLog("🔥 Fame", `${festName}: "${card.name}" — pick a die face (amenity, Fame or Stage).`);
         }
         break;
       }
@@ -21839,7 +21922,8 @@ export default function Headliners() {
                           // CURRENT PLAYER, dice are clickable for the Fame pick (only
                           // amenity faces, not fame/stage). Pid-match guard prevents
                           // cross-player state leaks.
-                          const famePickActive = !!fameAmenityPending && fameAmenityPending.pid === currentPlayerId && !isFame && !isStage;
+                          // v199.217: Fame-card amenity picks can take ANY face from the dice (including Fame or Stage).
+                          const famePickActive = !!fameAmenityPending && fameAmenityPending.pid === currentPlayerId;
                           const diceClickable = inBuildMode || famePickActive;
                           const borderColor = famePickActive ? "#fbbf24" : inBuildMode ? (isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed") : "rgba(100,116,139,0.4)";
                           const bg = diceClickable
