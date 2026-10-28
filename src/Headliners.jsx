@@ -20892,6 +20892,38 @@ export default function Headliners() {
                       ↩️ Undo
                     </button>
                   )}
+                  {/* v199.214: Action-complete prompt + End Turn moved into the sidebar
+                      column (previously center column, where it was getting hidden under
+                      the hand drawer when open). */}
+                  {actionTaken && !noTurnsLeft && (
+                    <>
+                      <div style={{
+                        marginTop: 4, padding: "6px 8px", borderRadius: 6,
+                        background: "rgba(52,211,153,0.08)",
+                        border: "1px solid rgba(52,211,153,0.3)",
+                        color: "#34d399", fontSize: 10, fontWeight: 600,
+                        textAlign: "center", lineHeight: 1.3,
+                      }}>
+                        ✓ Action complete! Review your board.
+                      </div>
+                      <button
+                        onClick={() => { setUndoSnapshot(null); endTurn(); }}
+                        style={{
+                          ...actionBtnBase,
+                          marginTop: 2,
+                          padding: "10px 12px",
+                          background: "linear-gradient(135deg, #dc2626, #991b1b)",
+                          border: "1px solid #ef4444",
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 800,
+                          boxShadow: "0 0 10px rgba(220,38,38,0.4)",
+                        }}
+                      >
+                        End Turn →
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               {/* v199.84: Fame tray — portal-rendered at document.body with position:fixed
@@ -22101,24 +22133,9 @@ export default function Headliners() {
                 )}
               </div>
             )}
-            {actionTaken && !noTurnsLeft && <div style={{ textAlign: "center" }}>
-              <p style={{ color: "#34d399", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>✓ Action complete! Review your board, then end your turn.</p>
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
-                {/* v199.92: hide undo after a deck draw to prevent peek-and-redraw */}
-                {undoSnapshot && !qyDrewThisAction && <button onClick={handleUndo} style={{ ...bs, color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)" }}>↩️ Undo</button>}
-                {hasAgent(currentPlayerId) && !turnAction && (() => {
-                  // v199.1: in Quick Play, tempt is agent-powered — show the agent's name
-                  // on the button so the player sees who they're calling. Classic retains
-                  // the "1 🔥" Fame-cost label.
-                  const qyAgent = gameMode === "quickYear" ? hotlineAgents[currentPlayerId] : null;
-                  const label = gameMode === "quickYear" && temptMode
-                    ? (qyAgent ? `📞 Tempt via ${qyAgent.name.split(" ")[0]} (free)` : `📞 No agent`)
-                    : (temptMode ? `💫 Tempt Artist (1 🔥, ${getAgentActionsLeft(currentPlayerId)} left)` : `🕵️ Deploy Agent (free, ${getAgentActionsLeft(currentPlayerId)} left)`);
-                  return <button onClick={() => setTurnAction("deployAgent")} style={{ ...bs, fontSize: 12, background: temptMode ? "rgba(251,191,36,0.15)" : "rgba(96,165,250,0.15)", border: `1px solid ${temptMode ? "#fbbf24" : "#60a5fa"}`, color: temptMode ? "#fbbf24" : "#60a5fa" }}>{label}</button>;
-                })()}
-                <button onClick={() => { setUndoSnapshot(null); endTurn(); }} style={bd}>End Turn →</button>
-              </div>
-            </div>}
+            {/* v199.214: "Action complete!" prompt + End Turn moved to the sidebar
+                column (just under the Build/Book/Browse buttons). Was previously
+                rendered here but kept getting hidden behind the open hand drawer. */}
 
             {/* v199.45: Quick Play early-end — when the player has taken 1 of 2 actions
                 but hasn't started another, let them end the turn early (burns the unused
