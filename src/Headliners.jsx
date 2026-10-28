@@ -1205,16 +1205,17 @@ function FameBreakdown({ pid, fameLog, year, children, style, currentFame }) {
 }
 
 function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable, genreMatchGlow }) {
+  // v199.204: unified card dimensions. All three card variants (image, Favour, text)
+  // share the physical card aspect ratio of 0.579 (825×1425 printed) so hand/pool/stage
+  // rows look consistent whether cards have artwork or not.
+  const mob = typeof window !== "undefined" && window.innerWidth < 768;
+  const cardWidth = small ? (mob ? 130 : 110) : (mob ? 165 : 150);
+  const cardHeight = Math.round(cardWidth / 0.579);
   // v199.201: art-forward card. When an artist has an `art` field, render the physical
   // card artwork as the whole card, since the art already contains name/genre/costs/
-  // effect/tickets. Dimensions use the physical card's aspect ratio (825×1425 ≈ 0.579).
-  // Keeps the clickable wrapper + glow/selection/affordability states so interactivity
-  // is identical to text cards.
+  // effect/tickets. Keeps the clickable wrapper + glow/selection/affordability states
+  // so interactivity is identical to text cards.
   if (artist && artist.art) {
-    const mobA = typeof window !== "undefined" && window.innerWidth < 768;
-    // Width stays similar to text cards; height follows the physical card aspect.
-    const widthA = small ? (mobA ? 130 : 110) : (mobA ? 165 : 150);
-    const heightA = Math.round(widthA / 0.579);
     const borderA = genreMatchGlow ? "2px solid #fbbf24" : (selected ? "2px solid #fbbf24" : affordable ? "2px solid rgba(251,191,36,0.5)" : "2px solid rgba(255,255,255,0.15)");
     const shadowA = genreMatchGlow
       ? "0 0 16px rgba(251,191,36,0.85), 0 0 32px rgba(251,191,36,0.45)"
@@ -1224,7 +1225,7 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
       (artist.effect ? ` · ${artist.effect}` : "");
     return (
       <div onClick={disabled ? undefined : onClick} title={titleA} style={{
-        width: widthA, height: heightA, borderRadius: mobA ? 12 : 10, border: borderA,
+        width: cardWidth, height: cardHeight, borderRadius: mob ? 12 : 10, border: borderA,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1,
         position: "relative", overflow: "hidden", transition: "all 0.15s", flexShrink: 0,
@@ -1246,22 +1247,18 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   // In pool: clickable to pick up (goes to hand). At game end: +1 token for matching
   // Legendary (if drawn).
   if (artist && artist.isFavour) {
-    const mobF = typeof window !== "undefined" && window.innerWidth < 768;
-    // v199.73: card-shaped but less tall. Ratio ~1:1.2 instead of 1:1.4. Still clearly
-    // "card" rather than "square" but doesn't dominate vertical space.
-    const szF = small
-      ? (mobF ? { width: 130, minHeight: 155, padding: "10px 10px" } : { width: 110, minHeight: 130, padding: "8px 8px" })
-      : (mobF ? { width: 165, minHeight: 195, padding: "12px 12px" } : { width: 150, minHeight: 175, padding: "10px 10px" });
+    const padF = small ? (mob ? "10px 10px" : "8px 8px") : (mob ? "12px 12px" : "10px 10px");
     const favBg = GENRE_COLORS[artist.genre] || "#fbbf24";
     return (
       <div onClick={disabled ? undefined : onClick} style={{
-        ...szF, borderRadius: mobF ? 12 : 10, border: "2px dashed #fff",
+        width: cardWidth, height: cardHeight, padding: padF, borderRadius: mob ? 12 : 10, border: "2px dashed #fff",
         background: favBg, color: "#fff", cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1, display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: 4,
         position: "relative", overflow: "hidden", transition: "all 0.15s", flexShrink: 0,
         boxShadow: "0 0 14px rgba(255,255,255,0.4), 0 2px 8px rgba(0,0,0,0.3)",
         animation: !disabled ? "affordPulse 2s ease-in-out infinite" : "none",
+        boxSizing: "border-box",
       }}>
         <div style={{ fontSize: 9, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", opacity: 0.9 }}>🎴 Favour</div>
         <div style={{ fontSize: small ? 20 : 26, fontWeight: 900, textAlign: "center", letterSpacing: 1, textTransform: "uppercase", lineHeight: 1 }}>{artist.genre}</div>
@@ -1272,11 +1269,10 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   const gs = getGenres(artist.genre);
   const bg = gs.length === 1 ? GENRE_COLORS[gs[0]] || "#6b7280" : null;
   const grad = gs.length > 1 ? `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)` : undefined;
-  const mob = typeof window !== 'undefined' && window.innerWidth < 768;
-  // v199.73: card-shaped but less tall. Ratio ~1:1.2. Matches Favour card dimensions.
-  const sz = small
-    ? (mob ? { width: 130, minHeight: 155, padding: "10px 10px", fontSize: 12 } : { width: 110, minHeight: 130, padding: "8px 8px", fontSize: 10 })
-    : (mob ? { width: 165, minHeight: 195, padding: "12px 12px", fontSize: 13 } : { width: 150, minHeight: 175, padding: "10px 10px", fontSize: 11 });
+  // v199.204: dimensions share physical card aspect ratio with image + Favour variants above.
+  const padT = small ? (mob ? "10px 10px" : "8px 8px") : (mob ? "12px 12px" : "10px 10px");
+  const fontBase = small ? (mob ? 12 : 10) : (mob ? 13 : 11);
+  const sz = { width: cardWidth, height: cardHeight, padding: padT, fontSize: fontBase, boxSizing: "border-box" };
   const fs = mob ? { name: small?12:14, meta: small?10:11, cost: 11, effect: small?9:10 } : { name: small?10:12, meta: small?8:9, cost: 10, effect: small?7:8 };
   // v126+: genre-match glow. When a headliner-eligible artist has a genreMatchEffect AND
   // there's a stage in the player's festival with 2 matching-genre artists ready to accept
