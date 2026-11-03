@@ -579,6 +579,12 @@ const FAME_CARDS = [
   // v199.130: FM_SS_RECLAIM (Reclaim 2 from discard) removed as requested.
   // v199.221: Play Any Artist Free removed. Was a season-start free play — different
   // trigger but same ceiling-raising effect as Universal Favour et al.
+  // v199.222: IMMEDIATE cards — fire the moment they're picked from the draw modal, then
+  // go straight to discard (never added to the Fame tray). Replaces the free-play ceiling
+  // that was removed in v199.221 with punchier, less action-saving rewards.
+  { id: "FM_IMM_2_AMEN",       name: "Instant: Place 2 Amenities",category: "immediate",    trigger: "on_draw",     effect: "immediate_place_2_amenities",    copies: 3, desc: "Immediately place 2 amenities of your choice." },
+  { id: "FM_IMM_DRAW_4",       name: "Instant: Draw 4 Artists",   category: "immediate",    trigger: "on_draw",     effect: "immediate_draw_4_pool",          copies: 3, desc: "Immediately draw 4 artists from the pool." },
+  { id: "FM_IMM_FAME",         name: "Instant: +1 Fame",          category: "immediate",    trigger: "on_draw",     effect: "immediate_gain_fame",            copies: 3, desc: "Immediately gain an extra 1 Fame." },
   // v199.176: season-active cards. Click once per turn to activate; expire at end of the
   // season drawn in. The card instance tracks its received-in season via `receivedInSeason`
   // (stamped at draw time). When the current season differs, the card renders greyed out
@@ -3638,14 +3644,20 @@ export default function Headliners() {
       }
       // All N picked — commit.
       // v199.176: stamp receivedInSeason for season_active expiry tracking.
-      const kept = nextPicked.map(i => ({ ...fameDrawModal.choices[i], receivedInSeason: quickYearSeasonRef.current }));
+      // v199.222: route IMMEDIATE cards (category "immediate") to discard, not tray.
+      // They fire their effect and vanish; they never take a Fame-tray slot.
+      const keptAll = nextPicked.map(i => ({ ...fameDrawModal.choices[i], receivedInSeason: quickYearSeasonRef.current }));
+      const keptImmediate = keptAll.filter(c => c.category === "immediate");
+      const keptForTray = keptAll.filter(c => c.category !== "immediate");
       const discards = fameDrawModal.choices.filter((_, i) => !nextPicked.includes(i));
-      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...kept] }));
-      setFameDiscardPile(d => [...d, ...discards]);
+      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...keptForTray] }));
+      setFameDiscardPile(d => [...d, ...discards, ...keptImmediate]);
       setFameDrawModal(null);
       fameDrawInProgressRef.current = false;
-      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame cards "${kept.map(c => c.name).join('", "')}".`);
-      kept.forEach(k => {
+      const festLabel = players.find(pl => pl.id === pid)?.festivalName || "?";
+      if (keptForTray.length > 0) addLog("🔥 Fame", `${festLabel}: added Fame card${keptForTray.length > 1 ? "s" : ""} "${keptForTray.map(c => c.name).join('", "')}".`);
+      if (keptImmediate.length > 0) addLog("🔥 Fame", `${festLabel}: ⚡ instant card${keptImmediate.length > 1 ? "s" : ""} "${keptImmediate.map(c => c.name).join('", "')}" fire immediately.`);
+      keptAll.forEach(k => {
         if (k.trigger === "on_draw") setTimeout(() => fireFameCardEffect(pid, k, { onDraw: true }), 60);
       });
       // v199.182: drain any pending Fame-draw queued while this modal was open.
@@ -3659,13 +3671,20 @@ export default function Headliners() {
     }
     // Single-pick path (original behavior).
     // v199.176: stamp receivedInSeason for season_active expiry tracking.
+    // v199.222: route IMMEDIATE cards to discard instead of tray.
     const picked = { ...fameDrawModal.choices[cardIdx], receivedInSeason: quickYearSeasonRef.current };
     const discards = fameDrawModal.choices.filter((_, i) => i !== cardIdx);
-    setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
-    setFameDiscardPile(d => [...d, ...discards]);
+    const festLabel = players.find(pl => pl.id === pid)?.festivalName || "?";
+    if (picked.category === "immediate") {
+      setFameDiscardPile(d => [...d, ...discards, picked]);
+      addLog("🔥 Fame", `${festLabel}: ⚡ instant card "${picked.name}" fires immediately.`);
+    } else {
+      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+      setFameDiscardPile(d => [...d, ...discards]);
+      addLog("🔥 Fame", `${festLabel}: added Fame card "${picked.name}".`);
+    }
     setFameDrawModal(null);
     fameDrawInProgressRef.current = false;
-    addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: added Fame card "${picked.name}".`);
     if (picked.trigger === "on_draw") {
       setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
     }
@@ -5201,6 +5220,70 @@ export default function Headliners() {
         addLog("🔥 Fame", `${festName}: "${card.name}" → +1 Fame.`);
         if (!player?.isAI) showFloatingBonus("🔥 +1 Fame (season)", "#fcd34d");
         setTimeout(() => recalcTickets(), 50);
+        break;
+      }
+      // v199.222: IMMEDIATE burn-on-draw cards. Fire the moment they're picked from the
+      // Fame-draw modal; the pick handler sends them straight to discard afterward.
+      case "immediate_gain_fame": {
+        const CAP = typeof FAME_CAP_QUICKYEAR !== "undefined" ? FAME_CAP_QUICKYEAR : 5;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(CAP, (p[pid]?.baseFame || 0) + 1) } }));
+        logFameGain(pid, 1, `"${card.name}" instant bonus`);
+        addLog("🔥 Fame", `${festName}: "${card.name}" → +1 Fame (instant).`);
+        if (!player?.isAI) showFloatingBonus("⚡ +1 Fame!", "#fcd34d");
+        setTimeout(() => recalcTickets(), 50);
+        break;
+      }
+      case "immediate_place_2_amenities": {
+        if (player?.isAI) {
+          // AI: place 2 amenities, each picking the most under-stocked type.
+          for (let n = 0; n < 2; n++) {
+            const pdNow = (playerDataRef.current || playerData)[pid] || {};
+            const am = pdNow.amenities || {};
+            const types = ["campsite", "security", "catering", "portaloo"];
+            const sorted = [...types].sort((a, b) => (am[a] || 0) - (am[b] || 0));
+            const chosenType = sorted[0];
+            const fields = pdNow.fields || emptyFields();
+            let targetField = 0;
+            for (let j = 0; j < fields.length; j++) {
+              const f = fields[j] || {};
+              const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+              if (count < 5) { targetField = j; break; }
+            }
+            setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, chosenType, +1) }));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[chosenType]} (${n + 1}/2).`);
+            claimAmenityMicrotrend(pid, chosenType);
+          }
+          setTimeout(() => recalcTickets(), 50);
+        } else {
+          setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 2 });
+          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 2 amenities to place.`);
+        }
+        break;
+      }
+      case "immediate_draw_4_pool": {
+        if (player?.isAI) {
+          // AI: pick top 4 from pool by ticket value (minus Favour cards).
+          const pool = artistPoolRef.current || artistPool;
+          const ranked = pool.map((a, i) => ({ a, i }))
+            .filter(x => x.a && !x.a.isFavour)
+            .sort((x, y) => (y.a.tickets || 0) - (x.a.tickets || 0))
+            .slice(0, 4);
+          if (ranked.length === 0) {
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → pool empty, no draws.`);
+          } else {
+            const takenIndices = ranked.map(x => x.i);
+            const taken = ranked.map(x => x.a);
+            const newPool = pool.filter((_, i) => !takenIndices.includes(i));
+            setArtistPool(newPool);
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), ...taken] } }));
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${taken.map(a => a.name).join(", ")} from pool.`);
+            setTimeout(() => refillPool(), 100);
+          }
+        } else {
+          setFameDrawPicker({ pid, cardName: card.name, remaining: 4, picked: [], allowDeck: false });
+          setPoolDrawerOpen(true);
+          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 4 artists from the pool.`);
+        }
         break;
       }
       case "ss_place_amenity":
