@@ -555,7 +555,8 @@ const FAME_CARDS = [
   { id: "FM_BROWSE_DISCARD_FAME",name: "Discard 2 → +1 Fame",     category: "after_browse", trigger: "after_browse", effect: "discard_2_hand_gain_1_fame",    copies: 1, desc: "After you take the Browse action: discard 2 artists from your hand to gain 1 Fame." },
   // AFTER BOOK — badge renders "AFTER BOOK ACTION".
   { id: "FM_BOOK_DRAW_GENRE",  name: "Draw Genre-Match",          category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",       copies: 1, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
-  { id: "FM_BOOK_ANOTHER",     name: "Universal Favour",          category: "you_may",      trigger: "any_time",    effect: "free_pool_play_once",            copies: 1, desc: "Once per game, on your turn: play an artist from the pool (any genre) on an empty slot. Amenities waived — Fame still required. This card is disabled after use." },
+  // v199.221: Universal Favour removed — "finishing with turns to spare" fix. Was a
+  // once-per-game free pool play that effectively added a 13th action.
   { id: "FM_BOOK_AM_OR_DRAW",  name: "Gain Amenity or Draw Artist", category: "after_book", trigger: "after_book",  effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you book an artist: gain an amenity OR draw 1 artist." },
   { id: "FM_BOOK_PLACE_AM",    name: "Gain 1 Amenity",            category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an amenity from the amenity die." },
   // REACTIVE — badge renders per-trigger label ("WHEN OPPONENT BUILDS" etc.).
@@ -568,14 +569,16 @@ const FAME_CARDS = [
   // After it fires, the card is disabled in the tray (uses the existing `disabled` flag
   // from Remi Wolf / RAYE fame-kill). The ID is reused so saved games with the old card
   // still resolve to something.
-  { id: "FM_SS_PLAY_HEADLINER",name: "Play an Artist (Once)",     category: "you_may",      trigger: "any_time",    effect: "play_artist_once",              copies: 1, desc: "Once per game, on your turn: play an artist from your hand on an empty stage slot (Fame and amenities required as normal — the card saves you the main action, not the cost). Disabled after use." },
+  // v199.221: Play an Artist (Once) removed — same reason as Universal Favour.
   { id: "FM_SS_GAIN_1_FAME",   name: "Gain +1 Fame",              category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
   { id: "FM_SS_PLACE_AMEN",    name: "Place 1 Amenity",           category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
   { id: "FM_SS_DRAW_TO_FULL",  name: "Draw Until Hand Full",      category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
-  { id: "FM_SS_NEW_STAGE",     name: "Open a Stage + Play (Once)", category: "you_may",      trigger: "any_time",    effect: "open_stage_play_once",           copies: 1, desc: "Once per game, on your turn: open a new stage (max 3 total) and play an artist from your hand on it (Fame and amenities required as normal — the card saves you the main action, not the cost). Disabled after use." },
+  // v199.221: Open a Stage + Play (Once) removed — same reason. The stage-open
+  // utility is better served through Festival Principles anyway.
   { id: "FM_SS_CYCLE",         name: "Discard N → Draw N",        category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
   // v199.130: FM_SS_RECLAIM (Reclaim 2 from discard) removed as requested.
-  { id: "FM_SS_PLAY_FREE",     name: "Play Any Artist Free",      category: "season_start", trigger: "season_start", effect: "ss_play_free_artist",           copies: 1, desc: "Season start: play an artist (that you can afford) on an empty stage." },
+  // v199.221: Play Any Artist Free removed. Was a season-start free play — different
+  // trigger but same ceiling-raising effect as Universal Favour et al.
   // v199.176: season-active cards. Click once per turn to activate; expire at end of the
   // season drawn in. The card instance tracks its received-in season via `receivedInSeason`
   // (stamped at draw time). When the current season differs, the card renders greyed out
@@ -14914,6 +14917,13 @@ export default function Headliners() {
       }
 
       const decision = aiDecideTurn(pd, artistPool, dice, year, lineupObjectives, microtrends, forecastForAI, trendsMode, getIdentity(playerIdentitiesRef.current?.[currentPlayerId]), identityCtx, infraContext, sharedObjective, gameModeRef.current === "quickYear" ? curSeason : null);
+      // v199.220: diagnostic — log what the AI decides and its state so we can see why it isn't booking.
+      try {
+        const handSummary = (pd.hand || []).map(a => a.isFavour ? `[${a.genre}🎴]` : `${a.name}(F${a.fame||0},T${a.tickets||0})`).join(", ");
+        const am = pd.amenities || {};
+        const stageInfo = (pd.stageArtists || []).map((s, i) => `S${i}:${(s||[]).length}/3`).join(" ");
+        console.log(`🤖DECIDE ${currentPlayer?.festivalName} (pid=${currentPlayerId}, Y${year} ${curSeason}): decision=${decision.action}${decision.source?`(${decision.source})`:""}${decision.artistIdx!==undefined?`idx=${decision.artistIdx}`:""}${decision.stageIdx!==undefined?`→S${decision.stageIdx}`:""} | fame=${pd.fame||0} am=⛺${am.campsite||0}👮${am.security||0}🍔${am.catering||0}🚽${am.portaloo||0} | stages: ${stageInfo || "none"} | hand(${(pd.hand||[]).length}): ${handSummary || "empty"}`);
+      } catch (e) { console.warn("🤖DECIDE log err:", e); }
       addLog("🤖 AI", `${currentPlayer?.festivalName} decides: ${decision.action}`);
 
       // v199.50: direct pool play via genre match — bypass hand, play straight onto a
