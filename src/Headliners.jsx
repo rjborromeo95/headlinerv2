@@ -3078,6 +3078,13 @@ export default function Headliners() {
   const seasonCardTicketsRef = useRef({});
   // v199.226: per-player tally of headliner BONUS tickets this season. Bonus = extra tickets granted for being the 3rd (headliner) slot on a stage, over and above the artist's base ticket value.
   const seasonHeadlinerBonusRef = useRef({});
+  // v199.229: per-player, per-season log of artist plays — { pid: { autumn: [{ name, baseTix, isHeadliner }], ...} }. Used by the end-game calculator to show which artists contributed to each season's ticket total.
+  const seasonPlaysLogRef = useRef({});
+  // v199.229: per-player, per-season log of card events — { pid: { autumn: [{ label, tix, isFame }], ...} }. Each entry is one objective/bonus trigger.
+  const seasonCardEventsRef = useRef({});
+  // v199.229: per-player record of EVERY artist booking this season. Lets the end-game calculator show which artists contributed to each line, which ones were headliners, etc.
+  //   { pid: { autumn: [{ name, isHeadliner, baseTickets }], winter: [...], ... } }
+  const seasonBookingsRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
   // v199.227: calc effects moved below computeArtistGameEndBonuses + computeFameCardEndGameTickets to avoid TDZ error.
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
@@ -3644,6 +3651,34 @@ export default function Headliners() {
     setSeasonProgress(fresh);
     seasonCardTicketsRef.current = freshTickets;
     seasonHeadlinerBonusRef.current = { ...freshTickets };
+    // v199.229: ensure per-season log slots exist for each player for THIS season.
+    const curSeason = quickYearSeasonRef.current || "autumn";
+    (players || []).forEach(p => {
+      if (!seasonPlaysLogRef.current[p.id]) seasonPlaysLogRef.current[p.id] = {};
+      seasonPlaysLogRef.current[p.id][curSeason] = [];
+      if (!seasonCardEventsRef.current[p.id]) seasonCardEventsRef.current[p.id] = {};
+      seasonCardEventsRef.current[p.id][curSeason] = [];
+    });
+  };
+  // v199.229: log an artist play into the current season's play log.
+  const logSeasonPlay = (pid, artist, isHeadliner) => {
+    if (!pid || !artist || gameModeRef.current !== "quickYear") return;
+    const season = quickYearSeasonRef.current || "autumn";
+    if (!seasonPlaysLogRef.current[pid]) seasonPlaysLogRef.current[pid] = {};
+    if (!seasonPlaysLogRef.current[pid][season]) seasonPlaysLogRef.current[pid][season] = [];
+    seasonPlaysLogRef.current[pid][season].push({
+      name: artist.name || "?",
+      baseTix: artist.tickets || 0,
+      isHeadliner: !!isHeadliner,
+    });
+  };
+  // v199.229: log a card event (objective/bonus trigger) into the current season's event log.
+  const logSeasonCardEvent = (pid, label, tix, isFame = false) => {
+    if (!pid || !label || gameModeRef.current !== "quickYear") return;
+    const season = quickYearSeasonRef.current || "autumn";
+    if (!seasonCardEventsRef.current[pid]) seasonCardEventsRef.current[pid] = {};
+    if (!seasonCardEventsRef.current[pid][season]) seasonCardEventsRef.current[pid][season] = [];
+    seasonCardEventsRef.current[pid][season].push({ label, tix: tix || 0, isFame });
   };
   // Add N tickets to this season's "card tickets" tally for the player. Also suppresses the floating popup so the player doesn't see the exact amount — the breakdown appears in the end-of-season summary.
   const addSeasonCardTickets = (pid, n) => {
@@ -3762,8 +3797,10 @@ export default function Headliners() {
       const updated = { ...prog, objectiveAwarded: true, stageOpenedSeason: true };
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 3 } }));
       addSeasonCardTickets(pid, 3);
+      const _label = seasonCardsRef.current?.[quickYearSeasonRef.current]?.label || "Objective";
+      logSeasonCardEvent(pid, _label, 3);
       const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
-      addLog("📋 Season Objective", `${festName}: ✅ ${seasonCardsRef.current?.[quickYearSeasonRef.current]?.label || "objective"} met — opened 2nd stage.`);
+      addLog("📋 Season Objective", `${festName}: ✅ ${_label} met — opened 2nd stage.`);
       if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ Objective met", "#86efac");
       setTimeout(() => recalcTickets(), 50);
       const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
@@ -3787,6 +3824,7 @@ export default function Headliners() {
     if (curCard?.id === "SUM_NON_BOOK_2" && actionKind && actionKind !== "book") {
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 2 } }));
       addSeasonCardTickets(pid, 2);
+      logSeasonCardEvent(pid, `${curCard.label} (${actionKind})`, 2);
       const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
       addLog("✨ Season Bonus", `${festName}: ${curCard.label} — bonus tickets banked (${actionKind}).`);
       setTimeout(() => recalcTickets(), 50);
@@ -3811,6 +3849,7 @@ export default function Headliners() {
     if (curCard?.id === "AUT_BOOKED_BONUS") {
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
       addSeasonCardTickets(pid, 4);
+      logSeasonCardEvent(pid, `${curCard.label} (${artist?.name || "booking"})`, 4);
       addLog("✨ Season Bonus", `${festName}: ${curCard.label} — bonus tickets banked.`);
       setTimeout(() => recalcTickets(), 50);
     }
@@ -3825,6 +3864,7 @@ export default function Headliners() {
         updated.finalTurnBookDone = true;
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 6 } }));
         addSeasonCardTickets(pid, 6);
+        logSeasonCardEvent(pid, curCard.label, 6);
         addLog("📋 Season Objective", `${festName}: ✅ ${curCard.label} met — booked on final turn.`);
         if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ Objective met", "#86efac");
         setTimeout(() => recalcTickets(), 50);
@@ -3838,13 +3878,25 @@ export default function Headliners() {
   // Called at end of a season to score end-of-boundary objectives/bonuses.
   const scoreEndOfSeason = (endingSeason) => {
     const curCard = seasonCardsRef.current?.[endingSeason];
-    if (!curCard) return;
+    // v199.228: diagnostic logging. Remove after bugs confirmed fixed.
+    console.log(`[SEASON END] ${endingSeason} — card:`, curCard?.id || "(none)", curCard?.label || "");
+    if (!curCard) {
+      addLog("🏁 Season End", `(no season card found for ${endingSeason})`);
+      return;
+    }
+    addLog("🏁 Season End", `Scoring ${endingSeason}: ${curCard.label} (${curCard.id})`);
     const pdAll = playerDataRef.current || playerData;
     (players || []).forEach(p => {
       const pid = p.id;
       const pd = pdAll[pid] || {};
       const prog = seasonProgressRef.current[pid] || {};
       const festName = p.festivalName || "?";
+      // v199.228 diagnostic: what's in this player's hand right now?
+      if (curCard.id === "WIN_HAND_5_PLUS" || curCard.id === "WIN_HAND_1T_PER") {
+        const hand = pd.hand || [];
+        console.log(`[SEASON END] ${festName} — hand size: ${hand.length}`, hand.map(c => c?.name || "?"));
+        addLog("🏁 Season End", `${festName}: hand size ${hand.length}`);
+      }
       let bonusTix = 0;
       let fameGain = 0;
       let reason = "";
@@ -3900,6 +3952,7 @@ export default function Headliners() {
       if (bonusTix > 0) {
         setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + bonusTix } }));
         addSeasonCardTickets(pid, bonusTix);
+        logSeasonCardEvent(pid, reason || curCard.label, bonusTix);
         addLog("🏁 Season End", `${festName}: ${reason} → +${bonusTix} tickets.`);
       }
       if (fameGain > 0) {
@@ -4318,7 +4371,7 @@ export default function Headliners() {
     return { total, lines };
   };
 
-  // v199.226/v199.227: build the ticket-calculator step sequence when the game ends in Quick Play.
+  // v199.226/v199.229: build the ticket-calculator step sequence when the game ends in Quick Play. Each step holds per-player breakdowns: {total, lines: [{label, value}]}, so the UI can show which artists/objectives contributed.
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (calcSteps) return; // already built
@@ -4330,30 +4383,83 @@ export default function Headliners() {
       { key: "spring", emoji: "🌸", label: "Spring", color: "#86efac" },
       { key: "summer", emoji: "☀️", label: "Summer", color: "#fcd34d" },
     ];
+    const eventsLog = seasonCardEventsRef.current || {};
     seasons.forEach(s => {
-      const baseDeltas = {};
+      // Step A: objectives/bonuses + base artist tickets this season.
+      const breakdownsA = {};
       (players || []).forEach(p => {
         const seasonHist = hist[p.id]?.[s.key] || {};
-        baseDeltas[p.id] = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
+        const bookings = seasonHist.bookings || [];
+        const lines = [];
+        // Objective/bonus contributions — prefer per-event granularity from the events log.
+        const events = (eventsLog[p.id]?.[s.key] || []).filter(ev => ev.tix > 0);
+        if (events.length > 0) {
+          events.forEach(ev => lines.push({ label: `📋 ${ev.label}`, value: ev.tix }));
+        } else {
+          const sCardTix = seasonHist.seasonCardTickets || 0;
+          if (sCardTix > 0) {
+            const scName = (seasonCardsRef.current?.[s.key])?.label || "Season card";
+            lines.push({ label: `📋 ${scName}`, value: sCardTix });
+          }
+        }
+        // Base artist tickets per booking.
+        bookings.forEach(b => {
+          if (b.baseTickets > 0) {
+            lines.push({ label: `🎤 ${b.name}${b.isHeadliner ? " ★" : ""}`, value: b.baseTickets });
+          }
+        });
+        const total = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
+        breakdownsA[p.id] = { total, lines };
       });
-      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, deltas: baseDeltas });
-      const headlinerDeltas = {};
+      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, breakdowns: breakdownsA });
+      // Step B: headliner bonus tickets this season.
+      const breakdownsB = {};
       (players || []).forEach(p => {
         const seasonHist = hist[p.id]?.[s.key] || {};
-        headlinerDeltas[p.id] = seasonHist.headlinerBonusTickets || 0;
+        const bookings = seasonHist.bookings || [];
+        const lines = bookings
+          .filter(b => b.isHeadliner && b.baseTickets > 0)
+          .map(b => ({ label: `★ ${b.name} headliner bonus`, value: b.baseTickets }));
+        const total = seasonHist.headlinerBonusTickets || 0;
+        breakdownsB[p.id] = { total, lines };
       });
-      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, deltas: headlinerDeltas });
+      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, breakdowns: breakdownsB });
     });
-    const artistEffDeltas = {};
+    // Artist effects (game-end bonuses from artist cards).
+    const breakdownsArt = {};
     (players || []).forEach(p => {
-      try { artistEffDeltas[p.id] = (computeArtistGameEndBonuses(p.id)?.total) || 0; } catch { artistEffDeltas[p.id] = 0; }
+      let total = 0;
+      let effLines = [];
+      try {
+        const r = computeArtistGameEndBonuses(p.id);
+        total = r?.total || 0;
+        // r.lines is strings like "ArtistName: +N (reason)" — convert to {label, value}.
+        effLines = (r?.lines || []).map(ln => {
+          const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
+          if (m) return { label: `🎸 ${m[1].trim()}`, value: parseInt(m[2], 10) };
+          return { label: `🎸 ${ln}`, value: 0 };
+        }).filter(x => x.value > 0);
+      } catch { /* ignore */ }
+      breakdownsArt[p.id] = { total, lines: effLines };
     });
-    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", deltas: artistEffDeltas });
-    const powerDeltas = {};
+    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", breakdowns: breakdownsArt });
+    // Game-end power tickets (Fame cards + Legendary Lineup).
+    const breakdownsPow = {};
     (players || []).forEach(p => {
-      try { powerDeltas[p.id] = (computeFameCardEndGameTickets(p.id)?.total) || 0; } catch { powerDeltas[p.id] = 0; }
+      let total = 0;
+      let powLines = [];
+      try {
+        const r = computeFameCardEndGameTickets(p.id);
+        total = r?.total || 0;
+        powLines = (r?.lines || []).map(ln => {
+          const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
+          if (m) return { label: `🔥 ${m[1].trim()}`, value: parseInt(m[2], 10) };
+          return { label: `🔥 ${ln}`, value: 0 };
+        }).filter(x => x.value > 0);
+      } catch { /* ignore */ }
+      breakdownsPow[p.id] = { total, lines: powLines };
     });
-    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", deltas: powerDeltas });
+    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", breakdowns: breakdownsPow });
     const initTotals = {};
     (players || []).forEach(p => { initTotals[p.id] = 0; });
     setCalcTotals(initTotals);
@@ -4362,7 +4468,7 @@ export default function Headliners() {
     setCalcSteps(steps);
   }, [phase, gameMode]);
 
-  // v199.226/v199.227: advance the calculator step-by-step.
+  // v199.226/v199.229: advance the calculator step-by-step. Reads totals from breakdowns.
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (!calcSteps || calcDone) return;
@@ -4375,13 +4481,13 @@ export default function Headliners() {
       const stepData = calcSteps[nextStep];
       setCalcTotals(prev => {
         const next = { ...prev };
-        Object.keys(stepData.deltas).forEach(pid => {
-          next[pid] = (next[pid] || 0) + (stepData.deltas[pid] || 0);
+        Object.keys(stepData.breakdowns || {}).forEach(pid => {
+          next[pid] = (next[pid] || 0) + (stepData.breakdowns[pid]?.total || 0);
         });
         return next;
       });
       setCalcStep(s => s + 1);
-    }, 1800);
+    }, 2600);
     return () => clearTimeout(timer);
   }, [calcStep, calcSteps, calcDone, phase, gameMode]);
 
@@ -8033,6 +8139,8 @@ export default function Headliners() {
       const headlinerBonusTickets = seasonHeadlinerBonusRef.current?.[s.pid] || 0;
       const artistTickets = Math.max(0, ticketsThisSeason - seasonCardTickets);
       const baseArtistTickets = Math.max(0, artistTickets - headlinerBonusTickets);
+      // v199.229: capture every booking this season (name, headliner flag, base tickets).
+      const seasonBookings = seasonBookingsRef.current?.[s.pid]?.[season] || [];
       histUpdate[s.pid][season] = {
         fame, fameDelta: fame - snapFame,
         ticketsThisSeason,
@@ -8045,6 +8153,7 @@ export default function Headliners() {
         totalTickets,
         totalArtists,
         campsites: s.campsites || 0,
+        bookings: [...seasonBookings],
       };
     });
     setQuickYearHistory(histUpdate);
@@ -13531,6 +13640,20 @@ export default function Headliners() {
           [pid]: (seasonHeadlinerBonusRef.current[pid] || 0) + bonus,
         };
       }
+    }
+    // v199.229: log the play for the end-game calculator breakdown.
+    logSeasonPlay(pid, artist, isHeadliner);
+    // v199.229: record this booking so the end-game calculator can list artist names + flags per season.
+    if (gameModeRef.current === "quickYear") {
+      const bookingSeason = quickYearSeasonRef.current;
+      const nextBookings = { ...(seasonBookingsRef.current || {}) };
+      const playerBookings = { ...(nextBookings[pid] || {}) };
+      playerBookings[bookingSeason] = [
+        ...(playerBookings[bookingSeason] || []),
+        { name: artist.name, isHeadliner, baseTickets: artist.tickets || 0, fame: artist.fame || 0 },
+      ];
+      nextBookings[pid] = playerBookings;
+      seasonBookingsRef.current = nextBookings;
     }
 
     // v154: identity hook. Fires for every normal play (special-guest path calls the
@@ -25467,10 +25590,16 @@ export default function Headliners() {
               </>)}
             </p>
           </div>}
-          {/* v199.226: ticket calculator — animates through each contribution to the final ticket count before revealing the leaderboard. Shows step label + per-player running totals. */}
-          {gameMode === "quickYear" && calcSteps && !calcDone && (
+          {/* v199.229: ticket calculator — animates through each contribution to the final ticket count before revealing the leaderboard. Shows step label, per-player running totals, a visual "queue bar" that fills with colored segments as steps apply, and the per-artist/per-objective breakdown of whatever step is currently animating. */}
+          {gameMode === "quickYear" && calcSteps && !calcDone && (() => {
+            // Compute the maximum total any player will reach, so the queue bars share a consistent scale.
+            const maxFinalTotal = players.reduce((m, p) => {
+              const sum = calcSteps.reduce((acc, step) => acc + (step.breakdowns?.[p.id]?.total || 0), 0);
+              return Math.max(m, sum);
+            }, 0) || 1;
+            return (
             <div style={{ marginTop: 20, marginBottom: 20, padding: 20, borderRadius: 16, background: "rgba(15,14,26,0.65)", border: "1px solid #2a2a4a" }}>
-              <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
                 <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>Calculating Festival Totals</div>
                 <div style={{ color: calcSteps[Math.min(calcStep, calcSteps.length - 1)]?.color || "#fbbf24", fontSize: 18, fontWeight: 800, marginTop: 6, minHeight: 28 }}>
                   {calcStep < calcSteps.length ? calcSteps[calcStep].label : "Tallying…"}
@@ -25479,19 +25608,60 @@ export default function Headliners() {
                   Step {Math.min(calcStep + 1, calcSteps.length)} of {calcSteps.length}
                 </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {players.map(p => {
                   const total = calcTotals[p.id] || 0;
-                  const pendingDelta = calcStep < calcSteps.length ? (calcSteps[calcStep]?.deltas?.[p.id] || 0) : 0;
+                  const pendingBd = calcStep < calcSteps.length ? (calcSteps[calcStep]?.breakdowns?.[p.id] || null) : null;
+                  const pendingDelta = pendingBd?.total || 0;
+                  const pendingLines = pendingBd?.lines || [];
+                  // Build the stacked queue-bar segments from applied steps (0..calcStep-1).
+                  const segments = [];
+                  for (let i = 0; i < calcStep && i < calcSteps.length; i++) {
+                    const stepTotal = calcSteps[i].breakdowns?.[p.id]?.total || 0;
+                    if (stepTotal > 0) {
+                      segments.push({ width: (stepTotal / maxFinalTotal) * 100, color: calcSteps[i].color });
+                    }
+                  }
                   return (
-                    <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1.3fr 0.6fr 1fr", gap: 10, alignItems: "center", padding: "10px 14px", borderRadius: 10, background: "rgba(20,18,34,0.7)", border: "1px solid #2a2a4a" }}>
-                      <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
-                      <div style={{ textAlign: "center", color: pendingDelta > 0 ? "#86efac" : "#475569", fontWeight: 800, fontSize: 14, animation: pendingDelta > 0 ? "fadeSlideIn 0.4s" : "none" }}>
-                        {pendingDelta > 0 ? `+${pendingDelta}` : "—"}
+                    <div key={p.id} style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(20,18,34,0.7)", border: "1px solid #2a2a4a" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.7fr 1fr", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                        <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
+                        <div style={{ textAlign: "center", color: pendingDelta > 0 ? "#86efac" : "#475569", fontWeight: 800, fontSize: 14, animation: pendingDelta > 0 ? "fadeSlideIn 0.4s" : "none" }}>
+                          {pendingDelta > 0 ? `+${pendingDelta}` : "—"}
+                        </div>
+                        <div style={{ textAlign: "right", color: "#fcd34d", fontWeight: 900, fontSize: 22, fontVariantNumeric: "tabular-nums", transition: "color 0.3s" }}>
+                          {total.toLocaleString()} 🎟️
+                        </div>
                       </div>
-                      <div style={{ textAlign: "right", color: "#fcd34d", fontWeight: 900, fontSize: 24, fontVariantNumeric: "tabular-nums", transition: "color 0.3s" }}>
-                        {total.toLocaleString()} 🎟️
+                      {/* Queue bar — segments representing each applied step. */}
+                      <div style={{ height: 10, borderRadius: 999, background: "rgba(15,14,26,0.8)", border: "1px solid #2a2a4a", display: "flex", overflow: "hidden" }}>
+                        {segments.map((seg, i) => (
+                          <div key={i} title={calcSteps[i]?.label} style={{
+                            width: `${seg.width}%`,
+                            background: `linear-gradient(90deg, ${seg.color}cc, ${seg.color}ff)`,
+                            borderRight: i < segments.length - 1 ? "1px solid rgba(15,14,26,0.6)" : "none",
+                            animation: "fadeSlideIn 0.5s ease-out",
+                          }} />
+                        ))}
                       </div>
+                      {/* Breakdown lines for the currently animating step. */}
+                      {pendingLines.length > 0 && (
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 3 }}>
+                          {pendingLines.map((ln, i) => (
+                            <div key={i} style={{
+                              display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11,
+                              padding: "3px 8px", borderRadius: 6, background: "rgba(15,14,26,0.55)",
+                              animation: `fadeSlideIn 0.35s ease-out ${i * 0.08}s both`,
+                            }}>
+                              <span style={{ color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{ln.label}</span>
+                              <span style={{ color: "#86efac", fontWeight: 700, marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>+{ln.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {pendingLines.length === 0 && pendingDelta === 0 && calcStep < calcSteps.length && (
+                        <div style={{ marginTop: 8, fontSize: 10, color: "#475569", fontStyle: "italic", textAlign: "center" }}>— nothing from this source —</div>
+                      )}
                     </div>
                   );
                 })}
@@ -25499,13 +25669,12 @@ export default function Headliners() {
               <div style={{ textAlign: "center", marginTop: 14 }}>
                 <button
                   onClick={() => {
-                    // Skip to end: apply all remaining steps immediately.
                     if (!calcSteps) return;
                     setCalcTotals(prev => {
                       const next = { ...prev };
                       for (let i = calcStep; i < calcSteps.length; i++) {
-                        Object.keys(calcSteps[i].deltas).forEach(pid => {
-                          next[pid] = (next[pid] || 0) + (calcSteps[i].deltas[pid] || 0);
+                        Object.keys(calcSteps[i].breakdowns || {}).forEach(pid => {
+                          next[pid] = (next[pid] || 0) + (calcSteps[i].breakdowns[pid]?.total || 0);
                         });
                       }
                       return next;
@@ -25519,7 +25688,8 @@ export default function Headliners() {
                 </button>
               </div>
             </div>
-          )}
+            );
+          })()}
           {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
               per-year columns (there's only one year). Classic keeps the full per-year grid. */}
           {gameMode === "quickYear" && calcDone ? (
