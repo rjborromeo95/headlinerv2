@@ -633,6 +633,49 @@ function buildFameDeck() {
 const LINEUP_GENRE_DECK = ["Pop","Pop","Pop","Rock","Rock","Rock","Hip Hop","Hip Hop","Hip Hop","Electronic","Electronic","Electronic","Indie","Indie","Indie","Funk","Funk","Funk"];
 
 // ═══════════════════════════════════════════════════════════════════
+// v199.224: Season cards — one card is drawn randomly at the start of each season.
+// Objectives require a specific accomplishment (tracked, rewarded when met).
+// Bonuses are passive effects that apply for the whole season, or at a boundary.
+// The player sees the card from the moment the season starts; each game plays
+// differently depending on which 4 cards are drawn.
+// ═══════════════════════════════════════════════════════════════════
+const SEASON_CARDS = {
+  autumn: [
+    { id: "AUT_STAGE_OPEN_2", season: "autumn", type: "objective", label: "Expansion",       desc: "Score 3 bonus tickets the first time you open a second stage this season." },
+    { id: "AUT_PLACE_3_AMEN", season: "autumn", type: "objective", label: "Groundwork",      desc: "Place 3 amenities this season to immediately gain 1 Fame." },
+    { id: "AUT_DRAW_3_ART",   season: "autumn", type: "objective", label: "Scouting",        desc: "Draw 3 artists this season to immediately gain 1 Fame." },
+    { id: "AUT_BOOKED_BONUS", season: "autumn", type: "bonus",     label: "Festival Buzz",   desc: "Artists booked this season are worth +4 tickets each (scored at game end)." },
+    { id: "AUT_END_FAME",     season: "autumn", type: "bonus",     label: "Audience Warmth", desc: "At the end of Autumn, all players gain 1 Fame." },
+  ],
+  winter: [
+    { id: "WIN_CHOOSE_4",         season: "winter", type: "bonus",     label: "Winter Planning",  desc: "Draw 4 Fame cards to choose from this season instead of 3." },
+    { id: "WIN_FIRST_BOOK_FAME",  season: "winter", type: "bonus",     label: "Opening Weekend",  desc: "The first time each player books an artist this season, they gain 1 Fame." },
+    { id: "WIN_HAND_5_PLUS",      season: "winter", type: "objective", label: "Deep Roster",      desc: "Finish Winter with more than 5 artists in your hand to sell 5 tickets." },
+    { id: "WIN_AMENITIES_4_PLUS", season: "winter", type: "objective", label: "Winter Prep",      desc: "Finish Winter with more than 4 amenities in your festival to sell 5 tickets." },
+    { id: "WIN_HAND_1T_PER",      season: "winter", type: "bonus",     label: "Pre-Sale",         desc: "At the end of Winter, sell 1 ticket for each artist in your hand." },
+  ],
+  spring: [
+    { id: "SPR_ALL_3_ACTIONS", season: "spring", type: "objective", label: "Versatile Operator", desc: "If you take Build, Book AND Browse at least once this season, sell 5 bonus tickets." },
+    { id: "SPR_FULL_STAGES",   season: "spring", type: "objective", label: "Completion",         desc: "Sell 3 bonus tickets per full stage you own at the end of Spring." },
+    { id: "SPR_FAME_DISCOUNT", season: "spring", type: "bonus",     label: "Spring Thaw",        desc: "All artists may be booked with a 1 Fame discount this season (amenities still required)." },
+    { id: "SPR_AMEN_SETS",     season: "spring", type: "objective", label: "Infrastructure Grid",desc: "Sell 6 bonus tickets per set of 4 amenities in your festival at end of Spring." },
+    { id: "SPR_END_FAME",      season: "spring", type: "bonus",     label: "Spring Renewal",     desc: "At the end of Spring, all players gain 1 Fame." },
+  ],
+  summer: [
+    { id: "SUM_PLUS_STAGE",          season: "summer", type: "bonus",     label: "Festival Expansion", desc: "At the start of Summer, each player opens a new stage. Players already at 3 stages gain 1 Fame instead." },
+    { id: "SUM_SECURITY_GTE_STAGES", season: "summer", type: "objective", label: "Keep the Peace",     desc: "If you finish Summer with at least as many security as stages, sell 6 bonus tickets." },
+    { id: "SUM_DECK_FLIP",           season: "summer", type: "bonus",     label: "Open Books",         desc: "The top card of the artist deck is revealed face-up this season." },
+    { id: "SUM_FINAL_TURN_BOOK",     season: "summer", type: "objective", label: "Grand Finale",       desc: "Play an artist on the final turn of Summer for 6 bonus tickets." },
+    { id: "SUM_NON_BOOK_2",          season: "summer", type: "bonus",     label: "Extras Sales",       desc: "Sell 2 bonus tickets each turn you don't take the Book action this season." },
+  ],
+};
+function drawSeasonCard(season) {
+  const pool = SEASON_CARDS[season] || [];
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // v135: Alternative Artist Objectives (lobby toggle)
 // ═══════════════════════════════════════════════════════════════════
 // A replacement for the fame→stage progression. Each player is dealt 2 objectives at year
@@ -3027,6 +3070,19 @@ export default function Headliners() {
   // quickYearSeason: current season label ("autumn" | "winter" | "spring" | "summer")
   const [quickYearSeason, _rawSetQuickYearSeason] = useState("autumn");
   const setQuickYearSeason = _guardSetter("setQuickYearSeason", _rawSetQuickYearSeason);
+  // v199.224: season cards (drawn 1 per season) + per-player progress tracking.
+  const [seasonCards, _rawSetSeasonCards] = useState({ autumn: null, winter: null, spring: null, summer: null });
+  const setSeasonCards = _guardSetter("setSeasonCards", _rawSetSeasonCards);
+  const seasonCardsRef = useRef({ autumn: null, winter: null, spring: null, summer: null });
+  useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
+  // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
+  const [seasonProgress, _rawSetSeasonProgress] = useState({});
+  const setSeasonProgress = _guardSetter("setSeasonProgress", _rawSetSeasonProgress);
+  const seasonProgressRef = useRef({});
+  useEffect(() => { seasonProgressRef.current = seasonProgress; }, [seasonProgress]);
+  // Season card reveal modal.
+  const [seasonCardReveal, _rawSetSeasonCardReveal] = useState(null);
+  const setSeasonCardReveal = _guardSetter("setSeasonCardReveal", _rawSetSeasonCardReveal);
   const quickYearSeasonRef = useRef("autumn");
   useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
@@ -3545,6 +3601,292 @@ export default function Headliners() {
   // Convenience wrapper for negative fame — same ledger, no popup.
   const logFameLoss = (pid, amount, source, yearOverride) => logFameGain(pid, -Math.abs(amount), source, yearOverride);
 
+  // ═══════════════════════════════════════════════════════════════════
+  // v199.224: Season card helpers
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Reset all players' per-season progress at the start of a new season.
+  const resetSeasonProgress = () => {
+    const fresh = {};
+    (players || []).forEach(p => {
+      fresh[p.id] = {
+        amenitiesPlacedSeason: 0,
+        artistsDrawnSeason: 0,
+        stageOpenedSeason: false,
+        firstBookDone: false,
+        actionsTakenSet: { build: false, book: false, browse: false },
+        bookedThisSeasonCount: 0,
+        finalTurnBookDone: false,
+        bonusTicketsEarnedSeason: 0,
+        objectiveAwarded: false,
+      };
+    });
+    seasonProgressRef.current = fresh;
+    setSeasonProgress(fresh);
+  };
+
+  // Draw a card for the given season, store it, and apply immediate effects.
+  const revealSeasonCard = (season) => {
+    const card = drawSeasonCard(season);
+    if (!card) return;
+    setSeasonCards(prev => {
+      const next = { ...prev, [season]: card };
+      seasonCardsRef.current = next;
+      return next;
+    });
+    addLogH(`${QUICKYEAR_SEASON_EMOJI[season] || ""} ${QUICKYEAR_SEASON_LABELS[season] || season} Card: ${card.label}`, "year");
+    addLog(`${QUICKYEAR_SEASON_EMOJI[season] || ""} Season Card`, `${card.type === "objective" ? "📋 Objective" : "✨ Bonus"}: ${card.desc}`);
+    resetSeasonProgress();
+    // Immediate start-of-season effects:
+    if (card.id === "SUM_PLUS_STAGE") {
+      // Each player opens a new stage; if at 3 stages, +1 Fame instead.
+      setTimeout(() => applyPlusStageBonus(), 200);
+    }
+    // Show the reveal modal.
+    setSeasonCardReveal({ season, card });
+  };
+
+  const applyPlusStageBonus = () => {
+    setPlayerData(prev => {
+      const next = { ...prev };
+      (players || []).forEach(p => {
+        const pd = next[p.id];
+        if (!pd) return;
+        const stageCount = (pd.stages || []).length;
+        if (stageCount < QUICKYEAR_MAX_STAGES) {
+          const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
+          const sColor = STAGE_COLORS[stageCount % STAGE_COLORS.length];
+          next[p.id] = {
+            ...pd,
+            stages: [...(pd.stages || []), { fameRequired: 0 }],
+            stageArtists: [...(pd.stageArtists || []), []],
+            stageNames: [...(pd.stageNames || []), sName],
+            stageColors: [...(pd.stageColors || []), sColor],
+          };
+          addLog("☀️ Festival Expansion", `${p.festivalName}: new stage "${sName}" opens.`);
+        } else {
+          next[p.id] = { ...pd, baseFame: Math.min(FAME_CAP_QUICKYEAR, (pd.baseFame || 0) + 1) };
+          setTimeout(() => logFameGain(p.id, 1, "☀️ Festival Expansion (already at max stages)"), 50);
+          addLog("☀️ Festival Expansion", `${p.festivalName}: already at max stages → +1 Fame.`);
+        }
+      });
+      playerDataRef.current = next;
+      return next;
+    });
+    setTimeout(() => recalcTickets(), 100);
+  };
+
+  // Called when a player places an amenity (Build, Fame card, or artist effect).
+  const trackAmenityPlaced = (pid) => {
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    if (!curCard || curCard.id !== "AUT_PLACE_3_AMEN") return;
+    const prog = seasonProgressRef.current[pid] || {};
+    if (prog.objectiveAwarded) return;
+    const newCount = (prog.amenitiesPlacedSeason || 0) + 1;
+    const updated = { ...prog, amenitiesPlacedSeason: newCount };
+    if (newCount >= 3 && !prog.objectiveAwarded) {
+      updated.objectiveAwarded = true;
+      const player = players.find(pl => pl.id === pid);
+      const festName = player?.festivalName || "?";
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+      setTimeout(() => logFameGain(pid, 1, "📋 Groundwork (3 amenities this season)"), 50);
+      addLog("📋 Season Objective", `${festName}: ✅ Groundwork met — placed 3 amenities → +1 Fame.`);
+      if (!player?.isAI) showFloatingBonus("✅ +1 Fame (season)", "#86efac");
+    }
+    const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
+    seasonProgressRef.current = nextProgress;
+    setSeasonProgress(nextProgress);
+  };
+
+  // Called when a player draws artist(s) to hand.
+  const trackArtistDrawn = (pid, count) => {
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    if (!curCard || curCard.id !== "AUT_DRAW_3_ART") return;
+    const prog = seasonProgressRef.current[pid] || {};
+    if (prog.objectiveAwarded) return;
+    const newCount = (prog.artistsDrawnSeason || 0) + count;
+    const updated = { ...prog, artistsDrawnSeason: newCount };
+    if (newCount >= 3 && !prog.objectiveAwarded) {
+      updated.objectiveAwarded = true;
+      const player = players.find(pl => pl.id === pid);
+      const festName = player?.festivalName || "?";
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+      setTimeout(() => logFameGain(pid, 1, "📋 Scouting (3 artists drawn this season)"), 50);
+      addLog("📋 Season Objective", `${festName}: ✅ Scouting met — drew 3 artists → +1 Fame.`);
+      if (!player?.isAI) showFloatingBonus("✅ +1 Fame (season)", "#86efac");
+    }
+    const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
+    seasonProgressRef.current = nextProgress;
+    setSeasonProgress(nextProgress);
+  };
+
+  // Called when a player opens a NEW stage.
+  const trackStageOpened = (pid) => {
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    if (!curCard || curCard.id !== "AUT_STAGE_OPEN_2") return;
+    const prog = seasonProgressRef.current[pid] || {};
+    if (prog.objectiveAwarded) return;
+    const pd = (playerDataRef.current || playerData)[pid];
+    const stageCount = (pd?.stages || []).length;
+    // Trigger is "opened a 2nd stage" — stageCount AFTER opening is 2.
+    if (stageCount === 2) {
+      const updated = { ...prog, objectiveAwarded: true, stageOpenedSeason: true };
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 3 } }));
+      const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+      addLog("📋 Season Objective", `${festName}: ✅ Expansion met — opened 2nd stage → +3 tickets.`);
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ +3 🎟️ (season)", "#86efac");
+      setTimeout(() => recalcTickets(), 50);
+      const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
+      seasonProgressRef.current = nextProgress;
+      setSeasonProgress(nextProgress);
+    }
+  };
+
+  // Called from completeAction with the actionKind.
+  const trackActionTaken = (pid, actionKind) => {
+    const prog = seasonProgressRef.current[pid] || {};
+    const updated = { ...prog, actionsTakenSet: { ...(prog.actionsTakenSet || {}) } };
+    if (actionKind === "build") updated.actionsTakenSet.build = true;
+    if (actionKind === "book") updated.actionsTakenSet.book = true;
+    if (actionKind === "browse") updated.actionsTakenSet.browse = true;
+    const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
+    seasonProgressRef.current = nextProgress;
+    setSeasonProgress(nextProgress);
+    // Non-book bonus (Summer card): fires immediately on completion of any action that isn't book.
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    if (curCard?.id === "SUM_NON_BOOK_2" && actionKind && actionKind !== "book") {
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 2 } }));
+      const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+      addLog("✨ Season Bonus", `${festName}: Extras Sales — +2 🎟️ (${actionKind}).`);
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✨ +2 🎟️", "#60a5fa");
+      setTimeout(() => recalcTickets(), 50);
+    }
+  };
+
+  // Called from the book pipeline when a player books an artist.
+  const trackBookAction = (pid, artist) => {
+    const prog = seasonProgressRef.current[pid] || {};
+    const updated = { ...prog, bookedThisSeasonCount: (prog.bookedThisSeasonCount || 0) + 1 };
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+    // Winter: first book of the season → +1 Fame.
+    if (curCard?.id === "WIN_FIRST_BOOK_FAME" && !prog.firstBookDone) {
+      updated.firstBookDone = true;
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+      setTimeout(() => logFameGain(pid, 1, "✨ Opening Weekend (first book)"), 50);
+      addLog("✨ Season Bonus", `${festName}: Opening Weekend — first book → +1 Fame.`);
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✨ +1 Fame", "#60a5fa");
+    }
+    // Autumn: +4 tickets per booked artist (banked to a counter, applied on booking).
+    if (curCard?.id === "AUT_BOOKED_BONUS") {
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
+      addLog("✨ Season Bonus", `${festName}: Festival Buzz — +4 🎟️ for this booking.`);
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✨ +4 🎟️", "#60a5fa");
+      setTimeout(() => recalcTickets(), 50);
+    }
+    // Summer: +6 tickets if this is the last turn of the game.
+    if (curCard?.id === "SUM_FINAL_TURN_BOOK") {
+      const tLeft = actionsLeftThisTurnRef.current ?? actionsLeftThisTurn;
+      const turnNum = (playerDataRef.current?.[pid]?.quickYearTurnNumber) || null;
+      // Final turn of Summer = turn 12 for this player. Detect via actionsLeft reaching 0 after this action.
+      // Actually simpler: check if there are no more turns left after this one.
+      const anyPlayerHasMoreTurns = (playerDataRef.current && Object.values(playerDataRef.current).some(pd2 => (pd2.quickYearTurnNumber || 0) < 12));
+      if (!anyPlayerHasMoreTurns && !updated.finalTurnBookDone) {
+        updated.finalTurnBookDone = true;
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 6 } }));
+        addLog("📋 Season Objective", `${festName}: ✅ Grand Finale met — booked on final turn → +6 tickets.`);
+        if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ +6 🎟️", "#86efac");
+        setTimeout(() => recalcTickets(), 50);
+      }
+    }
+    const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
+    seasonProgressRef.current = nextProgress;
+    setSeasonProgress(nextProgress);
+  };
+
+  // Called at end of a season to score end-of-boundary objectives/bonuses.
+  const scoreEndOfSeason = (endingSeason) => {
+    const curCard = seasonCardsRef.current?.[endingSeason];
+    if (!curCard) return;
+    const pdAll = playerDataRef.current || playerData;
+    (players || []).forEach(p => {
+      const pid = p.id;
+      const pd = pdAll[pid] || {};
+      const prog = seasonProgressRef.current[pid] || {};
+      const festName = p.festivalName || "?";
+      let bonusTix = 0;
+      let fameGain = 0;
+      let reason = "";
+      switch (curCard.id) {
+        case "AUT_END_FAME":
+        case "SPR_END_FAME": {
+          fameGain = 1;
+          reason = curCard.label;
+          break;
+        }
+        case "WIN_HAND_5_PLUS": {
+          const handSize = (pd.hand || []).length;
+          if (handSize > 5) { bonusTix = 5; reason = `${curCard.label} (${handSize} in hand)`; }
+          break;
+        }
+        case "WIN_AMENITIES_4_PLUS": {
+          const am = pd.amenities || {};
+          const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+          if (total > 4) { bonusTix = 5; reason = `${curCard.label} (${total} amenities)`; }
+          break;
+        }
+        case "WIN_HAND_1T_PER": {
+          const handSize = (pd.hand || []).length;
+          if (handSize > 0) { bonusTix = handSize; reason = `${curCard.label} (${handSize} × 1)`; }
+          break;
+        }
+        case "SPR_ALL_3_ACTIONS": {
+          const acts = prog.actionsTakenSet || {};
+          if (acts.build && acts.book && acts.browse) { bonusTix = 5; reason = curCard.label; }
+          break;
+        }
+        case "SPR_FULL_STAGES": {
+          const stages = pd.stageArtists || [];
+          const fullStages = stages.filter(s => (s || []).length === 3).length;
+          if (fullStages > 0) { bonusTix = 3 * fullStages; reason = `${curCard.label} (${fullStages} full stage${fullStages>1?"s":""})`; }
+          break;
+        }
+        case "SPR_AMEN_SETS": {
+          const am = pd.amenities || {};
+          const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
+          const sets = Math.floor(total / 4);
+          if (sets > 0) { bonusTix = 6 * sets; reason = `${curCard.label} (${sets} set${sets>1?"s":""} of 4)`; }
+          break;
+        }
+        case "SUM_SECURITY_GTE_STAGES": {
+          const am = pd.amenities || {};
+          const stageCount = (pd.stages || []).length;
+          if ((am.security || 0) >= stageCount) { bonusTix = 6; reason = `${curCard.label} (${am.security||0} sec / ${stageCount} stages)`; }
+          break;
+        }
+        default: break;
+      }
+      if (bonusTix > 0) {
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + bonusTix } }));
+        addLog("🏁 Season End", `${festName}: ${reason} → +${bonusTix} tickets.`);
+        if (!p.isAI) showFloatingBonus(`🏁 +${bonusTix} 🎟️`, "#fbbf24");
+      }
+      if (fameGain > 0) {
+        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (prev[pid].baseFame || 0) + fameGain) } }));
+        setTimeout(() => logFameGain(pid, fameGain, `🏁 ${reason}`), 50);
+        addLog("🏁 Season End", `${festName}: ${reason} → +${fameGain} Fame.`);
+        if (!p.isAI) showFloatingBonus(`🏁 +${fameGain} Fame`, "#fbbf24");
+      }
+    });
+    setTimeout(() => recalcTickets(), 100);
+  };
+
+  // Lookup: is a specific bonus currently in effect this season? (Used by misc checks.)
+  const currentSeasonCardIs = (cardId) => {
+    const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
+    return curCard?.id === cardId;
+  };
+
   // v199.95: Fame card draw helpers. drawFameCardsForPlayer pulls top 3 from the deck
   // and opens the pick-1-of-3 modal. pickFameCard commits the choice to the player and
   // sends the other 2 to the discard pile. Humans see the modal; AI will be auto-picked
@@ -3596,7 +3938,9 @@ export default function Headliners() {
       addLog("🔥 Fame", `${player?.festivalName || "?"}: Fame deck is exhausted. Draw skipped.`);
       return;
     }
-    const take = Math.min(3, deck.length);
+    // v199.224: Winter card "Winter Planning" expands the draw from 3 to 4.
+    const _drawSize = currentSeasonCardIs("WIN_CHOOSE_4") ? 4 : 3;
+    const take = Math.min(_drawSize, deck.length);
     const choices = deck.slice(0, take);
     const remaining = deck.slice(take);
     // Commit deck + discard-clear first, flat.
@@ -3644,19 +3988,24 @@ export default function Headliners() {
       }
       // All N picked — commit.
       // v199.176: stamp receivedInSeason for season_active expiry tracking.
-      // v199.222: route IMMEDIATE cards (category "immediate") to discard, not tray.
-      // They fire their effect and vanish; they never take a Fame-tray slot.
-      const keptAll = nextPicked.map(i => ({ ...fameDrawModal.choices[i], receivedInSeason: quickYearSeasonRef.current }));
-      const keptImmediate = keptAll.filter(c => c.category === "immediate");
-      const keptForTray = keptAll.filter(c => c.category !== "immediate");
+      // v199.222/v199.223: IMMEDIATE cards go to tray WITH `disabled: true` so they occupy
+      // a slot in spent state (renders greyed out, "Disabled" label, non-clickable).
+      // This prevents players from gaining a free 6th tray slot by picking immediates.
+      const keptAll = nextPicked.map(i => {
+        const c = { ...fameDrawModal.choices[i], receivedInSeason: quickYearSeasonRef.current };
+        if (c.category === "immediate") c.disabled = true;
+        return c;
+      });
       const discards = fameDrawModal.choices.filter((_, i) => !nextPicked.includes(i));
-      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...keptForTray] }));
-      setFameDiscardPile(d => [...d, ...discards, ...keptImmediate]);
+      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), ...keptAll] }));
+      setFameDiscardPile(d => [...d, ...discards]);
       setFameDrawModal(null);
       fameDrawInProgressRef.current = false;
       const festLabel = players.find(pl => pl.id === pid)?.festivalName || "?";
+      const keptImmediate = keptAll.filter(c => c.category === "immediate");
+      const keptForTray = keptAll.filter(c => c.category !== "immediate");
       if (keptForTray.length > 0) addLog("🔥 Fame", `${festLabel}: added Fame card${keptForTray.length > 1 ? "s" : ""} "${keptForTray.map(c => c.name).join('", "')}".`);
-      if (keptImmediate.length > 0) addLog("🔥 Fame", `${festLabel}: ⚡ instant card${keptImmediate.length > 1 ? "s" : ""} "${keptImmediate.map(c => c.name).join('", "')}" fire immediately.`);
+      if (keptImmediate.length > 0) addLog("🔥 Fame", `${festLabel}: ⚡ instant card${keptImmediate.length > 1 ? "s" : ""} "${keptImmediate.map(c => c.name).join('", "')}" fire immediately (tray slot spent).`);
       keptAll.forEach(k => {
         if (k.trigger === "on_draw") setTimeout(() => fireFameCardEffect(pid, k, { onDraw: true }), 60);
       });
@@ -3671,16 +4020,17 @@ export default function Headliners() {
     }
     // Single-pick path (original behavior).
     // v199.176: stamp receivedInSeason for season_active expiry tracking.
-    // v199.222: route IMMEDIATE cards to discard instead of tray.
+    // v199.222/v199.223: IMMEDIATE cards go to tray with disabled:true (takes a slot in
+    // spent state), rather than to discard. See multi-pick path above for rationale.
     const picked = { ...fameDrawModal.choices[cardIdx], receivedInSeason: quickYearSeasonRef.current };
+    if (picked.category === "immediate") picked.disabled = true;
     const discards = fameDrawModal.choices.filter((_, i) => i !== cardIdx);
     const festLabel = players.find(pl => pl.id === pid)?.festivalName || "?";
+    setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+    setFameDiscardPile(d => [...d, ...discards]);
     if (picked.category === "immediate") {
-      setFameDiscardPile(d => [...d, ...discards, picked]);
-      addLog("🔥 Fame", `${festLabel}: ⚡ instant card "${picked.name}" fires immediately.`);
+      addLog("🔥 Fame", `${festLabel}: ⚡ instant card "${picked.name}" fires immediately (tray slot spent).`);
     } else {
-      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
-      setFameDiscardPile(d => [...d, ...discards]);
       addLog("🔥 Fame", `${festLabel}: added Fame card "${picked.name}".`);
     }
     setFameDrawModal(null);
@@ -6697,7 +7047,9 @@ export default function Headliners() {
   // v197.12: "Reputation" (sec_3) — the security leader can play artists 1 Fame lower
   // than normal. Returns the effective Fame requirement for a specific player+artist.
   const effectiveArtistFame = (artist, pid) => {
-    const reduction = hasInfraReward(pid, "sec_3") ? 1 : 0;
+    let reduction = hasInfraReward(pid, "sec_3") ? 1 : 0;
+    // v199.224: Spring Thaw season card gives a global 1-Fame discount on all bookings.
+    if (currentSeasonCardIs("SPR_FAME_DISCOUNT")) reduction += 1;
     return Math.max(0, (artist?.fame || 0) - reduction);
   };
   // Same idea as canAffordArtist but with sec_3 applied. Callers pass pid so we know
@@ -7938,6 +8290,8 @@ export default function Headliners() {
     const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
     setSeasonEndScoring(null);
     if (isGameEnd) {
+      // v199.224: score end-of-Summer objectives/bonuses before computing final totals.
+      scoreEndOfSeason("summer");
       // v199.13 bugfix: previously this read playerDataRef at modal-close time. In some
       // games the ref was stale (or the season-end bonus setPlayerData hadn't flushed in
       // time), so computeTicketsForPlayer returned 0 for everyone — the game-over
@@ -8082,9 +8436,13 @@ export default function Headliners() {
     // Transition to the next season.
     const nextSeason = season === "autumn" ? "winter" : season === "winter" ? "spring" : season === "spring" ? "summer" : null;
     if (nextSeason) {
+      // v199.224: score end-of-current-season objectives/bonuses BEFORE switching.
+      scoreEndOfSeason(season);
       setQuickYearSeason(nextSeason);
       quickYearSeasonRef.current = nextSeason;
       addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
+      // v199.224: draw and reveal the new season's card.
+      setTimeout(() => revealSeasonCard(nextSeason), 250);
       // v199.49: draw the shared seasonal objective for the new season (Winter/Spring
       // only — Summer uses each Legendary's own signature). Hidden until drawn.
       if (nextSeason === "winter" || nextSeason === "spring") {
@@ -13130,6 +13488,8 @@ export default function Headliners() {
     // Update the tracker for the next play
     setLastArtistByPid(prev => ({ ...prev, [pid]: artist }));
     setLastArtistPid(pid);
+    // v199.224: hook season-card tracking for book actions.
+    setTimeout(() => trackBookAction(pid, artist), 60);
 
     // v126+: Genre-match headliner bonus. When an artist is booked into the headliner slot
     // (3rd artist) via the genre-match rule (rather than paying amenities), any bonus effect
@@ -13914,6 +14274,8 @@ export default function Headliners() {
       setQuickYearSeason("autumn");
       quickYearSeasonRef.current = "autumn";
       setQuickYearTurnsTaken(0);
+      // v199.224: reveal the Autumn season card after a brief delay.
+      setTimeout(() => revealSeasonCard("autumn"), 600);
       // v199.6: draw 9 agents from the 15-agent HOTLINE_AGENT_POOL. ONE shared pool for the
       // whole game, visible to all players. Within a season, each agent can only be assigned
       // to one player (seasonAgentsTaken tracks who's gone). At each season boundary, all 9
@@ -15511,6 +15873,8 @@ export default function Headliners() {
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
     setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
     sfx.placeAmenity();
+    // v199.224: season-card tracking for amenity placements (Autumn Groundwork objective).
+    setTimeout(() => trackAmenityPlaced(currentPlayerId), 110);
     // v199.11 bug fix: in Quick Play with Fame-tier scaling, don't end the turn here if
     // the player still has picks left to make. The caller (handleDiePick / sec_1 branch
     // / field-picker / sec1 modal confirm) decrements qyPicksLeftRef AFTER this returns
@@ -15580,6 +15944,8 @@ export default function Headliners() {
           addLog(currentPlayer.festivalName, `picked the 🎪 Stage die → opened new stage "${sName}"`);
           showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
           sfx.placeStage && sfx.placeStage();
+          // v199.224: season-card tracking for stage opens (Autumn Expansion objective).
+          setTimeout(() => trackStageOpened(currentPlayerId), 100);
         } else {
           // At max stages — fall back to +1 Fame so the pick isn't wasted.
           logFameGain(currentPlayerId, 1, "Stage die (at max stages → Fame)");
@@ -16171,6 +16537,8 @@ export default function Headliners() {
   const finishDraw2 = (picks) => {
     // v199.32: Favours now go to HAND like regular artists (no auto-token).
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
+    // v199.224: season-card tracking for draws (Autumn Scouting objective).
+    if (picks && picks.length > 0) setTimeout(() => trackArtistDrawn(currentPlayerId, picks.length), 50);
     picks.forEach(pick => {
       if (!pick) return;
       if (pick.isFavour) {
@@ -16378,6 +16746,8 @@ export default function Headliners() {
       // X action..." effects on next player's booked artist can look it up.
       const _actionLabel = _wasBuild ? "build" : _wasBook ? "book" : _wasBrowse ? "browse" : null;
       if (_actionLabel) lastActionByPidRef.current = { ...lastActionByPidRef.current, [currentPlayerId]: _actionLabel };
+      // v199.224: season-card action tracking (Spring all-3-actions + Summer non-book bonus).
+      if (_actionLabel) trackActionTaken(currentPlayerId, _actionLabel);
       const _bookedArtist = opts.bookedArtist !== undefined ? opts.bookedArtist : (_wasBook ? selectedArtist?.artist : null);
       // v199.112: capture booked stage so FM_BOOK_ANOTHER (book on different stage) knows which to exclude.
       const _bookedStageIdx = opts.bookedStageIdx !== undefined ? opts.bookedStageIdx : (_wasBook ? selectedStageIdx : null);
@@ -20801,6 +21171,32 @@ export default function Headliners() {
                     : <span style={{ fontSize: 9, color: "#86efac", fontWeight: 600 }}>+1 🔥 to first</span>}
                 </div>
               )}
+              {/* v199.224: Season card display. Shows the drawn objective or bonus for this season, with per-player progress for counter-based objectives. */}
+              {(() => {
+                const sc = seasonCards?.[quickYearSeason];
+                if (!sc) return null;
+                const isObjective = sc.type === "objective";
+                const myProg = seasonProgress?.[currentPlayerId] || {};
+                let progLabel = "";
+                if (sc.id === "AUT_PLACE_3_AMEN") progLabel = `${Math.min(3, myProg.amenitiesPlacedSeason || 0)}/3 placed${myProg.objectiveAwarded ? " ✅" : ""}`;
+                else if (sc.id === "AUT_DRAW_3_ART") progLabel = `${Math.min(3, myProg.artistsDrawnSeason || 0)}/3 drawn${myProg.objectiveAwarded ? " ✅" : ""}`;
+                else if (sc.id === "AUT_STAGE_OPEN_2") progLabel = myProg.objectiveAwarded ? "2nd stage opened ✅" : "awaiting 2nd stage";
+                else if (sc.id === "WIN_FIRST_BOOK_FAME") progLabel = myProg.firstBookDone ? "+1 Fame claimed ✅" : "awaiting 1st book";
+                else if (sc.id === "SPR_ALL_3_ACTIONS") {
+                  const a = myProg.actionsTakenSet || {};
+                  const done = [a.build && "Build", a.book && "Book", a.browse && "Browse"].filter(Boolean);
+                  progLabel = done.length === 3 ? "all 3 taken ✅" : `${done.length}/3: ${done.join(", ") || "none yet"}`;
+                }
+                const cardColor = isObjective ? "#86efac" : "#60a5fa";
+                return <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: `${cardColor}15`, border: `1px solid ${cardColor}60` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: cardColor, textTransform: "uppercase", letterSpacing: 1 }}>{isObjective ? "📋 Objective" : "✨ Bonus"}</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#f1f5f9" }}>{sc.label}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.35 }}>{sc.desc}</div>
+                  {progLabel && <div style={{ fontSize: 9, color: cardColor, marginTop: 4, fontWeight: 700, fontStyle: "italic" }}>Your progress: {progLabel}</div>}
+                </div>;
+              })()}
             </div>;
           })() : <h3 style={{ color: "#c4b5fd", fontSize: 14, marginBottom: 12, letterSpacing: 2, textTransform: "uppercase" }}>Year {year} of {totalYears}</h3>}
           {/* v199.88: Objectives toggle — switches the sidebar between the default view
@@ -23701,6 +24097,37 @@ export default function Headliners() {
               </div>, document.body
             )}
 
+            {/* v199.224: Season card reveal modal — shows the drawn card at season start. */}
+            {seasonCardReveal && typeof document !== "undefined" && createPortal(
+              <div onClick={() => setSeasonCardReveal(null)} style={{
+                position: "fixed", inset: 0, background: "rgba(15,14,26,0.85)",
+                zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center",
+                padding: 16, animation: "fadeSlideIn 0.4s", cursor: "pointer",
+              }}>
+                <div onClick={e => e.stopPropagation()} style={{
+                  padding: 28, borderRadius: 18,
+                  background: `linear-gradient(135deg, ${seasonCardReveal.card.type === "objective" ? "rgba(34,197,94,0.3)" : "rgba(59,130,246,0.3)"}, rgba(30,27,75,0.95))`,
+                  border: `2px solid ${seasonCardReveal.card.type === "objective" ? "#86efac" : "#60a5fa"}`,
+                  boxShadow: `0 0 60px ${seasonCardReveal.card.type === "objective" ? "rgba(134,239,172,0.35)" : "rgba(96,165,250,0.35)"}`,
+                  maxWidth: 520, width: "100%", textAlign: "center", cursor: "default",
+                }}>
+                  <div style={{ fontSize: 11, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700, marginBottom: 6 }}>
+                    {QUICKYEAR_SEASON_EMOJI[seasonCardReveal.season]} {QUICKYEAR_SEASON_LABELS[seasonCardReveal.season]} Season Card
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: seasonCardReveal.card.type === "objective" ? "#86efac" : "#60a5fa", textTransform: "uppercase", letterSpacing: 2, marginBottom: 10 }}>
+                    {seasonCardReveal.card.type === "objective" ? "📋 Objective" : "✨ Bonus"}
+                  </div>
+                  <h2 style={{ color: "#f1f5f9", fontSize: 28, fontWeight: 900, margin: "8px 0 14px", letterSpacing: 1 }}>{seasonCardReveal.card.label}</h2>
+                  <p style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.5, margin: "0 0 20px" }}>{seasonCardReveal.card.desc}</p>
+                  <button onClick={() => setSeasonCardReveal(null)} style={{
+                    padding: "10px 24px", borderRadius: 8, border: "none", cursor: "pointer",
+                    background: seasonCardReveal.card.type === "objective" ? "#16a34a" : "#2563eb",
+                    color: "#fff", fontSize: 13, fontWeight: 700, letterSpacing: 1,
+                  }}>Begin Season →</button>
+                </div>
+              </div>,
+              document.body
+            )}
             {/* v199.95: Fame card draw-3-pick-1 modal. Opens when a human gains Fame
                 (microtrend claim or Fame die). Player picks 1 of 3 drawn cards; the
                 other 2 go to the Fame discard pile. */}
