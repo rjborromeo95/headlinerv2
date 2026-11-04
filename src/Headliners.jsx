@@ -3076,7 +3076,81 @@ export default function Headliners() {
   const seasonCardsRef = useRef({ autumn: null, winter: null, spring: null, summer: null });
   // v199.225: per-player tally of tickets earned from THIS season's objective/bonus card. Reset at each season boundary; snapshotted to history when the season ends so the season-end breakdown can split "season-card tickets" from "artist tickets".
   const seasonCardTicketsRef = useRef({});
+  // v199.226: per-player tally of headliner BONUS tickets this season. Bonus = extra tickets granted for being the 3rd (headliner) slot on a stage, over and above the artist's base ticket value.
+  const seasonHeadlinerBonusRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
+
+  // v199.226: build the step sequence when the game ends in Quick Play.
+  useEffect(() => {
+    if (phase !== "gameOver" || gameMode !== "quickYear") return;
+    if (calcSteps) return; // already built
+    const hist = quickYearHistoryRef.current || quickYearHistory || {};
+    const steps = [];
+    const seasons = [
+      { key: "autumn", emoji: "🍂", label: "Autumn", color: "#f97316" },
+      { key: "winter", emoji: "❄️", label: "Winter", color: "#60a5fa" },
+      { key: "spring", emoji: "🌸", label: "Spring", color: "#86efac" },
+      { key: "summer", emoji: "☀️", label: "Summer", color: "#fcd34d" },
+    ];
+    seasons.forEach(s => {
+      // Step: objectives/bonuses + base artist tickets this season
+      const baseDeltas = {};
+      (players || []).forEach(p => {
+        const seasonHist = hist[p.id]?.[s.key] || {};
+        baseDeltas[p.id] = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
+      });
+      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, deltas: baseDeltas });
+      // Step: headliner bonus tickets this season
+      const headlinerDeltas = {};
+      (players || []).forEach(p => {
+        const seasonHist = hist[p.id]?.[s.key] || {};
+        headlinerDeltas[p.id] = seasonHist.headlinerBonusTickets || 0;
+      });
+      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, deltas: headlinerDeltas });
+    });
+    // Artist effects (game-end bonuses from artist cards)
+    const artistEffDeltas = {};
+    (players || []).forEach(p => {
+      try { artistEffDeltas[p.id] = (computeArtistGameEndBonuses(p.id)?.total) || 0; } catch { artistEffDeltas[p.id] = 0; }
+    });
+    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", deltas: artistEffDeltas });
+    // Game-end power tickets (Fame cards + Legendary Lineup etc.)
+    const powerDeltas = {};
+    (players || []).forEach(p => {
+      try { powerDeltas[p.id] = (computeFameCardEndGameTickets(p.id)?.total) || 0; } catch { powerDeltas[p.id] = 0; }
+    });
+    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", deltas: powerDeltas });
+    // Initialize totals at 0.
+    const initTotals = {};
+    (players || []).forEach(p => { initTotals[p.id] = 0; });
+    setCalcTotals(initTotals);
+    setCalcStep(0);
+    setCalcDone(false);
+    setCalcSteps(steps);
+  }, [phase, gameMode]);
+
+  // v199.226: advance the calculator step-by-step.
+  useEffect(() => {
+    if (phase !== "gameOver" || gameMode !== "quickYear") return;
+    if (!calcSteps || calcDone) return;
+    if (calcStep >= calcSteps.length) {
+      setCalcDone(true);
+      return;
+    }
+    const nextStep = calcStep;
+    const timer = setTimeout(() => {
+      const stepData = calcSteps[nextStep];
+      setCalcTotals(prev => {
+        const next = { ...prev };
+        Object.keys(stepData.deltas).forEach(pid => {
+          next[pid] = (next[pid] || 0) + (stepData.deltas[pid] || 0);
+        });
+        return next;
+      });
+      setCalcStep(s => s + 1);
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [calcStep, calcSteps, calcDone, phase, gameMode]);
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
   const setSeasonProgress = _guardSetter("setSeasonProgress", _rawSetSeasonProgress);
@@ -3085,6 +3159,18 @@ export default function Headliners() {
   // Season card reveal modal.
   const [seasonCardReveal, _rawSetSeasonCardReveal] = useState(null);
   const setSeasonCardReveal = _guardSetter("setSeasonCardReveal", _rawSetSeasonCardReveal);
+  // v199.226: end-game ticket calculator state. Animates through each contribution to the final total, one step at a time, before revealing the leaderboard.
+  //   step: 0 = not started, 1..N = animating N-th step, N+1 = done
+  //   totals: { pid: running_total }
+  //   steps: array of { label, emoji, color, deltas: { pid: amount } } (built once on gameOver entry)
+  const [calcStep, _rawSetCalcStep] = useState(0);
+  const setCalcStep = _guardSetter("setCalcStep", _rawSetCalcStep);
+  const [calcTotals, _rawSetCalcTotals] = useState({});
+  const setCalcTotals = _guardSetter("setCalcTotals", _rawSetCalcTotals);
+  const [calcSteps, _rawSetCalcSteps] = useState(null);
+  const setCalcSteps = _guardSetter("setCalcSteps", _rawSetCalcSteps);
+  const [calcDone, _rawSetCalcDone] = useState(false);
+  const setCalcDone = _guardSetter("setCalcDone", _rawSetCalcDone);
   const quickYearSeasonRef = useRef("autumn");
   useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
@@ -3628,6 +3714,7 @@ export default function Headliners() {
     seasonProgressRef.current = fresh;
     setSeasonProgress(fresh);
     seasonCardTicketsRef.current = freshTickets;
+    seasonHeadlinerBonusRef.current = { ...freshTickets };
   };
   // Add N tickets to this season's "card tickets" tally for the player. Also suppresses the floating popup so the player doesn't see the exact amount — the breakdown appears in the end-of-season summary.
   const addSeasonCardTickets = (pid, n) => {
@@ -7945,13 +8032,18 @@ export default function Headliners() {
       const artistsThisSeason = (seasonCountersRef.current[s.pid]?.plays) || 0;
       histUpdate[s.pid] = { ...(histUpdate[s.pid] || {}) };
       // v199.225: split this season's ticket delta into "season-card tickets" (from the drawn objective/bonus) and "artist tickets" (everything else — artists on stages, plays, legendary rewards, etc.).
+      // v199.226: further split artist tickets into base (regular slot value) + headliner bonus (the extra from being in the headliner slot).
       const seasonCardTickets = seasonCardTicketsRef.current?.[s.pid] || 0;
+      const headlinerBonusTickets = seasonHeadlinerBonusRef.current?.[s.pid] || 0;
       const artistTickets = Math.max(0, ticketsThisSeason - seasonCardTickets);
+      const baseArtistTickets = Math.max(0, artistTickets - headlinerBonusTickets);
       histUpdate[s.pid][season] = {
         fame, fameDelta: fame - snapFame,
         ticketsThisSeason,
         seasonCardTickets,
         artistTickets,
+        baseArtistTickets,
+        headlinerBonusTickets,
         artistsThisSeason,
         totalFame: fame,
         totalTickets,
@@ -13434,6 +13526,16 @@ export default function Headliners() {
     const isHeadliner = slotCount === 3;
     const sName = (pd.stageNames || [])[stageIdx] || `Stage ${stageIdx + 1}`;
     const festival = players.find(p => p.id === pid)?.festivalName;
+    // v199.226: if this is a headliner booking in Quick Play, record the bonus portion of the ticket award. Headliner slot doubles base tickets, so the "bonus" = artist.tickets.
+    if (isHeadliner && gameModeRef.current === "quickYear") {
+      const bonus = artist.tickets || 0;
+      if (bonus > 0) {
+        seasonHeadlinerBonusRef.current = {
+          ...seasonHeadlinerBonusRef.current,
+          [pid]: (seasonHeadlinerBonusRef.current[pid] || 0) + bonus,
+        };
+      }
+    }
 
     // v154: identity hook. Fires for every normal play (special-guest path calls the
     // hook separately with viaSpecialGuest=true). `stageBecameFull` = this play made
@@ -25359,7 +25461,7 @@ export default function Headliners() {
           ) : (
             <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14, fontStyle: "italic" }}>Win Condition: <strong style={{ color: "#fbbf24" }}>{condLabel}</strong></p>
           )}
-          {winnerRow && <div style={{ marginBottom: 20 }}>
+          {winnerRow && (gameMode !== "quickYear" || calcDone) && <div style={{ marginBottom: 20 }}>
             <p style={{ color: "#fbbf24", fontSize: 22, fontWeight: 700, margin: "8px 0 4px" }}>{winnerRow.player.festivalName} Wins!</p>
             <p style={{ color: "#60a5fa", fontSize: 13, margin: 0 }}>
               {gameMode === "quickYear" ? `${winnerRow.total.toLocaleString()} tickets sold at the festival` : (<>
@@ -25369,9 +25471,62 @@ export default function Headliners() {
               </>)}
             </p>
           </div>}
+          {/* v199.226: ticket calculator — animates through each contribution to the final ticket count before revealing the leaderboard. Shows step label + per-player running totals. */}
+          {gameMode === "quickYear" && calcSteps && !calcDone && (
+            <div style={{ marginTop: 20, marginBottom: 20, padding: 20, borderRadius: 16, background: "rgba(15,14,26,0.65)", border: "1px solid #2a2a4a" }}>
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>Calculating Festival Totals</div>
+                <div style={{ color: calcSteps[Math.min(calcStep, calcSteps.length - 1)]?.color || "#fbbf24", fontSize: 18, fontWeight: 800, marginTop: 6, minHeight: 28 }}>
+                  {calcStep < calcSteps.length ? calcSteps[calcStep].label : "Tallying…"}
+                </div>
+                <div style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>
+                  Step {Math.min(calcStep + 1, calcSteps.length)} of {calcSteps.length}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {players.map(p => {
+                  const total = calcTotals[p.id] || 0;
+                  const pendingDelta = calcStep < calcSteps.length ? (calcSteps[calcStep]?.deltas?.[p.id] || 0) : 0;
+                  return (
+                    <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1.3fr 0.6fr 1fr", gap: 10, alignItems: "center", padding: "10px 14px", borderRadius: 10, background: "rgba(20,18,34,0.7)", border: "1px solid #2a2a4a" }}>
+                      <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
+                      <div style={{ textAlign: "center", color: pendingDelta > 0 ? "#86efac" : "#475569", fontWeight: 800, fontSize: 14, animation: pendingDelta > 0 ? "fadeSlideIn 0.4s" : "none" }}>
+                        {pendingDelta > 0 ? `+${pendingDelta}` : "—"}
+                      </div>
+                      <div style={{ textAlign: "right", color: "#fcd34d", fontWeight: 900, fontSize: 24, fontVariantNumeric: "tabular-nums", transition: "color 0.3s" }}>
+                        {total.toLocaleString()} 🎟️
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ textAlign: "center", marginTop: 14 }}>
+                <button
+                  onClick={() => {
+                    // Skip to end: apply all remaining steps immediately.
+                    if (!calcSteps) return;
+                    setCalcTotals(prev => {
+                      const next = { ...prev };
+                      for (let i = calcStep; i < calcSteps.length; i++) {
+                        Object.keys(calcSteps[i].deltas).forEach(pid => {
+                          next[pid] = (next[pid] || 0) + (calcSteps[i].deltas[pid] || 0);
+                        });
+                      }
+                      return next;
+                    });
+                    setCalcStep(calcSteps.length);
+                    setCalcDone(true);
+                  }}
+                  style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600, letterSpacing: 1 }}
+                >
+                  Skip →
+                </button>
+              </div>
+            </div>
+          )}
           {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
               per-year columns (there's only one year). Classic keeps the full per-year grid. */}
-          {gameMode === "quickYear" ? (
+          {gameMode === "quickYear" && calcDone ? (
             /* v199.24: per-season breakdown. Each player gets a row block showing their
                performance each season (Autumn/Winter/Spring/Summer) side-by-side, plus a
                bold TOTAL column on the right. For each season: tickets scored + artists
@@ -25474,7 +25629,7 @@ export default function Headliners() {
               })}
               <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Each season shows the change this season with the running total in parens: tickets, artists played, and Fame. Winner = highest ticket count at festival close.</p>
             </div>
-          ) : (
+          ) : gameMode !== "quickYear" ? (
             <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left", borderRadius: 12, background: "rgba(20,18,34,0.6)", border: "1px solid rgba(124,58,237,0.35)", padding: 12 }}>
               <div style={{ display: "grid", gridTemplateColumns: "auto 1fr repeat(4, minmax(48px, 1fr)) minmax(60px, auto) minmax(50px, auto) minmax(70px, auto)", gap: 6, alignItems: "center", fontSize: 12 }}>
                 <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, fontSize: 9 }}>#</div>
@@ -25497,7 +25652,7 @@ export default function Headliners() {
               </div>
               <p style={{ color: "#64748b", fontSize: 10, margin: "10px 2px 0", fontStyle: "italic" }}>Highlighted column decides the winner under the active condition. Other columns show how you would have ranked under the alternatives.</p>
             </div>
-          )}
+          ) : null}
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={exportGameData} style={{ ...bs, padding: "12px 20px", fontSize: 14 }}>📊 Download Game Data</button>
             <button onClick={() => {
