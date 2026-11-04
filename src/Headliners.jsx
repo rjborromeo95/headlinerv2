@@ -641,32 +641,32 @@ const LINEUP_GENRE_DECK = ["Pop","Pop","Pop","Rock","Rock","Rock","Hip Hop","Hip
 // ═══════════════════════════════════════════════════════════════════
 const SEASON_CARDS = {
   autumn: [
-    { id: "AUT_STAGE_OPEN_2", season: "autumn", type: "objective", label: "Expansion",       desc: "Score 3 bonus tickets the first time you open a second stage this season." },
-    { id: "AUT_PLACE_3_AMEN", season: "autumn", type: "objective", label: "Groundwork",      desc: "Place 3 amenities this season to immediately gain 1 Fame." },
-    { id: "AUT_DRAW_3_ART",   season: "autumn", type: "objective", label: "Scouting",        desc: "Draw 3 artists this season to immediately gain 1 Fame." },
-    { id: "AUT_BOOKED_BONUS", season: "autumn", type: "bonus",     label: "Festival Buzz",   desc: "Artists booked this season are worth +4 tickets each (scored at game end)." },
-    { id: "AUT_END_FAME",     season: "autumn", type: "bonus",     label: "Audience Warmth", desc: "At the end of Autumn, all players gain 1 Fame." },
+    { id: "AUT_STAGE_OPEN_2", season: "autumn", type: "objective", label: "Building for the Future", desc: "Sell 3 tickets when you open a second stage." },
+    { id: "AUT_PLACE_3_AMEN", season: "autumn", type: "objective", label: "Support Local Businesses", desc: "Place 3 amenities to gain 1 Fame." },
+    { id: "AUT_DRAW_3_ART",   season: "autumn", type: "objective", label: "Talent ID",                desc: "Draw 3 artists this season to gain 1 Fame." },
+    { id: "AUT_BOOKED_BONUS", season: "autumn", type: "bonus",     label: "Early Bird Tickets",      desc: "Artists booked this season are worth +4 tickets." },
+    { id: "AUT_END_FAME",     season: "autumn", type: "bonus",     label: "Cult Following",          desc: "At the end of this season, gain 1 Fame." },
   ],
   winter: [
-    { id: "WIN_CHOOSE_4",         season: "winter", type: "bonus",     label: "Winter Planning",  desc: "Draw 4 Fame cards to choose from this season instead of 3." },
-    { id: "WIN_FIRST_BOOK_FAME",  season: "winter", type: "bonus",     label: "Opening Weekend",  desc: "The first time each player books an artist this season, they gain 1 Fame." },
-    { id: "WIN_HAND_5_PLUS",      season: "winter", type: "objective", label: "Deep Roster",      desc: "Finish Winter with more than 5 artists in your hand to sell 5 tickets." },
-    { id: "WIN_AMENITIES_4_PLUS", season: "winter", type: "objective", label: "Winter Prep",      desc: "Finish Winter with more than 4 amenities in your festival to sell 5 tickets." },
-    { id: "WIN_HAND_1T_PER",      season: "winter", type: "bonus",     label: "Pre-Sale",         desc: "At the end of Winter, sell 1 ticket for each artist in your hand." },
+    { id: "WIN_CHOOSE_4",         season: "winter", type: "bonus",     label: "Schmoozing",           desc: "Draw 4 Fame cards instead of 3." },
+    { id: "WIN_FIRST_BOOK_FAME",  season: "winter", type: "bonus",     label: "Making a Statement",   desc: "The first time you book an artist this season, gain 1 Fame." },
+    { id: "WIN_HAND_5_PLUS",      season: "winter", type: "objective", label: "Hold Your Cards Close",desc: "Finish Winter with more than 6 artists in your hand to sell 5 tickets." },
+    { id: "WIN_AMENITIES_4_PLUS", season: "winter", type: "objective", label: "Keep Your Head Down",  desc: "Finish Winter with more than 5 amenities in your festival to sell 5 tickets." },
+    { id: "WIN_HAND_1T_PER",      season: "winter", type: "bonus",     label: "Generate a Buzz",      desc: "Sell 1 ticket for each artist in your hand at the end of the season." },
   ],
   spring: [
-    { id: "SPR_ALL_3_ACTIONS", season: "spring", type: "objective", label: "Versatile Operator", desc: "If you take Build, Book AND Browse at least once this season, sell 5 bonus tickets." },
-    { id: "SPR_FULL_STAGES",   season: "spring", type: "objective", label: "Completion",         desc: "Sell 3 bonus tickets per full stage you own at the end of Spring." },
-    { id: "SPR_FAME_DISCOUNT", season: "spring", type: "bonus",     label: "Spring Thaw",        desc: "All artists may be booked with a 1 Fame discount this season (amenities still required)." },
-    { id: "SPR_AMEN_SETS",     season: "spring", type: "objective", label: "Infrastructure Grid",desc: "Sell 6 bonus tickets per set of 4 amenities in your festival at end of Spring." },
-    { id: "SPR_END_FAME",      season: "spring", type: "bonus",     label: "Spring Renewal",     desc: "At the end of Spring, all players gain 1 Fame." },
+    { id: "SPR_ALL_3_ACTIONS", season: "spring", type: "objective", label: "Get Down to Business",    desc: "If you build, book and browse this season, sell 5 tickets." },
+    { id: "SPR_FULL_STAGES",   season: "spring", type: "objective", label: "Convince the Masses",     desc: "Sell 3 bonus tickets per full stage you own at the end of Spring." },
+    { id: "SPR_FAME_DISCOUNT", season: "spring", type: "bonus",     label: "Playing for Exposure",    desc: "All artists may be booked with a 1 Fame discount this season (amenities still required)." },
+    { id: "SPR_AMEN_SETS",     season: "spring", type: "objective", label: "Planning to Perfection",  desc: "Sell 6 bonus tickets per set of 4 amenities in your festival at end of Spring." },
+    { id: "SPR_END_FAME",      season: "spring", type: "bonus",     label: "Influencer Marketing",    desc: "At the end of Spring, all players gain 1 Fame." },
   ],
   summer: [
-    { id: "SUM_PLUS_STAGE",          season: "summer", type: "bonus",     label: "Festival Expansion", desc: "At the start of Summer, each player opens a new stage. Players already at 3 stages gain 1 Fame instead." },
-    { id: "SUM_SECURITY_GTE_STAGES", season: "summer", type: "objective", label: "Keep the Peace",     desc: "If you finish Summer with at least as many security as stages, sell 6 bonus tickets." },
-    { id: "SUM_DECK_FLIP",           season: "summer", type: "bonus",     label: "Open Books",         desc: "The top card of the artist deck is revealed face-up this season." },
-    { id: "SUM_FINAL_TURN_BOOK",     season: "summer", type: "objective", label: "Grand Finale",       desc: "Play an artist on the final turn of Summer for 6 bonus tickets." },
-    { id: "SUM_NON_BOOK_2",          season: "summer", type: "bonus",     label: "Extras Sales",       desc: "Sell 2 bonus tickets each turn you don't take the Book action this season." },
+    { id: "SUM_PLUS_STAGE",          season: "summer", type: "bonus",     label: "Government Bursary",        desc: "At the start of this season, each player opens a new stage. Players already at 3 stages gain 1 Fame instead." },
+    { id: "SUM_SECURITY_GTE_STAGES", season: "summer", type: "objective", label: "Keep the Peace",            desc: "Finish with at least as many security as stages for 6 tickets." },
+    { id: "SUM_DECK_FLIP",           season: "summer", type: "bonus",     label: "Well-Connected",            desc: "The top card of the artist deck is revealed face-up this season." },
+    { id: "SUM_FINAL_TURN_BOOK",     season: "summer", type: "objective", label: "Finish Strong",             desc: "Play an artist on the final turn of summer for 6 bonus tickets." },
+    { id: "SUM_NON_BOOK_2",          season: "summer", type: "bonus",     label: "What We Have is Good Enough", desc: "Sell 2 tickets each turn you don't take the book action this season." },
   ],
 };
 function drawSeasonCard(season) {
@@ -3074,6 +3074,8 @@ export default function Headliners() {
   const [seasonCards, _rawSetSeasonCards] = useState({ autumn: null, winter: null, spring: null, summer: null });
   const setSeasonCards = _guardSetter("setSeasonCards", _rawSetSeasonCards);
   const seasonCardsRef = useRef({ autumn: null, winter: null, spring: null, summer: null });
+  // v199.225: per-player tally of tickets earned from THIS season's objective/bonus card. Reset at each season boundary; snapshotted to history when the season ends so the season-end breakdown can split "season-card tickets" from "artist tickets".
+  const seasonCardTicketsRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
@@ -3608,6 +3610,7 @@ export default function Headliners() {
   // Reset all players' per-season progress at the start of a new season.
   const resetSeasonProgress = () => {
     const fresh = {};
+    const freshTickets = {};
     (players || []).forEach(p => {
       fresh[p.id] = {
         amenitiesPlacedSeason: 0,
@@ -3620,9 +3623,19 @@ export default function Headliners() {
         bonusTicketsEarnedSeason: 0,
         objectiveAwarded: false,
       };
+      freshTickets[p.id] = 0;
     });
     seasonProgressRef.current = fresh;
     setSeasonProgress(fresh);
+    seasonCardTicketsRef.current = freshTickets;
+  };
+  // Add N tickets to this season's "card tickets" tally for the player. Also suppresses the floating popup so the player doesn't see the exact amount — the breakdown appears in the end-of-season summary.
+  const addSeasonCardTickets = (pid, n) => {
+    if (!pid || !n) return;
+    seasonCardTicketsRef.current = {
+      ...seasonCardTicketsRef.current,
+      [pid]: (seasonCardTicketsRef.current[pid] || 0) + n,
+    };
   };
 
   // Draw a card for the given season, store it, and apply immediate effects.
@@ -3732,9 +3745,10 @@ export default function Headliners() {
     if (stageCount === 2) {
       const updated = { ...prog, objectiveAwarded: true, stageOpenedSeason: true };
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 3 } }));
+      addSeasonCardTickets(pid, 3);
       const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
-      addLog("📋 Season Objective", `${festName}: ✅ Expansion met — opened 2nd stage → +3 tickets.`);
-      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ +3 🎟️ (season)", "#86efac");
+      addLog("📋 Season Objective", `${festName}: ✅ ${seasonCardsRef.current?.[quickYearSeasonRef.current]?.label || "objective"} met — opened 2nd stage.`);
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ Objective met", "#86efac");
       setTimeout(() => recalcTickets(), 50);
       const nextProgress = { ...seasonProgressRef.current, [pid]: updated };
       seasonProgressRef.current = nextProgress;
@@ -3756,9 +3770,9 @@ export default function Headliners() {
     const curCard = seasonCardsRef.current?.[quickYearSeasonRef.current];
     if (curCard?.id === "SUM_NON_BOOK_2" && actionKind && actionKind !== "book") {
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 2 } }));
+      addSeasonCardTickets(pid, 2);
       const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
-      addLog("✨ Season Bonus", `${festName}: Extras Sales — +2 🎟️ (${actionKind}).`);
-      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✨ +2 🎟️", "#60a5fa");
+      addLog("✨ Season Bonus", `${festName}: ${curCard.label} — bonus tickets banked (${actionKind}).`);
       setTimeout(() => recalcTickets(), 50);
     }
   };
@@ -3780,8 +3794,8 @@ export default function Headliners() {
     // Autumn: +4 tickets per booked artist (banked to a counter, applied on booking).
     if (curCard?.id === "AUT_BOOKED_BONUS") {
       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 4 } }));
-      addLog("✨ Season Bonus", `${festName}: Festival Buzz — +4 🎟️ for this booking.`);
-      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✨ +4 🎟️", "#60a5fa");
+      addSeasonCardTickets(pid, 4);
+      addLog("✨ Season Bonus", `${festName}: ${curCard.label} — bonus tickets banked.`);
       setTimeout(() => recalcTickets(), 50);
     }
     // Summer: +6 tickets if this is the last turn of the game.
@@ -3794,8 +3808,9 @@ export default function Headliners() {
       if (!anyPlayerHasMoreTurns && !updated.finalTurnBookDone) {
         updated.finalTurnBookDone = true;
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid].bonusTickets || 0) + 6 } }));
-        addLog("📋 Season Objective", `${festName}: ✅ Grand Finale met — booked on final turn → +6 tickets.`);
-        if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ +6 🎟️", "#86efac");
+        addSeasonCardTickets(pid, 6);
+        addLog("📋 Season Objective", `${festName}: ✅ ${curCard.label} met — booked on final turn.`);
+        if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("✅ Objective met", "#86efac");
         setTimeout(() => recalcTickets(), 50);
       }
     }
@@ -3826,13 +3841,13 @@ export default function Headliners() {
         }
         case "WIN_HAND_5_PLUS": {
           const handSize = (pd.hand || []).length;
-          if (handSize > 5) { bonusTix = 5; reason = `${curCard.label} (${handSize} in hand)`; }
+          if (handSize > 6) { bonusTix = 5; reason = `${curCard.label} (${handSize} in hand)`; }
           break;
         }
         case "WIN_AMENITIES_4_PLUS": {
           const am = pd.amenities || {};
           const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
-          if (total > 4) { bonusTix = 5; reason = `${curCard.label} (${total} amenities)`; }
+          if (total > 5) { bonusTix = 5; reason = `${curCard.label} (${total} amenities)`; }
           break;
         }
         case "WIN_HAND_1T_PER": {
@@ -3868,8 +3883,8 @@ export default function Headliners() {
       }
       if (bonusTix > 0) {
         setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], bonusTickets: (prev[pid].bonusTickets || 0) + bonusTix } }));
+        addSeasonCardTickets(pid, bonusTix);
         addLog("🏁 Season End", `${festName}: ${reason} → +${bonusTix} tickets.`);
-        if (!p.isAI) showFloatingBonus(`🏁 +${bonusTix} 🎟️`, "#fbbf24");
       }
       if (fameGain > 0) {
         setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (prev[pid].baseFame || 0) + fameGain) } }));
@@ -7849,6 +7864,11 @@ export default function Headliners() {
   // player builds much faster, their compounding grows accordingly. Hotline agents (Nancy,
   // Barry, Wanda, Marla) create catch-up moments; Hotline is now the primary variance lever.
   const runQuickYearSeasonEnd = (season, isGameEnd, nextPlayerIdx) => {
+    // v199.224/v199.225: fire end-of-season objective/bonus scoring BEFORE the history
+    // snapshot below, so the per-season totals in the game-over leaderboard include the
+    // card's contribution. seasonCardTicketsRef has been tallying all season — adding the
+    // end-of-season bonus here completes the picture for this season.
+    scoreEndOfSeason(season);
     const currentPD = playerDataRef.current || playerData;
     // v199.132: compute per-player END-card ticket DELTA for this season (currentTally
     // − snapshot from last close). Apply the delta to bonusTickets so it flows into the
@@ -7924,9 +7944,14 @@ export default function Headliners() {
       const ticketsThisSeason = Math.max(0, totalTickets - prevTotal);
       const artistsThisSeason = (seasonCountersRef.current[s.pid]?.plays) || 0;
       histUpdate[s.pid] = { ...(histUpdate[s.pid] || {}) };
+      // v199.225: split this season's ticket delta into "season-card tickets" (from the drawn objective/bonus) and "artist tickets" (everything else — artists on stages, plays, legendary rewards, etc.).
+      const seasonCardTickets = seasonCardTicketsRef.current?.[s.pid] || 0;
+      const artistTickets = Math.max(0, ticketsThisSeason - seasonCardTickets);
       histUpdate[s.pid][season] = {
         fame, fameDelta: fame - snapFame,
         ticketsThisSeason,
+        seasonCardTickets,
+        artistTickets,
         artistsThisSeason,
         totalFame: fame,
         totalTickets,
@@ -8290,8 +8315,6 @@ export default function Headliners() {
     const { season, isGameEnd, nextPlayerIdx } = seasonEndScoring;
     setSeasonEndScoring(null);
     if (isGameEnd) {
-      // v199.224: score end-of-Summer objectives/bonuses before computing final totals.
-      scoreEndOfSeason("summer");
       // v199.13 bugfix: previously this read playerDataRef at modal-close time. In some
       // games the ref was stale (or the season-end bonus setPlayerData hadn't flushed in
       // time), so computeTicketsForPlayer returned 0 for everyone — the game-over
@@ -8436,8 +8459,6 @@ export default function Headliners() {
     // Transition to the next season.
     const nextSeason = season === "autumn" ? "winter" : season === "winter" ? "spring" : season === "spring" ? "summer" : null;
     if (nextSeason) {
-      // v199.224: score end-of-current-season objectives/bonuses BEFORE switching.
-      scoreEndOfSeason(season);
       setQuickYearSeason(nextSeason);
       quickYearSeasonRef.current = nextSeason;
       addLogH(`${QUICKYEAR_SEASON_EMOJI[nextSeason]} ${QUICKYEAR_SEASON_LABELS[nextSeason]} Begins`, "year");
@@ -19653,6 +19674,9 @@ export default function Headliners() {
           const fameDelta = fame - snapFame;
           const artistsThisSeason = (seasonCountersRef.current[s.pid]?.plays) || 0;
           const ticketsThisSeason = s.bonus || 0;
+          // v199.225: split into season-card tickets + artist tickets for this season.
+          const seasonCardTickets = seasonCardTicketsRef.current?.[s.pid] || 0;
+          const artistTickets = Math.max(0, ticketsThisSeason - seasonCardTickets);
           return {
             ...s,
             total: pd.tickets || 0,
@@ -19661,6 +19685,8 @@ export default function Headliners() {
             fameDelta,
             artistsThisSeason,
             ticketsThisSeason,
+            seasonCardTickets,
+            artistTickets,
           };
         }).sort((a, b) => b.total - a.total);
         const nextSeasonLabel = season === "autumn" ? "Winter" : season === "winter" ? "Spring" : season === "spring" ? "Summer" : null;
@@ -19801,7 +19827,13 @@ export default function Headliners() {
                       <div style={{ color: "#64748b", fontSize: 9, marginTop: 2 }}>on stages: {r.artistsCumulative}</div>
                     </div>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ color: r.ticketsThisSeason > 0 ? "#86efac" : "#64748b", fontWeight: 800, fontSize: 15 }}>{r.ticketsThisSeason > 0 ? `+${r.ticketsThisSeason}` : "—"}</div>
+                      {r.ticketsThisSeason > 0 ? (
+                        <div style={{ color: "#86efac", fontWeight: 800, fontSize: 15 }} title="Season-card tickets + artist tickets">
+                          {r.seasonCardTickets || 0} <span style={{ color: "#64748b", fontWeight: 600 }}>+</span> {r.artistTickets || 0}
+                        </div>
+                      ) : (
+                        <div style={{ color: "#64748b", fontWeight: 800, fontSize: 15 }}>—</div>
+                      )}
                       <div style={{ color: "#64748b", fontSize: 9, marginTop: 2 }}>total: {r.total.toLocaleString()}</div>
                     </div>
                   </div>
@@ -25424,7 +25456,7 @@ export default function Headliners() {
                             <div style={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, fontSize: 9, marginBottom: 3 }}>{QUICKYEAR_SEASON_EMOJI[sKey]} {QUICKYEAR_SEASON_LABELS[sKey]}</div>
                             {sData ? (
                               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                                <div style={{ color: "#86efac", fontWeight: 700 }}>🎟️ +{sData.ticketsThisSeason} <span style={{ color: "#64748b", fontWeight: 500 }}>({sData.totalTickets || 0})</span></div>
+                                <div style={{ color: "#86efac", fontWeight: 700 }} title="Season-card tickets + artist tickets (cumulative total)">🎟️ {sData.seasonCardTickets != null ? `${sData.seasonCardTickets} + ${sData.artistTickets || 0}` : `+${sData.ticketsThisSeason}`} <span style={{ color: "#64748b", fontWeight: 500 }}>({sData.totalTickets || 0})</span></div>
                                 <div style={{ color: "#c4b5fd" }}>🎤 +{sData.artistsThisSeason} <span style={{ color: "#64748b" }}>({sData.totalArtists || 0})</span></div>
                                 <div style={{ color: sData.fameDelta > 0 ? "#86efac" : sData.fameDelta < 0 ? "#f87171" : "#64748b" }}>
                                   🔥 {sData.fameDelta > 0 ? `+${sData.fameDelta}` : sData.fameDelta < 0 ? sData.fameDelta : "—"} <span style={{ color: "#64748b" }}>({sData.fame})</span>
