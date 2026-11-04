@@ -3079,78 +3079,7 @@ export default function Headliners() {
   // v199.226: per-player tally of headliner BONUS tickets this season. Bonus = extra tickets granted for being the 3rd (headliner) slot on a stage, over and above the artist's base ticket value.
   const seasonHeadlinerBonusRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
-
-  // v199.226: build the step sequence when the game ends in Quick Play.
-  useEffect(() => {
-    if (phase !== "gameOver" || gameMode !== "quickYear") return;
-    if (calcSteps) return; // already built
-    const hist = quickYearHistoryRef.current || quickYearHistory || {};
-    const steps = [];
-    const seasons = [
-      { key: "autumn", emoji: "🍂", label: "Autumn", color: "#f97316" },
-      { key: "winter", emoji: "❄️", label: "Winter", color: "#60a5fa" },
-      { key: "spring", emoji: "🌸", label: "Spring", color: "#86efac" },
-      { key: "summer", emoji: "☀️", label: "Summer", color: "#fcd34d" },
-    ];
-    seasons.forEach(s => {
-      // Step: objectives/bonuses + base artist tickets this season
-      const baseDeltas = {};
-      (players || []).forEach(p => {
-        const seasonHist = hist[p.id]?.[s.key] || {};
-        baseDeltas[p.id] = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
-      });
-      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, deltas: baseDeltas });
-      // Step: headliner bonus tickets this season
-      const headlinerDeltas = {};
-      (players || []).forEach(p => {
-        const seasonHist = hist[p.id]?.[s.key] || {};
-        headlinerDeltas[p.id] = seasonHist.headlinerBonusTickets || 0;
-      });
-      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, deltas: headlinerDeltas });
-    });
-    // Artist effects (game-end bonuses from artist cards)
-    const artistEffDeltas = {};
-    (players || []).forEach(p => {
-      try { artistEffDeltas[p.id] = (computeArtistGameEndBonuses(p.id)?.total) || 0; } catch { artistEffDeltas[p.id] = 0; }
-    });
-    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", deltas: artistEffDeltas });
-    // Game-end power tickets (Fame cards + Legendary Lineup etc.)
-    const powerDeltas = {};
-    (players || []).forEach(p => {
-      try { powerDeltas[p.id] = (computeFameCardEndGameTickets(p.id)?.total) || 0; } catch { powerDeltas[p.id] = 0; }
-    });
-    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", deltas: powerDeltas });
-    // Initialize totals at 0.
-    const initTotals = {};
-    (players || []).forEach(p => { initTotals[p.id] = 0; });
-    setCalcTotals(initTotals);
-    setCalcStep(0);
-    setCalcDone(false);
-    setCalcSteps(steps);
-  }, [phase, gameMode]);
-
-  // v199.226: advance the calculator step-by-step.
-  useEffect(() => {
-    if (phase !== "gameOver" || gameMode !== "quickYear") return;
-    if (!calcSteps || calcDone) return;
-    if (calcStep >= calcSteps.length) {
-      setCalcDone(true);
-      return;
-    }
-    const nextStep = calcStep;
-    const timer = setTimeout(() => {
-      const stepData = calcSteps[nextStep];
-      setCalcTotals(prev => {
-        const next = { ...prev };
-        Object.keys(stepData.deltas).forEach(pid => {
-          next[pid] = (next[pid] || 0) + (stepData.deltas[pid] || 0);
-        });
-        return next;
-      });
-      setCalcStep(s => s + 1);
-    }, 1800);
-    return () => clearTimeout(timer);
-  }, [calcStep, calcSteps, calcDone, phase, gameMode]);
+  // v199.227: calc effects moved below computeArtistGameEndBonuses + computeFameCardEndGameTickets to avoid TDZ error.
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
   const setSeasonProgress = _guardSetter("setSeasonProgress", _rawSetSeasonProgress);
@@ -4388,6 +4317,73 @@ export default function Headliners() {
     }));
     return { total, lines };
   };
+
+  // v199.226/v199.227: build the ticket-calculator step sequence when the game ends in Quick Play.
+  useEffect(() => {
+    if (phase !== "gameOver" || gameMode !== "quickYear") return;
+    if (calcSteps) return; // already built
+    const hist = quickYearHistoryRef.current || quickYearHistory || {};
+    const steps = [];
+    const seasons = [
+      { key: "autumn", emoji: "🍂", label: "Autumn", color: "#f97316" },
+      { key: "winter", emoji: "❄️", label: "Winter", color: "#60a5fa" },
+      { key: "spring", emoji: "🌸", label: "Spring", color: "#86efac" },
+      { key: "summer", emoji: "☀️", label: "Summer", color: "#fcd34d" },
+    ];
+    seasons.forEach(s => {
+      const baseDeltas = {};
+      (players || []).forEach(p => {
+        const seasonHist = hist[p.id]?.[s.key] || {};
+        baseDeltas[p.id] = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
+      });
+      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, deltas: baseDeltas });
+      const headlinerDeltas = {};
+      (players || []).forEach(p => {
+        const seasonHist = hist[p.id]?.[s.key] || {};
+        headlinerDeltas[p.id] = seasonHist.headlinerBonusTickets || 0;
+      });
+      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, deltas: headlinerDeltas });
+    });
+    const artistEffDeltas = {};
+    (players || []).forEach(p => {
+      try { artistEffDeltas[p.id] = (computeArtistGameEndBonuses(p.id)?.total) || 0; } catch { artistEffDeltas[p.id] = 0; }
+    });
+    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", deltas: artistEffDeltas });
+    const powerDeltas = {};
+    (players || []).forEach(p => {
+      try { powerDeltas[p.id] = (computeFameCardEndGameTickets(p.id)?.total) || 0; } catch { powerDeltas[p.id] = 0; }
+    });
+    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", deltas: powerDeltas });
+    const initTotals = {};
+    (players || []).forEach(p => { initTotals[p.id] = 0; });
+    setCalcTotals(initTotals);
+    setCalcStep(0);
+    setCalcDone(false);
+    setCalcSteps(steps);
+  }, [phase, gameMode]);
+
+  // v199.226/v199.227: advance the calculator step-by-step.
+  useEffect(() => {
+    if (phase !== "gameOver" || gameMode !== "quickYear") return;
+    if (!calcSteps || calcDone) return;
+    if (calcStep >= calcSteps.length) {
+      setCalcDone(true);
+      return;
+    }
+    const nextStep = calcStep;
+    const timer = setTimeout(() => {
+      const stepData = calcSteps[nextStep];
+      setCalcTotals(prev => {
+        const next = { ...prev };
+        Object.keys(stepData.deltas).forEach(pid => {
+          next[pid] = (next[pid] || 0) + (stepData.deltas[pid] || 0);
+        });
+        return next;
+      });
+      setCalcStep(s => s + 1);
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [calcStep, calcSteps, calcDone, phase, gameMode]);
 
   // v199.106: live ticket tally for a single game-end Fame card (shown in brackets on
   // the Fame tray so players can see how well each End card is paying off right now).
