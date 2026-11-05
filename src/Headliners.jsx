@@ -4001,7 +4001,13 @@ export default function Headliners() {
         addLog("🏁 Season End", `${festName}: ${reason} → +${bonusTix} tickets.`);
       }
       if (fameGain > 0) {
-        setPlayerData(prev => ({ ...prev, [pid]: { ...prev[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (prev[pid].baseFame || 0) + fameGain) } }));
+        // v199.236: write BOTH baseFame AND pd.fame so the HUD doesn't lag until the next recalc.
+        setPlayerData(prev => {
+          const cur = prev[pid] || {};
+          const newBase = Math.min(FAME_CAP_QUICKYEAR, (cur.baseFame || 0) + fameGain);
+          const newFame = Math.min(FAME_CAP_QUICKYEAR, (cur.fame || cur.baseFame || 0) + fameGain);
+          return { ...prev, [pid]: { ...cur, baseFame: newBase, fame: newFame } };
+        });
         setTimeout(() => logFameGain(pid, fameGain, `🏁 ${reason}`), 50);
         addLog("🏁 Season End", `${festName}: ${reason} → +${fameGain} Fame.`);
         if (!p.isAI) showFloatingBonus(`🏁 +${fameGain} Fame`, "#fbbf24");
@@ -6019,7 +6025,9 @@ export default function Headliners() {
         if (player?.isAI) {
           // AI: random order (no real heuristic for predicting usefulness).
           const shuffled = [...cards].sort(() => Math.random() - 0.5);
-          setArtistDeck([...shuffled, ...curDeck.slice(take)]);
+          const newDeck = [...shuffled, ...curDeck.slice(take)];
+          setArtistDeck(newDeck);
+          artistDeckRef.current = newDeck; // v199.236: sync ref so same-turn draws see the new order.
           addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → peeked top ${take} and rearranged.`);
         } else {
           setFameDeckPeekPicker({ pid, cardName: card.name, cards, orderedIdx: [] });
@@ -11776,10 +11784,17 @@ export default function Headliners() {
     m = t.match(/^gain\s+(\d+)\s+fame$/);
     if (m) {
       const n = parseInt(m[1], 10);
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid]?.baseFame || 0) + n) } }));
+      // v199.236: write BOTH baseFame and pd.fame atomically. Without updating pd.fame here, the HUD can display a stale fame value until the next unrelated recalcTickets fires. Schedule a recalc too as belt-and-braces.
+      setPlayerData(p => {
+        const prev = p[pid] || {};
+        const newBase = Math.min(FAME_CAP_QUICKYEAR, (prev.baseFame || 0) + n);
+        const newFame = Math.min(FAME_CAP_QUICKYEAR, (prev.fame || prev.baseFame || 0) + n);
+        return { ...p, [pid]: { ...prev, baseFame: newBase, fame: newFame } };
+      });
       logFameGain(pid, n, `Artist: ${artist.name}`);
       addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} → +${n} Fame.`);
       if (!isAI) showFloatingBonus(`🔥 +${n} Fame`, "#f59e0b");
+      setTimeout(() => recalcTickets(), 30);
       return true;
     }
 
@@ -16334,11 +16349,19 @@ export default function Headliners() {
       microtrendsRef.current = newTrends;
       setMicrotrends(newTrends);
       logFameGain(pid, fameGain, "Matching a Council Incentive");
-      setPlayerData(p => ({ ...p, [pid]: {
-        ...p[pid],
-        baseFame: Math.min(gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX, (p[pid].baseFame || 0) + fameGain),
-        microtrendsCompletedCount: (p[pid].microtrendsCompletedCount || 0) + 1,
-      } }));
+      // v199.236: write both baseFame AND pd.fame so the HUD stays in sync without waiting for the next recalc.
+      setPlayerData(p => {
+        const prev = p[pid] || {};
+        const cap = gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
+        const newBase = Math.min(cap, (prev.baseFame || 0) + fameGain);
+        const newFame = Math.min(cap, (prev.fame || prev.baseFame || 0) + fameGain);
+        return { ...p, [pid]: {
+          ...prev,
+          baseFame: newBase,
+          fame: newFame,
+          microtrendsCompletedCount: (prev.microtrendsCompletedCount || 0) + 1,
+        } };
+      });
       addLog("🏛️ Council Incentive", `${festival} matched "${AMENITY_LABELS[amenityType]}" → +${fameGain} 🔥 Fame!`);
       setLastActionFor(pid, `claimed the ${AMENITY_LABELS[amenityType]} Council Incentive (+${fameGain} Fame)`);
       bumpYearlyStat(pid, "microtrends"); bumpSeasonStat(pid, "microtrendsClaimed", 1); if (gameModeRef.current === "quickYear") { const next = { ...(seasonCountersRef.current || {}) }; next[pid] = { ...(next[pid] || { microtrends: 0, amenities: 0 }), microtrends: ((next[pid]?.microtrends) || 0) + 1 }; setSeasonCounters(next); seasonCountersRef.current = next; checkSeasonObjective("microtrend_count", pid); checkLegendaryContracts(pid); }
@@ -24114,6 +24137,8 @@ export default function Headliners() {
                           const belowTop = curDeck.slice(fameDeckPeekPicker.cards.length);
                           const newDeck = [...topN, ...belowTop];
                           setArtistDeck(newDeck);
+                          // v199.236: sync the ref synchronously so draws on the same turn see the rearranged order (was reading stale pre-reorder deck via artistDeckRef).
+                          artistDeckRef.current = newDeck;
                           addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${fameDeckPeekPicker.cardName}" → rearranged top ${topN.length} of deck.`);
                           showFloatingBonus(`🎸 Deck rearranged`, "#c084fc");
                           markFameCardUsedThisTurn(fameDeckPeekPicker.pid, (playerFameCardsRef.current[fameDeckPeekPicker.pid] || []).find(c => c.name === fameDeckPeekPicker.cardName)?.instanceId || "");
