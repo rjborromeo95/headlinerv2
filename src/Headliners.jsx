@@ -1004,17 +1004,15 @@ function genreGradient(genre) {
   if (gs.length === 1) return GENRE_COLORS[gs[0]] || "#6b7280";
   return `linear-gradient(135deg, ${GENRE_COLORS[gs[0]] || "#6b7280"} 50%, ${GENRE_COLORS[gs[1]] || "#6b7280"} 50%)`;
 }
-function canAffordArtist(artist, pd, fameReduction = 0) {
+function canAffordArtist(artist, pd, fameReduction = 0, amenityDiscount = 0) {
   // v199.35: Favour cards are not artists — they can't be "afforded" or played onto stages.
   if (artist && artist.isFavour) return false;
   if (pd.fame < Math.max(0, artist.fame - fameReduction)) return false;
   const a = pd.amenities || {};
   // v199.1: Hattie Haggler flag — artist can be played with up to _hattieDiscount
-  // fewer total amenity units across all four types. e.g. a flagged artist needing
-  // 1 campsite + 1 security + 1 catering (3 total) can be played with only 1 of those
-  // if the discount is 2. For un-flagged artists (discount = 0), this collapses to the
-  // original strict per-type check (total shortfall must be 0).
-  const discount = artist._hattieDiscount || 0;
+  // fewer total amenity units across all four types.
+  // v199.239: amenityDiscount parameter stacks on top (used for Negotiated Rates / FM_PASS_AMEN_DISCOUNT).
+  const discount = (artist._hattieDiscount || 0) + (amenityDiscount || 0);
   const shortfall = Math.max(0, (artist.campCost || 0) - (a.campsite || 0)) +
                     Math.max(0, (artist.securityCost || 0) - (a.security || 0)) +
                     Math.max(0, (artist.cateringCost || 0) - (a.catering || 0)) +
@@ -1062,30 +1060,27 @@ function hasGenreMatchBonusAvailable(artist, pd) {
 
 // Is booking this artist onto this specific stage legal? Combines fame check + open-slot
 // check + (amenities OR genre-match).
-function canBookArtistOnStage(artist, pd, stageIdx) {
+function canBookArtistOnStage(artist, pd, stageIdx, amenityDiscount = 0) {
   if (!artist || !pd) return false;
-  // v199.35: Favour cards are not artists — they can never be booked onto stages
-  // directly. They're hand-held currency: cashed in via the Favour picker (which
-  // plays a MATCHING pool artist, not the Favour itself) or converted to Legendary
-  // tokens at game end.
+  // v199.35: Favour cards are not artists — they can never be booked onto stages directly.
   if (artist.isFavour) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const sa = (pd.stageArtists || [])[stageIdx];
   if (!sa || sa.length >= 3) return false;
-  if (canAffordArtist(artist, pd)) return true;
+  // v199.239: amenityDiscount (Negotiated Rates) forwarded through.
+  if (canAffordArtist(artist, pd, 0, amenityDiscount)) return true;
   return canBookHeadlinerViaGenre(artist, pd, stageIdx);
 }
 
 // Is there ANY stage where this artist could be booked (amenities or genre-match)?
 // Used to gate pre-select UI actions.
-function canBookArtistAnywhere(artist, pd) {
+function canBookArtistAnywhere(artist, pd, amenityDiscount = 0) {
   if (!artist || !pd) return false;
-  // v199.35: Favours are not bookable artists — see canBookArtistOnStage.
   if (artist.isFavour) return false;
   if ((pd.fame || 0) < (artist.fame || 0)) return false;
   const openStages = (pd.stageArtists || []).map((sa, i) => sa.length < 3 ? i : -1).filter(i => i >= 0);
   if (openStages.length === 0) return false;
-  if (canAffordArtist(artist, pd)) return true;
+  if (canAffordArtist(artist, pd, 0, amenityDiscount)) return true;
   return openStages.some(si => canBookHeadlinerViaGenre(artist, pd, si));
 }
 
@@ -3105,6 +3100,8 @@ export default function Headliners() {
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
   // v199.235: hand-size watcher ref declared here; the watcher useEffect that uses it + trackArtistDrawn is moved below the trackArtistDrawn definition to avoid TDZ.
   const prevHandSizesRef = useRef({});
+  // v199.239: same pattern for amenity totals so Support Local Businesses (AUT_PLACE_3_AMEN) counts amenities from artist effects / Fame cards too.
+  const prevAmenityTotalsRef = useRef({});
   // v199.227: calc effects moved below computeArtistGameEndBonuses + computeFameCardEndGameTickets to avoid TDZ error.
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
@@ -3675,9 +3672,12 @@ export default function Headliners() {
     seasonCardTicketsRef.current = freshTickets;
     seasonHeadlinerBonusRef.current = { ...freshTickets };
     // v199.235: snapshot hand sizes so the watcher below only counts draws DURING this season.
+    // v199.239: same for amenity totals so Support Local Businesses counts placements WITHIN the season only.
     const pdSnap = playerDataRef.current || playerData || {};
     (players || []).forEach(p => {
       prevHandSizesRef.current[p.id] = (pdSnap[p.id]?.hand || []).length;
+      const fields = pdSnap[p.id]?.fields || [];
+      prevAmenityTotalsRef.current[p.id] = fields.reduce((sum, f) => sum + ((f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0)), 0);
     });
     // v199.229: ensure per-season log slots exist for each player for THIS season.
     const curSeason = quickYearSeasonRef.current || "autumn";
@@ -3812,21 +3812,33 @@ export default function Headliners() {
     setSeasonProgress(nextProgress);
   };
 
-  // v199.235 (moved v199.238 to escape TDZ): watch hand sizes across all players so draws from ANY source credit Scouting/Talent ID. Guarded by phase === "game" to skip initial setup and game-over state changes. Must be placed AFTER trackArtistDrawn's declaration so the minifier doesn't reorder access.
+  // v199.235 (moved v199.238 to escape TDZ): watch hand sizes AND amenity totals across all players. Credits Scouting/Talent ID for any draw and Support Local Businesses for any amenity placement regardless of source. Guarded by phase === "game" to skip initial setup and game-over state changes.
   useEffect(() => {
     if (phase !== "game" || gameMode !== "quickYear") return;
     Object.keys(playerData || {}).forEach(pid => {
-      const curSize = (playerData[pid]?.hand || []).length;
+      const pdCur = playerData[pid] || {};
+      // Hand-size watcher (Talent ID / Scouting).
+      const curSize = (pdCur.hand || []).length;
       const prevSize = prevHandSizesRef.current[pid];
       if (prevSize == null) {
         prevHandSizesRef.current[pid] = curSize;
-        return;
+      } else {
+        if (curSize > prevSize) trackArtistDrawn(pid, curSize - prevSize);
+        prevHandSizesRef.current[pid] = curSize;
       }
-      if (curSize > prevSize) {
-        const delta = curSize - prevSize;
-        trackArtistDrawn(pid, delta);
+      // Amenity-total watcher (Support Local Businesses / Groundwork). Uses summed field totals so field moves don't register as placements.
+      const fields = pdCur.fields || [];
+      const amTotal = fields.reduce((sum, f) => sum + ((f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0)), 0);
+      const prevAm = prevAmenityTotalsRef.current[pid];
+      if (prevAm == null) {
+        prevAmenityTotalsRef.current[pid] = amTotal;
+      } else {
+        if (amTotal > prevAm) {
+          const delta = amTotal - prevAm;
+          for (let i = 0; i < delta; i++) trackAmenityPlaced(pid);
+        }
+        prevAmenityTotalsRef.current[pid] = amTotal;
       }
-      prevHandSizesRef.current[pid] = curSize;
     });
   }, [playerData, phase, gameMode]);
 
@@ -3959,9 +3971,11 @@ export default function Headliners() {
           break;
         }
         case "WIN_AMENITIES_4_PLUS": {
-          const am = pd.amenities || {};
-          const total = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
-          if (total > 5) { bonusTix = 5; reason = `${curCard.label} (${total} amenities)`; }
+          // v199.240: sum directly from fields (source of truth). pd.amenities is a cached
+          // sum that may not reflect the latest state at season-scoring time.
+          const fieldsNow = pd.fields || [];
+          const total = fieldsNow.reduce((sum, f) => sum + ((f?.campsite || 0) + (f?.security || 0) + (f?.catering || 0) + (f?.portaloo || 0)), 0);
+          if (total >= 6) { bonusTix = 5; reason = `${curCard.label} (${total} amenities)`; }
           break;
         }
         case "WIN_HAND_1T_PER": {
@@ -16437,8 +16451,7 @@ export default function Headliners() {
     // Defer to next tick so the setPlayerData update has flushed to playerDataRef.
     setTimeout(() => checkContractsForPlayer(currentPlayerId, fieldIdx), 100);
     sfx.placeAmenity();
-    // v199.224: season-card tracking for amenity placements (Autumn Groundwork objective).
-    setTimeout(() => trackAmenityPlaced(currentPlayerId), 110);
+    // v199.239: no explicit trackAmenityPlaced — the amenity-total watcher effect catches every path (Build + artist effects + Fame cards).
     // v199.11 bug fix: in Quick Play with Fame-tier scaling, don't end the turn here if
     // the player still has picks left to make. The caller (handleDiePick / sec_1 branch
     // / field-picker / sec1 modal confirm) decrements qyPicksLeftRef AFTER this returns
@@ -16583,6 +16596,14 @@ export default function Headliners() {
     setDice(fresh);
     addLog("Dice", "Rerolled all amenity dice");
     grantCat1IfEligible(currentPlayerId, fresh);
+    // v199.240: Industry Hustle fires on plain dice reroll too (was only firing on Fame-card refresh).
+    const bonus = countPassiveFameCard(currentPlayerId, "passive_refresh_tix") * 2;
+    if (bonus > 0) {
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
+      addLog("🔥 Fame", `${currentPlayer.festivalName}: Industry Hustle → +${bonus} 🎟️ (dice reroll).`);
+      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
+    }
   };
   // v199.52: Fame 4+ once-per-turn dice re-roll. Costs no action — pure Fame-tier perk.
   const handleFameDiceRefresh = () => {
@@ -16804,9 +16825,9 @@ export default function Headliners() {
   // ─── Artist booking/reserving ───
   const handleBookFromPool = (idx) => {
     const artist = artistPool[idx];
-    // Widened gate (v124): allow if amenities cover OR if any open stage supports the
-    // genre-match headliner path. Per-stage validation happens in handleStageSelect.
-    if (!canBookArtistAnywhere(artist, currentPD)) return;
+    // v199.239: factor in Negotiated Rates passive discount.
+    const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
+    if (!canBookArtistAnywhere(artist, currentPD, amenDisc)) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "pool", poolIdx: idx }); setArtistAction("pickStage");
@@ -16820,16 +16841,19 @@ export default function Headliners() {
       return;
     }
     const artist = currentPD.hand[idx];
-    // canAffordArtistOrFree handles pending-effect free bookings; widen for genre-match too.
-    if (!(canAffordArtistOrFree(artist, currentPD) || canBookArtistAnywhere(artist, currentPD))) return;
+    // v199.239: factor in Negotiated Rates passive discount.
+    const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
+    if (!(canAffordArtistOrFree(artist, currentPD) || canBookArtistAnywhere(artist, currentPD, amenDisc))) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "hand", handIdx: idx }); setArtistAction("pickStage");
   };
   const handleBookFromDiscard = () => {
     if (discardPile.length === 0) return;
-    const artist = discardPile[discardPile.length - 1]; // top of discard
-    if (!canBookArtistAnywhere(artist, currentPD)) return;
+    const artist = discardPile[discardPile.length - 1];
+    // v199.239: factor in Negotiated Rates passive discount.
+    const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
+    if (!canBookArtistAnywhere(artist, currentPD, amenDisc)) return;
     const avail = currentPD.stages.map((_, i) => (currentPD.stageArtists?.[i] || []).length < 3 ? i : -1).filter(i => i >= 0);
     if (avail.length === 0) return;
     setSelectedArtist({ artist, source: "discard", discardIdx: discardPile.length - 1 }); setArtistAction("pickStage");
@@ -17053,6 +17077,15 @@ export default function Headliners() {
     const names = drawn.map(a => a.name).join(", ");
     addLog(currentPlayer.festivalName, `drew ${drawn.length} from deck (${names})`);
     setLastActionFor(currentPlayerId, `drew ${drawn.length} from the deck`);
+    // v199.240: Fan Base fires per deck-drawn card.
+    const perCard = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
+    if (perCard > 0 && drawn.length > 0) {
+      const bonus = perCard * drawn.length;
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
+      addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${bonus} 🎟️ (${drawn.length} from deck).`);
+      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
+    }
     finishDraw2(drawn);
   };
   const finishDraw2 = (picks) => {
@@ -17110,6 +17143,14 @@ export default function Headliners() {
       addLog(currentPlayer.festivalName, `drew ${card.name} from deck`);
       setLastActionFor(currentPlayerId, `drew ${card.name} from the deck`);
       trackGoalProgress(currentPlayerId, "artistsSigned");
+      // v199.240: Fan Base fires on direct deck pick in Quick Play.
+      const deckBonus = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
+      if (deckBonus > 0) {
+        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + deckBonus } }));
+        addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${deckBonus} 🎟️ (deck draw).`);
+        if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${deckBonus} 🎟️`, "#fbbf24");
+        setTimeout(() => recalcTickets(), 50);
+      }
       applyDrawArtistsBonus(currentPlayerId);
       // v199.45: bump draws counter + check Legendary contracts for draw_count objectives.
       const next = { ...(seasonCountersRef.current || {}) };
@@ -17202,9 +17243,9 @@ export default function Headliners() {
   const handleStageSelect = (stageIdx) => {
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
-    // v124: per-stage legality check. The selected stage must satisfy EITHER the amenity
-    // path or the genre-match headliner path. If neither, refuse with a targeted log line.
-    const stageEligible = canBookArtistOnStage(artist, currentPD, stageIdx);
+    // v124: per-stage legality check. v199.239: factor in Negotiated Rates passive discount.
+    const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
+    const stageEligible = canBookArtistOnStage(artist, currentPD, stageIdx, amenDisc);
     const pendingFreeAllowed = pendingEffect && pendingEffect.type === "signArtist" && pendingEffectPid === currentPlayerId;
     if (!stageEligible && !pendingFreeAllowed) {
       // Diagnose why for a helpful message
@@ -17216,8 +17257,9 @@ export default function Headliners() {
       showFloatingBonus(`Can't book on that stage`, "#ef4444");
       return;
     }
-    // Detect which path is being used (for logging only; booking treats them identically)
-    const usedGenrePath = !canAffordArtist(artist, currentPD, sec3Reduction(currentPlayerId)) && canBookHeadlinerViaGenre(artist, currentPD, stageIdx);
+    // Detect which path is being used (for logging only; booking treats them identically).
+    // v199.239: factor in amenityDiscount so the "genre" label doesn't incorrectly appear when Negotiated Rates covered a shortfall.
+    const usedGenrePath = !canAffordArtist(artist, currentPD, sec3Reduction(currentPlayerId), amenDisc) && canBookHeadlinerViaGenre(artist, currentPD, stageIdx);
     // Dupe-guard: before consuming the source (hand/pool/discard), check that no player —
     // including the current one — already has this artist on a stage. If we discover the dupe
     // only inside bookArtistToStage's setPlayerData updater, the splice has already happened
@@ -24853,8 +24895,7 @@ export default function Headliners() {
                     return <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {fields.map((f, fi) => {
                         const count = ((f && f.campsite) || 0) + ((f && f.security) || 0) + ((f && f.catering) || 0) + ((f && f.portaloo) || 0);
-                        const full = count >= 5;
-                        return <button key={fi} disabled={full} onClick={() => {
+                        return <button key={fi} onClick={() => {
                           const { pid, cardInstanceId, cardName, removeField, removeType, placeType } = rearrangePicker;
                           setPlayerData(p => {
                             let cur = p[pid] || {};
@@ -24868,13 +24909,13 @@ export default function Headliners() {
                           setRearrangePicker(null);
                         }} style={{
                           padding: "10px 14px", borderRadius: 8,
-                          border: "1px solid " + (full ? "#334155" : "#f472b6"),
-                          background: full ? "rgba(30,27,75,0.2)" : "rgba(131,24,67,0.4)",
-                          color: full ? "#64748b" : "#f3f4f6",
-                          cursor: full ? "not-allowed" : "pointer",
+                          border: "1px solid #f472b6",
+                          background: "rgba(131,24,67,0.4)",
+                          color: "#f3f4f6",
+                          cursor: "pointer",
                           textAlign: "left", fontWeight: 700,
                         }}>
-                          Field {fi + 1} ({count}/5) {full ? "— full" : ""}
+                          Field {fi + 1} ({count} amenities)
                         </button>;
                       })}
                     </div>;
