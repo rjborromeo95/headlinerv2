@@ -661,7 +661,7 @@ const SEASON_CARDS = {
   winter: [
     { id: "WIN_CHOOSE_4",         season: "winter", type: "bonus",     label: "Schmoozing",           desc: "Draw 4 Fame cards instead of 3." },
     { id: "WIN_FIRST_BOOK_FAME",  season: "winter", type: "bonus",     label: "Making a Statement",   desc: "The first time you book an artist this season, gain 1 Fame." },
-    { id: "WIN_HAND_5_PLUS",      season: "winter", type: "objective", label: "Hold Your Cards Close",desc: "Finish Winter with more than 6 artists in your hand to sell 5 tickets." },
+    { id: "WIN_HAND_5_PLUS",      season: "winter", type: "objective", label: "Hold Your Cards Close",desc: "Finish Winter with 6 or more cards in your hand to sell 5 tickets." },
     { id: "WIN_AMENITIES_4_PLUS", season: "winter", type: "objective", label: "Keep Your Head Down",  desc: "Finish Winter with more than 5 amenities in your festival to sell 5 tickets." },
     { id: "WIN_HAND_1T_PER",      season: "winter", type: "bonus",     label: "Generate a Buzz",      desc: "Sell 1 ticket for each artist in your hand at the end of the season." },
   ],
@@ -3780,8 +3780,18 @@ export default function Headliners() {
       updated.objectiveAwarded = true;
       const player = players.find(pl => pl.id === pid);
       const festName = player?.festivalName || "?";
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
-      setTimeout(() => logFameGain(pid, 1, "📋 Groundwork (3 amenities this season)"), 50);
+      // v199.242: atomic + synchronous fame update so the Fame-card-draw modal surfaces this turn.
+      setPlayerData(p => {
+        const prev = p[pid] || {};
+        const newBase = Math.min(FAME_CAP_QUICKYEAR, (prev.baseFame || 0) + 1);
+        const newFame = Math.min(FAME_CAP_QUICKYEAR, (prev.fame || prev.baseFame || 0) + 1);
+        return { ...p, [pid]: { ...prev, baseFame: newBase, fame: newFame } };
+      });
+      // v199.242: same synchronous fame-card draw pattern as trackArtistDrawn.
+      suppressFameCardDrawRef.current = true;
+      logFameGain(pid, 1, "📋 Groundwork (3 amenities this season)");
+      suppressFameCardDrawRef.current = false;
+      drawFameCardsForPlayer(pid, "📋 Groundwork objective");
       addLog("📋 Season Objective", `${festName}: ✅ Groundwork met — placed 3 amenities → +1 Fame.`);
       if (!player?.isAI) showFloatingBonus("✅ +1 Fame (season)", "#86efac");
     }
@@ -3802,8 +3812,18 @@ export default function Headliners() {
       updated.objectiveAwarded = true;
       const player = players.find(pl => pl.id === pid);
       const festName = player?.festivalName || "?";
-      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
-      setTimeout(() => logFameGain(pid, 1, "📋 Scouting (3 artists drawn this season)"), 50);
+      // v199.242: update baseFame + fame atomically, and call logFameGain SYNCHRONOUSLY so the Fame-card-draw modal opens while the player is still the active one (was being deferred past turn end, so the fame-card draw never surfaced).
+      setPlayerData(p => {
+        const prev = p[pid] || {};
+        const newBase = Math.min(FAME_CAP_QUICKYEAR, (prev.baseFame || 0) + 1);
+        const newFame = Math.min(FAME_CAP_QUICKYEAR, (prev.fame || prev.baseFame || 0) + 1);
+        return { ...p, [pid]: { ...prev, baseFame: newBase, fame: newFame } };
+      });
+      // v199.242: suppress logFameGain's internal 80ms fame-card draw and fire it ourselves, synchronously, so the modal opens before any subsequent state change moves currentPlayerId past this player.
+      suppressFameCardDrawRef.current = true;
+      logFameGain(pid, 1, "📋 Scouting (3 artists drawn this season)");
+      suppressFameCardDrawRef.current = false;
+      drawFameCardsForPlayer(pid, "📋 Scouting objective");
       addLog("📋 Season Objective", `${festName}: ✅ Scouting met — drew 3 artists → +1 Fame.`);
       if (!player?.isAI) showFloatingBonus("✅ +1 Fame (season)", "#86efac");
     }
@@ -3966,8 +3986,11 @@ export default function Headliners() {
           break;
         }
         case "WIN_HAND_5_PLUS": {
-          const handSize = (pd.hand || []).length;
-          if (handSize > 6) { bonusTix = 5; reason = `${curCard.label} (${handSize} in hand)`; }
+          // v199.243: loosened from >6 to >=6 so "6 cards + favour" scenarios fire, and read via ref for freshness.
+          const handFresh = (playerDataRef.current?.[pid]?.hand) || pd.hand || [];
+          const handSize = handFresh.length;
+          console.log(`[SEASON END ${pid}] WIN_HAND_5_PLUS check: hand size ${handSize}`, handFresh.map(c => c?.name || "?"));
+          if (handSize >= 6) { bonusTix = 5; reason = `${curCard.label} (${handSize} in hand)`; }
           break;
         }
         case "WIN_AMENITIES_4_PLUS": {
@@ -5133,9 +5156,14 @@ export default function Headliners() {
           markFameCardUsedThisTurn(pid, card.instanceId);
           break;
         }
-        // v199.176: sa_place_amenity_from_die (season-active). Per-turn: open the amenity-die
-        // picker to grant 1 amenity from the die faces.
+        // v199.176: sa_place_amenity_from_die (season-active). Per-turn: open the amenity-die picker to grant 1 amenity from the die faces.
+        // v199.242: if the dice tray is empty when this fires, roll it so the player always has something to pick from (was leaving the player with a useless "Skip" as their only option).
         case "sa_place_amenity_from_die": {
+          if ((dice || []).length === 0) {
+            const fresh = rollDice();
+            setDice(fresh);
+            grantCat1IfEligible(pid, fresh);
+          }
           setFameAmenityPending({ pid, cardName: card.name, remaining: 1 });
           markFameCardUsedThisTurn(pid, card.instanceId);
           break;
@@ -16293,6 +16321,11 @@ export default function Headliners() {
   // TURN ACTIONS
   // ═══════════════════════════════════════════════════════════
   const handlePickAmenity = () => {
+    // v199.243: hard guard — if the current player is AI, human input must not drive their turn.
+    if (currentPlayer?.isAI) {
+      addLog("⚠️", `Input blocked: it's ${currentPlayer?.festivalName || "an AI"}'s turn (AI).`);
+      return;
+    }
     // v199.37/v199.58/v199.62/v199.83: Quick Play — clicking Build while already in Build
     // mode acts as a toggle: cancel the action if no picks have been consumed, otherwise
     // keep the current mode (user must complete remaining picks).
@@ -16471,6 +16504,8 @@ export default function Headliners() {
   };
 
   const handleDiePick = (idx, dv) => {
+    // v199.243: hard guard — AI turn human input lockout.
+    if (currentPlayer?.isAI) return;
     takeUndoSnapshot();
     if (dv === "fame") {
       // Fame die: gain +1 Fame this round, use turn, no placement
@@ -16671,6 +16706,11 @@ export default function Headliners() {
   // Picks remaining are SHARED between Book and Browse since both are artist actions.
   // v199.94: renamed handleBuyAction → handleBookAction for consistency with the UI label.
   const handleBookAction = () => {
+    // v199.243: hard guard — if the current player is AI, human input must not drive their turn.
+    if (currentPlayer?.isAI) {
+      addLog("⚠️", `Input blocked: it's ${currentPlayer?.festivalName || "an AI"}'s turn (AI).`);
+      return;
+    }
     if (turnAction === "artist") {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(curPd);
@@ -16704,6 +16744,11 @@ export default function Headliners() {
     setShowHand(true);
   };
   const handleBrowseAction = () => {
+    // v199.243: hard guard — if the current player is AI, human input must not drive their turn.
+    if (currentPlayer?.isAI) {
+      addLog("⚠️", `Input blocked: it's ${currentPlayer?.festivalName || "an AI"}'s turn (AI).`);
+      return;
+    }
     if (turnAction === "artist") {
       const curPd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
       const maxPicks = getFameArtistMax(curPd);
@@ -16829,6 +16874,8 @@ export default function Headliners() {
 
   // ─── Artist booking/reserving ───
   const handleBookFromPool = (idx) => {
+    // v199.243: AI guard.
+    if (currentPlayer?.isAI) return;
     const artist = artistPool[idx];
     // v199.239: factor in Negotiated Rates passive discount.
     const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
@@ -16838,6 +16885,8 @@ export default function Headliners() {
     setSelectedArtist({ artist, source: "pool", poolIdx: idx }); setArtistAction("pickStage");
   };
   const handleBookFromHand = (idx) => {
+    // v199.243: AI guard.
+    if (currentPlayer?.isAI) return;
     // v199.39: in Quick Play, an artist action is EITHER draws OR a hand book — not both.
     // If a draw already happened this action, hand-book is locked out.
     if (gameModeRef.current === "quickYear" && qyDrewThisActionRef.current) {
@@ -16854,6 +16903,8 @@ export default function Headliners() {
     setSelectedArtist({ artist, source: "hand", handIdx: idx }); setArtistAction("pickStage");
   };
   const handleBookFromDiscard = () => {
+    // v199.243: AI guard.
+    if (currentPlayer?.isAI) return;
     if (discardPile.length === 0) return;
     const artist = discardPile[discardPile.length - 1];
     // v199.239: factor in Negotiated Rates passive discount.
@@ -17246,6 +17297,8 @@ export default function Headliners() {
     completeAction();
   };
   const handleStageSelect = (stageIdx) => {
+    // v199.243: AI guard.
+    if (currentPlayer?.isAI) return;
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
     // v124: per-stage legality check. v199.239: factor in Negotiated Rates passive discount.
@@ -24682,8 +24735,26 @@ export default function Headliners() {
                 <div style={{ fontSize: 20 }}>🔥</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 11, color: "#fcd34d", fontWeight: 800, letterSpacing: 0.5 }}>Fame Card: {fameAmenityPending.cardName}</div>
-                  <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>Click an amenity die above to place it in your festival.</div>
+                  <div style={{ fontSize: 11, color: "#e9d5ff", marginTop: 2 }}>
+                    {(dice || []).length === 0
+                      ? "No amenity dice available — tap Refresh to roll."
+                      : "Click an amenity die above to place it in your festival."}
+                  </div>
                 </div>
+                {/* v199.242: Refresh button — lets the player roll the dice if the tray is empty, so they never get stuck with only Skip. */}
+                {(dice || []).length === 0 && (
+                  <button
+                    onClick={() => {
+                      const fresh = rollDice();
+                      setDice(fresh);
+                      grantCat1IfEligible(currentPlayerId, fresh);
+                      addLog("🎲", `${currentPlayer?.festivalName}: rolled amenity dice for "${fameAmenityPending.cardName}".`);
+                    }}
+                    style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#fbbf24", border: "1px solid #fbbf24", background: "rgba(251,191,36,0.1)", fontWeight: 700 }}
+                  >
+                    🎲 Refresh
+                  </button>
+                )}
                 <button
                   onClick={() => { addLog("🔥 Fame", `${currentPlayer?.festivalName}: skipped "${fameAmenityPending.cardName}" bonus amenity.`); setFameAmenityPending(null); }}
                   style={{ ...bs, fontSize: 10, padding: "6px 10px", color: "#cbd5e1", border: "1px solid #475569", background: "rgba(30,27,75,0.6)" }}
@@ -24743,27 +24814,24 @@ export default function Headliners() {
               </div>,
               document.body
             )}
-            {/* v199.234: Cycle Hand source picker (pool/deck). */}
+            {/* v199.234/v199.243: Cycle Hand source picker (pool/deck). "From Pool" now opens a sub-step showing ALL pool artists so the player picks which one; was auto-taking the top of pool. */}
             {cycleHandPicker && cycleHandPicker.step === "source" && typeof document !== "undefined" && createPortal(
               <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
                 <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.3))", border: "2px solid #fbbf24", boxShadow: "0 0 40px rgba(251,191,36,0.3)", maxWidth: 520, width: "100%" }}>
                   <div style={{ textAlign: "center", marginBottom: 16 }}>
                     <div style={{ fontSize: 10, color: "#fcd34d", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {cycleHandPicker.cardName}</div>
                     <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>Draw from where?</h2>
-                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Pool shows face-up. Deck is top card, face-down.</p>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Pool: pick any face-up artist. Deck: blind top-card draw.</p>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <button onClick={() => {
                       const poolHC = artistPoolRef.current || artistPool || [];
                       if (poolHC.length === 0) return;
-                      // Open pool-pick sub-step: let player see the pool (visible via normal UI). Pick top for simplicity.
-                      const drawnCard = poolHC[0];
-                      setArtistPool(prev => prev.filter((_, i) => i !== 0));
-                      setCycleHandPicker(p => ({ ...p, step: "discard", drawnCard, source: "pool" }));
+                      setCycleHandPicker(p => ({ ...p, step: "pickPool" }));
                     }} style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #a78bfa", background: "rgba(76,29,149,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>
                       <div style={{ fontSize: 22 }}>🪩</div>
                       <div style={{ fontSize: 13, marginTop: 4 }}>From Pool</div>
-                      <div style={{ fontSize: 10, color: "#c4b5fd", marginTop: 2 }}>Top of pool</div>
+                      <div style={{ fontSize: 10, color: "#c4b5fd", marginTop: 2 }}>Pick any artist</div>
                     </button>
                     <button onClick={() => {
                       const deckHC = artistDeckRef.current || artistDeck || [];
@@ -24779,6 +24847,36 @@ export default function Headliners() {
                   </div>
                   <div style={{ textAlign: "center", marginTop: 12 }}>
                     <button onClick={() => setCycleHandPicker(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.243: Cycle Hand — pool sub-picker. Shows all artists in the pool so the player picks WHICH one to draw. */}
+            {cycleHandPicker && cycleHandPicker.step === "pickPool" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.3))", border: "2px solid #a78bfa", boxShadow: "0 0 40px rgba(167,139,250,0.35)", maxWidth: 820, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {cycleHandPicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 2px" }}>Pick an artist from the pool</h2>
+                  </div>
+                  {(() => {
+                    const poolNow = artistPoolRef.current || artistPool || [];
+                    return <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+                      {poolNow.map((artist, i) => (
+                        <div key={i} onClick={() => {
+                          // Commit: remove from pool, move to discard step with this drawn card.
+                          setArtistPool(prev => prev.filter((_, idx) => idx !== i));
+                          setCycleHandPicker(p => ({ ...p, step: "discard", drawnCard: artist, source: "pool" }));
+                        }} style={{ cursor: "pointer" }}>
+                          <ArtistCard artist={artist} showCost small />
+                        </div>
+                      ))}
+                    </div>;
+                  })()}
+                  <div style={{ textAlign: "center", marginTop: 12, display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button onClick={() => setCycleHandPicker(p => ({ ...p, step: "source" }))} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>← Back</button>
+                    <button onClick={() => setCycleHandPicker(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
                   </div>
                 </div>
               </div>,
