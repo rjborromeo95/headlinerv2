@@ -5312,6 +5312,8 @@ export default function Headliners() {
     const newDeck = curDeck.slice(1);
     // Commit deck change outside any updater.
     setArtistDeck(newDeck);
+    // v199.245: Fan Base credit — every pickFameDrawFromDeck is a deck draw by that player.
+    creditFanBaseDeckDraw(picker.pid, 1);
     // Genre-match mode: blind draw, keep only if matches booked artist's genres.
     if (picker.mode === "genre_match" && picker.bookedArtist) {
       const bookedGenres = Array.isArray(picker.bookedArtist.genre) ? picker.bookedArtist.genre : [picker.bookedArtist.genre].filter(Boolean);
@@ -7610,6 +7612,19 @@ export default function Headliners() {
   const countPassiveFameCard = (pid, effect) => {
     const cards = playerFameCardsRef.current[pid] || [];
     return cards.filter(c => c && !c.disabled && c.category === "passive" && c.effect === effect).length;
+  };
+  // v199.245: credit Fan Base (passive_deck_draw_tix) for `count` deck-drawn cards. Call this from ANY site that draws from the artist deck — including artist effects like KAYTRANADA, Beastie Boys, Beabadoobee, Maroon 5, etc. — so the passive fires consistently.
+  const creditFanBaseDeckDraw = (pid, count) => {
+    if (!pid || !count || count <= 0) return;
+    const copies = countPassiveFameCard(pid, "passive_deck_draw_tix");
+    if (copies <= 0) return;
+    const bonus = copies * count;
+    setPlayerData(p => ({ ...p, [pid]: { ...p[pid], bonusTickets: (p[pid]?.bonusTickets || 0) + bonus } }));
+    const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
+    const player = players.find(pl => pl.id === pid);
+    addLog("🔥 Fame", `${festName}: Fan Base → +${bonus} 🎟️ (${count} from deck).`);
+    if (player && !player.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
+    setTimeout(() => recalcTickets(), 50);
   };
   const hasInfraReward = (pid, rewardId) => {
     if (!infraRewardsModeRef.current) return false;
@@ -11627,6 +11642,8 @@ export default function Headliners() {
         setArtistDeck(curDeck.slice(take));
         setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
         addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} drew ${drawn.map(a => a.name).join(", ")}.`);
+        // v199.245: Fan Base credit for AI deck draws from artist effects.
+        creditFanBaseDeckDraw(pid, take);
       } else {
         setFameDrawPicker({ pid, cardName: artist.name, remaining: n, picked: [], allowDeck: true });
         setPoolDrawerOpen(true);
@@ -17133,15 +17150,8 @@ export default function Headliners() {
     const names = drawn.map(a => a.name).join(", ");
     addLog(currentPlayer.festivalName, `drew ${drawn.length} from deck (${names})`);
     setLastActionFor(currentPlayerId, `drew ${drawn.length} from the deck`);
-    // v199.240: Fan Base fires per deck-drawn card.
-    const perCard = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
-    if (perCard > 0 && drawn.length > 0) {
-      const bonus = perCard * drawn.length;
-      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
-      addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${bonus} 🎟️ (${drawn.length} from deck).`);
-      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
-      setTimeout(() => recalcTickets(), 50);
-    }
+    // v199.245: Fan Base via shared helper.
+    creditFanBaseDeckDraw(currentPlayerId, drawn.length);
     finishDraw2(drawn);
   };
   const finishDraw2 = (picks) => {
@@ -17199,14 +17209,8 @@ export default function Headliners() {
       addLog(currentPlayer.festivalName, `drew ${card.name} from deck`);
       setLastActionFor(currentPlayerId, `drew ${card.name} from the deck`);
       trackGoalProgress(currentPlayerId, "artistsSigned");
-      // v199.240: Fan Base fires on direct deck pick in Quick Play.
-      const deckBonus = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
-      if (deckBonus > 0) {
-        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + deckBonus } }));
-        addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${deckBonus} 🎟️ (deck draw).`);
-        if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${deckBonus} 🎟️`, "#fbbf24");
-        setTimeout(() => recalcTickets(), 50);
-      }
+      // v199.245: Fan Base via shared helper.
+      creditFanBaseDeckDraw(currentPlayerId, 1);
       applyDrawArtistsBonus(currentPlayerId);
       // v199.45: bump draws counter + check Legendary contracts for draw_count objectives.
       const next = { ...(seasonCountersRef.current || {}) };
@@ -17247,13 +17251,8 @@ export default function Headliners() {
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, kept] } }));
     addLog(currentPlayer.festivalName, `drew ${kept.name} from deck`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
-    // v199.233: FM_PASS_DECK_DRAW ("Fan Base") — +1 ticket per copy on deck draw.
-    const deckBonus = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
-    if (deckBonus > 0) {
-      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + deckBonus } }));
-      addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${deckBonus} 🎟️ (deck draw).`);
-      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${deckBonus} 🎟️`, "#fbbf24");
-    }
+    // v199.245: Fan Base via shared helper.
+    creditFanBaseDeckDraw(currentPlayerId, 1);
     if (other && artistPool.length >= 1) {
       // Player must swap the unchosen card into a pool slot — bonus fires after swap concludes
       setDeckDrawnCard(other); // store the unchosen card
@@ -24858,6 +24857,7 @@ export default function Headliners() {
                       if (deckHC.length === 0) return;
                       const drawnCard = deckHC[0];
                       setArtistDeck(prev => prev.slice(1));
+                      creditFanBaseDeckDraw(cycleHandPicker.pid, 1); // v199.245
                       setCycleHandPicker(p => ({ ...p, step: "discard", drawnCard, source: "deck" }));
                     }} style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #60a5fa", background: "rgba(30,58,138,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>
                       <div style={{ fontSize: 22 }}>🂠</div>
@@ -25069,6 +25069,7 @@ export default function Headliners() {
                       setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), card] } }));
                       addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — peeked "${card.name}", drew it.`);
                       showFloatingBonus(`🔥 ${cardName}`, "#fbbf24");
+                      creditFanBaseDeckDraw(pid, 1); // v199.245
                       markFameCardUsedThisTurn(pid, cardInstanceId);
                       setScryPicker(null);
                     }} style={{ padding: "12px 10px", borderRadius: 10, border: "1px solid #4ade80", background: "rgba(22,101,52,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>📥 Draw it</button>
