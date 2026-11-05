@@ -89,7 +89,8 @@ const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f
 // "catering_or_portaloo" and "security_or_campsite" faces; added "stage" — picking a
 // stage die grants +1 stage progress toward opening the next stage (2 progress = 1
 // credit; progress also comes from microtrend claims).
-const DICE_OPTIONS = ["campsite", "portaloo", "security", "catering", "fame", "stage"];
+// v199.232: "stage" face replaced with "wild" — a free amenity-type choice (campsite/portaloo/security/catering). Stage opens now come from the Fame card draw as a persistent 4th choice.
+const DICE_OPTIONS = ["campsite", "portaloo", "security", "catering", "fame", "wild"];
 const TURNS_PER_YEAR = { 1: 6, 2: 7, 3: 8, 4: 9 };
 // v157: alternate "flat" schedule — every year is 6 turns. Toggled via the
 // flatTurnsMode state. Sim data (50 games × 3 players) showed the extra Y2/Y3
@@ -1427,11 +1428,12 @@ function DiceDisplay({ dice, onPick, disabled, onReroll, canReroll }) {
       {dice.map((d, i) => {
         const isFame = d === "fame";
         const isStage = d === "stage";
-        const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
-        const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
-        const borderColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : "#7c3aed";
-        const bg = isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)";
-        const textColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : "#e9d5ff";
+        const isWild = d === "wild";
+        const label = isFame ? "🔥" : isStage ? "🎪" : isWild ? "✨" : AMENITY_ICONS[d];
+        const sub = isFame ? "Fame" : isStage ? "Stage" : isWild ? "Wild" : AMENITY_LABELS[d];
+        const borderColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f472b6" : "#7c3aed";
+        const bg = isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : isWild ? "linear-gradient(135deg, #500724, #831843)" : "linear-gradient(135deg, #1e1b4b, #312e81)";
+        const textColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f9a8d4" : "#e9d5ff";
         return <button key={i} onClick={() => !disabled && onPick(i, d)} disabled={disabled} style={{
           width: 72, height: 80, borderRadius: 12, border: `2px solid ${borderColor}`,
           background: bg, color: textColor,
@@ -1555,6 +1557,7 @@ function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
   const diceLabel = (d) => {
     if (d === "fame") return "🔥";
     if (d === "stage") return "🎪";
+    if (d === "wild") return "✨";
     return AMENITY_ICONS[d] || d;
   };
 
@@ -1956,9 +1959,13 @@ function aiPickDie(dice, pd, preferredType, wantsStageProgress, wantsFameThisTur
       if (dice[i] === "stage") return { idx: i, type: "stage" };
     }
   }
-  // Wanted amenity face
+  // Wanted amenity face (or wild — treated as the wanted amenity)
   for (let i = 0; i < dice.length; i++) {
     if (dice[i] === wanted) return { idx: i, type: wanted };
+  }
+  // v199.232: wild is an any-amenity face — pick it when the wanted amenity isn't directly rolled.
+  for (let i = 0; i < dice.length; i++) {
+    if (dice[i] === "wild") return { idx: i, type: "wild" };
   }
   // Any amenity (not Fame, not Stage) — prefer amenities over Fame/Stage fallback
   for (let i = 0; i < dice.length; i++) {
@@ -4035,16 +4042,50 @@ export default function Headliners() {
     }
     // Then open modal or auto-pick.
     if (player && player.isAI) {
-      const pickIdx = Math.floor(Math.random() * choices.length);
-      // v199.176: stamp receivedInSeason so season_active cards know when to expire.
-      // Harmless on other categories; the field is only read by season_active logic.
-      const picked = { ...choices[pickIdx], receivedInSeason: quickYearSeasonRef.current };
-      const discards = choices.filter((_, i) => i !== pickIdx);
-      setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
-      setFameDiscardPile(d => [...d, ...discards]);
-      addLog("🔥 Fame", `${player.festivalName}: drew Fame card "${picked.name}" (auto-pick).`);
-      if (picked.trigger === "on_draw") {
-        setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
+      // v199.232: AI considers the "Open a Stage" 4th option. 35% chance to pick it when under max stages; never when at max.
+      const aiCurStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
+      const canPickStage = aiCurStages < QUICKYEAR_MAX_STAGES;
+      const pickStage = canPickStage && Math.random() < 0.35;
+      if (pickStage) {
+        const usedNames = (playerDataRef.current?.[pid]?.stageNames || playerData[pid]?.stageNames || []);
+        const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+        const sName = availNames[Math.floor(Math.random() * (availNames.length || 1))] || `Stage ${aiCurStages + 1}`;
+        const sColor = STAGE_COLORS[aiCurStages % STAGE_COLORS.length];
+        setPlayerData(p => ({
+          ...p,
+          [pid]: {
+            ...p[pid],
+            stages: [...(p[pid].stages || []), { fameRequired: 0 }],
+            stageArtists: [...(p[pid].stageArtists || []), []],
+            stageNames: [...(p[pid].stageNames || []), sName],
+            stageColors: [...(p[pid].stageColors || []), sColor],
+          }
+        }));
+        const marker = {
+          id: "FM_OPEN_STAGE_MARKER",
+          instanceId: `open-stage-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: "Opened Stage",
+          desc: "Stage opened via Fame draw. Tray slot spent.",
+          category: "immediate",
+          trigger: "on_draw",
+          disabled: true,
+          receivedInSeason: quickYearSeasonRef.current,
+        };
+        setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), marker] }));
+        setFameDiscardPile(d => [...d, ...choices]);
+        addLog("🔥 Fame", `${player.festivalName} 🤖: picked ✨ Open a Stage → "${sName}" (tray slot spent).`);
+        setTimeout(() => trackStageOpened(pid), 100);
+        setTimeout(() => recalcTickets(), 50);
+      } else {
+        const pickIdx = Math.floor(Math.random() * choices.length);
+        const picked = { ...choices[pickIdx], receivedInSeason: quickYearSeasonRef.current };
+        const discards = choices.filter((_, i) => i !== pickIdx);
+        setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), picked] }));
+        setFameDiscardPile(d => [...d, ...discards]);
+        addLog("🔥 Fame", `${player.festivalName}: drew Fame card "${picked.name}" (auto-pick).`);
+        if (picked.trigger === "on_draw") {
+          setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
+        }
       }
     } else {
       fameDrawInProgressRef.current = true;
@@ -4102,10 +4143,69 @@ export default function Headliners() {
       }, 120);
       return;
     }
-    // Single-pick path (original behavior).
-    // v199.176: stamp receivedInSeason for season_active expiry tracking.
-    // v199.222/v199.223: IMMEDIATE cards go to tray with disabled:true (takes a slot in
-    // spent state), rather than to discard. See multi-pick path above for rationale.
+    // Single-pick path (original behavior) — delegate to pickFameCardReal.
+    return pickFameCardReal(pid, cardIdx);
+  };
+
+  // v199.232: handle the "Open a Stage" 4th option in the Fame draw modal.
+  const pickFameStageOption = (pid) => {
+    if (!fameDrawModal || fameDrawModal.pid !== pid) return;
+    const festLabel = players.find(pl => pl.id === pid)?.festivalName || "?";
+    const curStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
+    let outcomeLabel = "";
+    if (curStages < QUICKYEAR_MAX_STAGES) {
+      const usedNames = (playerDataRef.current?.[pid]?.stageNames || playerData[pid]?.stageNames || []);
+      const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
+      const sName = availNames[Math.floor(Math.random() * (availNames.length || 1))] || `Stage ${curStages + 1}`;
+      const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
+      setPlayerData(p => ({
+        ...p,
+        [pid]: {
+          ...p[pid],
+          stages: [...(p[pid].stages || []), { fameRequired: 0 }],
+          stageArtists: [...(p[pid].stageArtists || []), []],
+          stageNames: [...(p[pid].stageNames || []), sName],
+          stageColors: [...(p[pid].stageColors || []), sColor],
+        }
+      }));
+      outcomeLabel = sName;
+      sfx.placeStage && sfx.placeStage();
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
+      setTimeout(() => trackStageOpened(pid), 100);
+    } else {
+      // At max — convert to +1 Fame so the pick still has value.
+      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
+      logFameGain(pid, 1, "Open a Stage choice at max → Fame");
+      outcomeLabel = "at max stages — +1 🔥 Fame instead";
+      if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("🔥 +1 Fame! (max stages)", "#f97316");
+    }
+    // Add a disabled "Opened Stage" marker to the tray so it takes a slot.
+    const marker = {
+      id: "FM_OPEN_STAGE_MARKER",
+      instanceId: `open-stage-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: "Opened Stage",
+      desc: "Stage opened via Fame draw. Tray slot spent.",
+      category: "immediate",
+      trigger: "on_draw",
+      disabled: true,
+      receivedInSeason: quickYearSeasonRef.current,
+    };
+    setPlayerFameCards(pc => ({ ...pc, [pid]: [...(pc[pid] || []), marker] }));
+    const discards = [...(fameDrawModal.choices || [])];
+    setFameDiscardPile(d => [...d, ...discards]);
+    addLog("🔥 Fame", `${festLabel}: picked ✨ Open a Stage → ${outcomeLabel} (tray slot spent).`);
+    setFameDrawModal(null);
+    fameDrawInProgressRef.current = false;
+    setTimeout(() => recalcTickets(), 50);
+    setTimeout(() => {
+      if (pendingFameDrawQueueRef.current.length > 0) {
+        const next = pendingFameDrawQueueRef.current.shift();
+        drawFameCardsForPlayer(next.pid, next.source);
+      }
+    }, 120);
+  };
+
+  const pickFameCardReal = (pid, cardIdx) => {
     const picked = { ...fameDrawModal.choices[cardIdx], receivedInSeason: quickYearSeasonRef.current };
     if (picked.category === "immediate") picked.disabled = true;
     const discards = fameDrawModal.choices.filter((_, i) => i !== cardIdx);
@@ -4805,6 +4905,9 @@ export default function Headliners() {
   // Remaining counts how many amenity picks the Fame card still owes.
   const [fameAmenityPending, _rawSetFameAmenityPending] = useState(null);
   const setFameAmenityPending = _guardSetter("setFameAmenityPending", _rawSetFameAmenityPending);
+  // v199.232: when the user clicks a "wild" die in Build mode, we need them to pick which amenity type it represents before they can place it on a field. State: null when idle; { idx } where idx is the die index while the picker is open.
+  const [wildDiePicker, _rawSetWildDiePicker] = useState(null);
+  const setWildDiePicker = _guardSetter("setWildDiePicker", _rawSetWildDiePicker);
   // v199.98: pending reactive effects queue. When an opponent takes an action, every
   // other player's matching reactive Fame cards queue an entry here. At the holder's
   // next turn start, these entries fire. Shape: { pid: [{ card, context }] }
@@ -4982,37 +5085,15 @@ export default function Headliners() {
         setTimeout(() => recalcTickets(), 50);
         return;
       }
-      if (face === "stage") {
-        setDice(prev => prev.filter((_, i) => i !== dieFaceIdx));
-        const curStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
-        if (curStages < QUICKYEAR_MAX_STAGES) {
-          const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
-          const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
-          setPlayerData(p => ({
-            ...p,
-            [pid]: {
-              ...p[pid],
-              stages: [...(p[pid].stages || []), { fameRequired: 0 }],
-              stageArtists: [...(p[pid].stageArtists || []), []],
-              stageNames: [...(p[pid].stageNames || []), sName],
-              stageColors: [...(p[pid].stageColors || []), sColor],
-            }
-          }));
-          addLog("🔥 Fame", `${festName}: "${cardName}" → picked 🎪 Stage die → opened new stage "${sName}".`);
-          if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
-          sfx.placeStage && sfx.placeStage();
-        } else {
-          // At max — fall back to Fame so the pick isn't wasted (mirrors Build-mode Stage logic).
-          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
-          logFameGain(pid, 1, `Stage die at max stages → Fame (via "${cardName}")`);
-          addLog("🔥 Fame", `${festName}: "${cardName}" → picked 🎪 Stage die at max stages → +1 🔥 Fame.`);
-          if (!players.find(pl => pl.id === pid)?.isAI) showFloatingBonus("🔥 +1 Fame!", "#f97316");
-        }
-        if (fameAmenityPending && fameAmenityPending.choiceMode) setFameDrawPicker(null);
-        setFameAmenityPending(null);
-        setTimeout(() => {
-          if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
-        }, 120);
+      if (face === "wild") {
+        // v199.232: wild face in a Fame-card dice-pick context — convert to the player's least-stocked amenity type, then let the normal amenity-placement flow handle it. Auto-resolution keeps the UI simple (no nested picker inside a Fame-card flow).
+        const am = (playerDataRef.current?.[pid]?.amenities || playerData[pid]?.amenities || {});
+        const types = ["campsite", "portaloo", "security", "catering"];
+        types.sort((a, b) => (am[a] || 0) - (am[b] || 0));
+        const chosenType = types[0];
+        setDice(prev => prev.map((d, i) => i === dieFaceIdx ? chosenType : d));
+        addLog("🔥 Fame", `${festName}: "${cardName}" → picked ✨ Wild die → ${AMENITY_LABELS[chosenType]}. Click a field to place it.`);
+        return;
         setTimeout(() => recalcTickets(), 50);
         return;
       }
@@ -6129,10 +6210,10 @@ export default function Headliners() {
           return;
         }
         if (player && player.isAI) {
-          // AI prefers amenity faces; falls back to fame/stage if that's all that's left.
-          const amenityFaces = ["campsite", "security", "catering", "portaloo"];
+          // AI prefers amenity faces (wild counts) over Fame.
+          const amenityFaces = ["campsite", "security", "catering", "portaloo", "wild"];
           let faceIdx = dice.findIndex(d => amenityFaces.includes(d));
-          if (faceIdx < 0) faceIdx = dice.findIndex(d => d === "fame" || d === "stage");
+          if (faceIdx < 0) faceIdx = dice.findIndex(d => d === "fame");
           if (faceIdx < 0) {
             addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — no usable die face, skipped.`);
             return;
@@ -6143,30 +6224,15 @@ export default function Headliners() {
             setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
             logFameGain(pid, 1, `Fame die (via "${card.name}", AI)`);
             addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → picked 🔥 Fame die → +1 Fame.`);
-          } else if (face === "stage") {
-            setDice(prev => prev.filter((_, i) => i !== faceIdx));
-            const curStages = (playerDataRef.current?.[pid]?.stages || playerData[pid]?.stages || []).length;
-            if (curStages < QUICKYEAR_MAX_STAGES) {
-              const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
-              const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
-              setPlayerData(p => ({
-                ...p,
-                [pid]: {
-                  ...p[pid],
-                  stages: [...(p[pid].stages || []), { fameRequired: 0 }],
-                  stageArtists: [...(p[pid].stageArtists || []), []],
-                  stageNames: [...(p[pid].stageNames || []), sName],
-                  stageColors: [...(p[pid].stageColors || []), sColor],
-                }
-              }));
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → picked 🎪 Stage die → opened new stage "${sName}".`);
-            } else {
-              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[pid].baseFame || 0) + 1) } }));
-              logFameGain(pid, 1, `Stage die at max → Fame (via "${card.name}", AI)`);
-              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → Stage die at max → +1 🔥 Fame.`);
-            }
           } else {
-            // Amenity face
+            // Amenity face OR wild — resolve wild to weakest amenity type.
+            let placedType = face;
+            if (face === "wild") {
+              const am = (playerDataRef.current?.[pid]?.amenities || playerData[pid]?.amenities || {});
+              const types = ["campsite", "portaloo", "security", "catering"];
+              types.sort((a, b) => (am[a] || 0) - (am[b] || 0));
+              placedType = types[0];
+            }
             const pd = (playerDataRef.current || playerData)[pid] || {};
             const fields = pd.fields || emptyFields();
             let targetField = 0;
@@ -6175,17 +6241,18 @@ export default function Headliners() {
               const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
               if (count < 5) { targetField = i; break; }
             }
-            setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, face, +1) }));
+            setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, placedType, +1) }));
             setDice(prev => prev.filter((_, i) => i !== faceIdx));
-            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[face]} in Field ${targetField + 1}.`);
-            setTimeout(() => claimAmenityMicrotrend(pid, face), 50);
+            const faceDesc = face === "wild" ? `✨ Wild → ${AMENITY_LABELS[placedType]}` : AMENITY_LABELS[placedType];
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${faceDesc} in Field ${targetField + 1}.`);
+            setTimeout(() => claimAmenityMicrotrend(pid, placedType), 50);
           }
           setTimeout(() => recalcTickets(), 50);
         } else {
           // Open picker modal for human. Any face is pickable.
           setFameAmenityPending({ pid, cardName: card.name });
           setPoolDrawerOpen(true);
-          addLog("🔥 Fame", `${festName}: "${card.name}" — pick a die face (amenity, Fame or Stage).`);
+          addLog("🔥 Fame", `${festName}: "${card.name}" — pick a die face (amenity, Wild, or Fame).`);
         }
         break;
       }
@@ -15860,48 +15927,18 @@ export default function Headliners() {
         scheduleNext(500); return;
       }
 
-      if (dieVal === "stage" || pick.type === "stage") {
-        const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
-        // v199.49: in Quick Play, AI stage die OPENS a stage (parity with human path
-        // from v199.45). Previously it called grantStageProgress which is a Classic-only
-        // mechanic — in Quick Play it was a no-op, so AI picked stage die → nothing →
-        // next action, AI picked stage die again → nothing. Now the stage opens or (at
-        // max) converts to +1 Fame, matching the human behaviour.
-        if (gameModeRef.current === "quickYear") {
-          const aiPd = playerData[currentPlayerId] || {};
-          const curStages = (aiPd.stages || []).length;
-          if (curStages < QUICKYEAR_MAX_STAGES) {
-            const usedNames = aiPd.stageNames || [];
-            const availNames = (typeof STAGE_NAMES !== "undefined" ? STAGE_NAMES : []).filter(n => !usedNames.includes(n));
-            const sName = availNames[Math.floor(Math.random() * (availNames.length || 1))] || `Stage ${curStages + 1}`;
-            const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
-            setPlayerData(p => ({
-              ...p,
-              [currentPlayerId]: {
-                ...p[currentPlayerId],
-                stages: [...(p[currentPlayerId].stages || []), { fameRequired: 0 }],
-                stageArtists: [...(p[currentPlayerId].stageArtists || []), []],
-                stageNames: [...(p[currentPlayerId].stageNames || []), sName],
-                stageColors: [...(p[currentPlayerId].stageColors || []), sColor],
-              }
-            }));
-            addLog("🤖 AI", `Picked 🎪 Stage die → opened "${sName}"`);
-          } else {
-            // At max stages — convert to +1 Fame.
-            logFameGain(currentPlayerId, 1, "Stage die (at max → Fame)");
-            setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
-            addLog("🤖 AI", `Picked 🎪 Stage die at max → +1 🔥 Fame`);
-          }
-        } else {
-          grantStageProgress(currentPlayerId, "Stage die");
-          addLog("🤖 AI", `Picked the 🎪 Stage die`);
-        }
-        completeAction();
-        scheduleNext(500); return;
+      // v199.232: wild die — AI picks the amenity type it has least of, then falls through to the normal amenity placement path below.
+      let resolvedType = pick.type || dieVal;
+      if (dieVal === "wild" || pick.type === "wild") {
+        const aiPd2 = playerData[currentPlayerId] || {};
+        const am = aiPd2.amenities || {};
+        const types = ["campsite", "portaloo", "security", "catering"];
+        types.sort((a, b) => (am[a] || 0) - (am[b] || 0));
+        resolvedType = types[0];
+        addLog("🤖 AI", `Picked ✨ Wild → ${AMENITY_LABELS[resolvedType]}`);
       }
-
       // v166: compound faces gone — die value IS the amenity type
-      const amenityType = pick.type || dieVal;
+      const amenityType = resolvedType;
       const nd = [...currentDice]; nd.splice(pick.idx, 1); setDice(nd);
       const aiPd = playerData[currentPlayerId] || {};
       // v199.42: in Quick Play, AI scores fields by principle progression — pass the
@@ -16161,58 +16198,9 @@ export default function Headliners() {
       completeAction();
       return;
     }
-    if (dv === "stage") {
-      // v166: stage die: grant +1 stage progress. 2 progress = 1 stage-open credit.
-      // v199.45: in Quick Play, stage die opens a new stage immediately (if under the
-      // max of 3). At max, converts to +1 Fame so the pick is never wasted. Festival
-      // Principles are still the primary stage-opening path (they also give +3 tickets
-      // if unused at game end); the stage die is the "roll your way to a stage" backup.
-      const nd = [...dice]; nd.splice(idx, 1); setDice(nd);
-      if (gameModeRef.current === "quickYear") {
-        const curStages = (playerDataRef.current?.[currentPlayerId]?.stages || playerData[currentPlayerId]?.stages || []).length;
-        if (curStages < QUICKYEAR_MAX_STAGES) {
-          const sName = STAGE_NAMES[Math.floor(Math.random() * STAGE_NAMES.length)];
-          const sColor = STAGE_COLORS[curStages % STAGE_COLORS.length];
-          setPlayerData(p => ({
-            ...p,
-            [currentPlayerId]: {
-              ...p[currentPlayerId],
-              stages: [...(p[currentPlayerId].stages || []), { fameRequired: 0 }],
-              stageArtists: [...(p[currentPlayerId].stageArtists || []), []],
-              stageNames: [...(p[currentPlayerId].stageNames || []), sName],
-              stageColors: [...(p[currentPlayerId].stageColors || []), sColor],
-            }
-          }));
-          addLog(currentPlayer.festivalName, `picked the 🎪 Stage die → opened new stage "${sName}"`);
-          showFloatingBonus(`🎪 ${sName}!`, "#4ade80");
-          sfx.placeStage && sfx.placeStage();
-          // v199.224: season-card tracking for stage opens (Autumn Expansion objective).
-          setTimeout(() => trackStageOpened(currentPlayerId), 100);
-        } else {
-          // At max stages — fall back to +1 Fame so the pick isn't wasted.
-          logFameGain(currentPlayerId, 1, "Stage die (at max stages → Fame)");
-          setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], baseFame: Math.min(FAME_CAP_QUICKYEAR, (p[currentPlayerId].baseFame || 0) + 1) } }));
-          addLog(currentPlayer.festivalName, `picked the 🎪 Stage die at max stages → +1 🔥 Fame`);
-          showFloatingBonus("+1 🔥 Fame! (max stages)", "#f97316");
-          sfx.gainFame();
-        }
-      } else {
-        grantStageProgress(currentPlayerId, "Stage die");
-        addLog(currentPlayer.festivalName, `picked the 🎪 Stage die`);
-        showFloatingBonus("+1 🎪 Stage Progress!", "#4ade80");
-      }
-      // v199.24: same picks-remaining respect for stage dice (parity with Fame fix above).
-      // v199.37: same bug fix — do NOT clear turnAction when picks remain. Keeps the dice
-      // panel open so the player can pick their next die, and prevents them from clicking
-      // "Pick Amenity" again (which would reset qyPicksLeft and grant extra picks).
-      if (gameModeRef.current === "quickYear" && qyPicksLeftRef.current > 1) {
-        const left = Math.max(0, qyPicksLeftRef.current - 1);
-        setQyPicksLeft(left);
-        qyPicksLeftRef.current = left;
-        setTimeout(() => recalcTickets(), 50);
-        return;
-      }
-      completeAction();
+    // v199.232: wild die — opens an amenity-type picker. Once the user picks a type, the die becomes that amenity face and the player then clicks a field normally.
+    if (dv === "wild") {
+      setWildDiePicker({ idx });
       return;
     }
     // v197.13: Bouncer Rights (sec_1) — the security leader can substitute which amenity
@@ -24350,6 +24338,56 @@ export default function Headliners() {
               </div>, document.body
             )}
 
+            {/* v199.232: Wild-die amenity type picker. Opens when user clicks a ✨ Wild die in Build mode. */}
+            {wildDiePicker && typeof document !== "undefined" && createPortal(
+              <div style={{
+                position: "fixed", inset: 0, background: "rgba(15,14,26,0.85)",
+                zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center",
+                padding: 16, animation: "fadeSlideIn 0.25s",
+              }}>
+                <div style={{
+                  padding: 24, borderRadius: 16,
+                  background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.35))",
+                  border: "2px solid #f472b6",
+                  boxShadow: "0 0 40px rgba(244,114,182,0.35)",
+                  maxWidth: 480, width: "100%",
+                }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>✨ Wild Die</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>Pick an amenity</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Then click a field to place it.</p>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                    {["campsite", "security", "catering", "portaloo"].map(amen => (
+                      <button key={amen} onClick={() => {
+                        // Replace the wild face with the chosen amenity type in the dice array.
+                        setDice(prev => prev.map((d, i) => i === wildDiePicker.idx ? amen : d));
+                        setWildDiePicker(null);
+                      }} style={{
+                        padding: "14px 10px", borderRadius: 10,
+                        border: "1px solid #f472b6", background: "rgba(30,27,75,0.5)",
+                        color: "#f3f4f6", cursor: "pointer", fontWeight: 700,
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                        transition: "all 0.2s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(131,24,67,0.4)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "rgba(30,27,75,0.5)"; e.currentTarget.style.transform = ""; }}
+                      >
+                        <span style={{ fontSize: 24 }}>{AMENITY_ICONS[amen]}</span>
+                        <span style={{ fontSize: 12 }}>{AMENITY_LABELS[amen]}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 12 }}>
+                    <button onClick={() => setWildDiePicker(null)} style={{
+                      padding: "6px 14px", borderRadius: 8, border: "1px solid #475569",
+                      background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600,
+                    }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
             {/* v199.224: Season card reveal modal — shows the drawn card at season start. */}
             {seasonCardReveal && typeof document !== "undefined" && createPortal(
               <div onClick={() => setSeasonCardReveal(null)} style={{
@@ -24395,11 +24433,11 @@ export default function Headliners() {
                       <div style={{ fontSize: 11, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 Fame Card Draw</div>
                       <h2 style={{ color: "#e9d5ff", fontSize: 20, margin: "4px 0 2px", fontWeight: 800 }}>Pick {pickCount === 1 ? "one" : pickCount === 2 ? "two" : pickCount}</h2>
                       <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
-                        {pickCount === 1 ? `The other ${fameDrawModal.choices.length - 1} go to the Fame discard pile.`
+                        {pickCount === 1 ? `Pick a card or open a stage. Unpicked cards go to the Fame discard pile.`
                           : `${remaining} more to pick. Unpicked cards go to the Fame discard pile.`}
                       </p>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(fameDrawModal.choices.length, 5)}, 1fr)`, gap: 10 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(fameDrawModal.choices.length + 1, 5)}, 1fr)`, gap: 10 }}>
                       {fameDrawModal.choices.map((card, idx) => {
                         const catColor = card.category === "you_may" ? "#f59e0b" :
                                          card.category === "self_bonus" ? "#fb7185" :
@@ -24437,6 +24475,37 @@ export default function Headliners() {
                           </div>
                         </button>;
                       })}
+                      {/* v199.232: "Open a Stage" constant 4th option. Replaces one card pick with opening a stage; costs a tray slot (disabled marker in the tray). Hidden for multi-pick for now. */}
+                      {pickCount === 1 && (() => {
+                        const stageColor = "#4ade80";
+                        const curStages = (playerDataRef.current?.[fameDrawModal.pid]?.stages || playerData[fameDrawModal.pid]?.stages || []).length;
+                        const atMax = curStages >= QUICKYEAR_MAX_STAGES;
+                        return <button
+                          onClick={() => pickFameStageOption(fameDrawModal.pid)}
+                          style={{
+                            padding: 14, borderRadius: 12,
+                            border: `2px solid ${stageColor}`,
+                            background: "rgba(5,46,22,0.5)",
+                            color: "#f3f4f6",
+                            textAlign: "left",
+                            cursor: "pointer",
+                            display: "flex", flexDirection: "column", gap: 6,
+                            minHeight: 160,
+                            transition: "transform 0.15s, box-shadow 0.15s",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 10px 24px ${stageColor}40`; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}
+                        >
+                          <div style={{ fontSize: 10, fontWeight: 800, color: stageColor, textTransform: "uppercase", letterSpacing: 1 }}>🎪 Option</div>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: "#f9fafb" }}>Open a Stage</div>
+                          <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.4, flex: 1 }}>
+                            {atMax ? "You're at max stages — this pick becomes +1 🔥 Fame. The tray slot is still spent." : "Open a new stage for your festival. Takes one Fame tray slot (disabled marker)."}
+                          </div>
+                          <div style={{ fontSize: 10, color: stageColor, fontWeight: 700, textAlign: "center", marginTop: 4, padding: 6, borderRadius: 6, background: `${stageColor}20` }}>
+                            Pick this instead →
+                          </div>
+                        </button>;
+                      })()}
                     </div>
                   </>;
                 })()}
