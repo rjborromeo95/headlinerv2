@@ -4627,12 +4627,13 @@ export default function Headliners() {
     setCalcSteps(steps);
   }, [phase, gameMode]);
 
-  // v199.235: tick-by-tick calculator animation. For each step:
+  // v199.235/v199.241: tick-by-tick calculator animation. For each step:
   //  1. Read per-player deltas.
   //  2. Seed pendingDeltas = deltas (floating +N overlays).
   //  3. Pause briefly so player sees the +N appear, then start a tick interval.
-  //  4. Each tick: for every pid with pendingDeltas[pid] > 0, +1 to running total, -1 from pending, play tick sfx.
-  //  5. When all pendingDeltas reach 0, clear them, pause briefly, advance to next step.
+  //  4. Each tick: for every pid with pending > 0, +1 to running total, -1 from pending, play tick sfx.
+  //  5. When all pending reach 0, clear them, pause briefly, advance to next step.
+  // Rewritten in v199.241: previous version nested setCalcTotals INSIDE setCalcPendingDeltas's updater. The outer updater's flag checks (anyIncremented, anyLeft) read stale values because the inner updater hadn't run yet when they were evaluated — leading to clearInterval firing after a single tick and no sound. Now uses a local mutable `pending` variable so each tick's bookkeeping is synchronous, with the two setState calls independent.
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (!calcSteps || calcDone) return;
@@ -4653,41 +4654,45 @@ export default function Headliners() {
     }
     // Show pending-delta floats first; start the ticker after a short display pause.
     setCalcPendingDeltas(stepDeltas);
+    // Local mutable pending — this is the source of truth for the interval's bookkeeping. The React state mirrors it for display; mutating this synchronously each tick means our flag checks don't depend on React commits landing first.
+    const pending = { ...stepDeltas };
     const startDelay = setTimeout(() => {
-      // Cap ticks so very big deltas still finish in reasonable time.
       const tickInterval = Math.max(50, Math.min(110, Math.floor(1600 / maxDelta)));
       const interval = setInterval(() => {
-        setCalcPendingDeltas(prev => {
-          const nextPend = { ...prev };
-          let anyLeft = false;
-          let anyIncremented = false;
+        let anyLeft = false;
+        let anyIncremented = false;
+        const tickDelta = {};
+        Object.keys(pending).forEach(pid => {
+          if (pending[pid] > 0) {
+            pending[pid] -= 1;
+            tickDelta[pid] = 1;
+            anyIncremented = true;
+            if (pending[pid] > 0) anyLeft = true;
+          }
+        });
+        if (anyIncremented) {
+          // Snapshot of the mutated pending for the display.
+          setCalcPendingDeltas({ ...pending });
+          // Independent (non-nested) totals update — adds the tick's per-player delta.
           setCalcTotals(ct => {
             const nextTotals = { ...ct };
-            Object.keys(nextPend).forEach(pid => {
-              if (nextPend[pid] > 0) {
-                nextPend[pid] -= 1;
-                nextTotals[pid] = (nextTotals[pid] || 0) + 1;
-                anyIncremented = true;
-                if (nextPend[pid] > 0) anyLeft = true;
-              }
+            Object.keys(tickDelta).forEach(pid => {
+              nextTotals[pid] = (nextTotals[pid] || 0) + tickDelta[pid];
             });
             return nextTotals;
           });
-          if (anyIncremented) {
-            try { playTone(1100, 0.035, "square", 0.07); } catch { /* ignore audio errors */ }
-          }
-          if (!anyLeft) {
-            clearInterval(interval);
-            // Brief rest between steps so the player registers the completion.
-            setTimeout(() => {
-              setCalcPendingDeltas({});
-              setCalcStep(s => s + 1);
-            }, 600);
-          }
-          return nextPend;
-        });
+          try { playTone(1100, 0.04, "square", 0.08); } catch { /* ignore audio errors */ }
+        }
+        if (!anyLeft) {
+          clearInterval(interval);
+          calcTickIntervalRef.current = null;
+          // Brief rest between steps so the player registers the completion.
+          setTimeout(() => {
+            setCalcPendingDeltas({});
+            setCalcStep(s => s + 1);
+          }, 600);
+        }
       }, tickInterval);
-      // Store interval id on a ref so the cleanup can clear it even if the component unmounts mid-tick.
       calcTickIntervalRef.current = interval;
     }, 400);
     return () => {
