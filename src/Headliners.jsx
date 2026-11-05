@@ -20366,49 +20366,51 @@ export default function Headliners() {
   if (phase === "game") {
     const handCards = currentPD.hand || [];
     const stageArtists = currentPD.stageArtists || currentPD.stages?.map(() => []) || [];
-    // v199.252: compact Management Board display (bottom-left when enabled).
+    // v199.254: Slimmer always-visible Management Board indicator. Horizontal fill bars per row, score for each player as a chip, schmooze cards for the current human as pills.
     const mgmtBoardPanel = useManagementBoard && gameMode === "quickYear" ? (
-      <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: 8, borderRadius: 10, background: "rgba(15,14,26,0.92)", border: "1px solid #334155", width: 280 }}>
-        <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 1, textAlign: "center", marginBottom: 6 }}>📋 MANAGEMENT BOARD</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
+      <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: "10px 12px", borderRadius: 10, background: "rgba(10,10,20,0.92)", border: "1px solid rgba(134,239,172,0.2)", width: 260 }}>
+        <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 2, marginBottom: 8 }}>📋 MANAGEMENT</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {MGMT_COLUMNS.map(col => {
             const colArr = managementBoard[col.id] || [];
-            const filled = colArr.filter(x => x !== null).length;
             const milestoneWinner = managementMilestones[col.id];
             return (
-              <div key={col.id} style={{ padding: 4, borderRadius: 6, background: "rgba(20,18,34,0.6)", border: `1px solid ${col.color}` }}>
-                <div style={{ fontSize: 14, textAlign: "center" }}>{col.emoji}</div>
-                <div style={{ color: col.color, fontSize: 8, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{col.label}</div>
-                <div style={{ display: "flex", flexDirection: "column-reverse", gap: 1 }}>
-                  {colArr.map((slot, ri) => (
-                    <div key={ri} style={{ height: 8, borderRadius: 2, background: slot ? (players.find(p => p.id === slot)?.isAI ? "#fbbf24" : "#86efac") : "rgba(100,116,139,0.2)", border: ri === MGMT_ROWS - 1 ? "1px dashed #fcd34d" : "none" }} />
-                  ))}
+              <div key={col.id} style={{ display: "grid", gridTemplateColumns: "14px 60px 1fr auto", gap: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 11 }}>{col.emoji}</span>
+                <span style={{ color: col.color, fontSize: 10, fontWeight: 700 }}>{col.label}</span>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr) 6px 1fr", gap: 2, alignItems: "center" }}>
+                  {[0, 1, 2, 3].map(ri => {
+                    const slot = colArr[ri];
+                    const ownerColor = slot ? (players.find(p => p.id === slot)?.isAI ? "#fbbf24" : "#86efac") : null;
+                    return <div key={ri} style={{ height: 6, borderRadius: 2, background: ownerColor || "rgba(100,116,139,0.25)" }} />;
+                  })}
+                  <div />
+                  {(() => {
+                    const slot = colArr[4];
+                    const ownerColor = slot ? (players.find(p => p.id === slot)?.isAI ? "#fbbf24" : "#86efac") : null;
+                    return <div style={{ height: 6, borderRadius: 2, background: ownerColor || "rgba(100,116,139,0.25)", border: slot ? "none" : "1px dashed rgba(252,211,77,0.5)" }} />;
+                  })()}
                 </div>
-                <div style={{ fontSize: 8, color: "#94a3b8", textAlign: "center", marginTop: 3 }}>{filled}/{MGMT_ROWS}</div>
-                {milestoneWinner && <div style={{ fontSize: 8, color: "#fcd34d", textAlign: "center", fontWeight: 700 }}>🏆 {players.find(p => p.id === milestoneWinner)?.festivalName?.slice(0, 8)}</div>}
+                {milestoneWinner && <span style={{ fontSize: 10 }} title={`${players.find(p => p.id === milestoneWinner)?.festivalName || "?"} claimed ${col.label}`}>🏆</span>}
               </div>
             );
           })}
         </div>
-        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 9, color: "#94a3b8" }}>
+        <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid rgba(100,116,139,0.2)", display: "flex", justifyContent: "space-between", fontSize: 9, color: "#94a3b8" }}>
           {players.map(p => (
             <div key={p.id}>
-              <span style={{ color: p.isAI ? "#fbbf24" : "#86efac", fontWeight: 700 }}>{p.festivalName?.slice(0, 8)}</span>: 💰{managementBoard.dump?.[p.id] || 0} 📋{(schmoozeHands[p.id] || []).length}
+              <span style={{ color: p.isAI ? "#fbbf24" : "#86efac", fontWeight: 700 }}>{p.festivalName?.slice(0, 10)}</span> 💰{managementBoard.dump?.[p.id] || 0}
             </div>
           ))}
         </div>
-        {/* Current human's Schmooze cards — click to activate. */}
         {!currentPlayer?.isAI && (schmoozeHands[currentPlayerId] || []).length > 0 && (
-          <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #334155" }}>
-            <div style={{ fontSize: 8, color: "#f9a8d4", fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>📋 YOUR SCHMOOZE CARDS — CLICK TO PLAY</div>
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(100,116,139,0.2)" }}>
+            <div style={{ fontSize: 8, color: "#f9a8d4", fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>SCHMOOZE CARDS</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               {(schmoozeHands[currentPlayerId] || []).map((card, idx) => (
-                <button
-                  key={card.instanceId || idx}
-                  onClick={() => activateSchmoozeCard(currentPlayerId, card)}
-                  style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid #f472b6", background: "rgba(131,24,67,0.3)", color: "#f9fafb", cursor: "pointer", fontSize: 10, textAlign: "left", fontWeight: 700 }}
-                  title={card.desc}
-                >
+                <button key={card.instanceId || idx} onClick={() => activateSchmoozeCard(currentPlayerId, card)}
+                  style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid rgba(244,114,182,0.4)", background: "rgba(131,24,67,0.25)", color: "#f9fafb", cursor: "pointer", fontSize: 10, textAlign: "left", fontWeight: 700 }}
+                  title={card.desc}>
                   {card.name}
                 </button>
               ))}
@@ -22117,18 +22119,54 @@ export default function Headliners() {
         </div>
       </div>}
       {/* Turn start popup */}
-      {showTurnStart && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ ...card, textAlign: "center", maxWidth: 440, animation: "fadeSlideIn 0.3s" }}>
-          <h2 style={{ color: "#fbbf24", fontSize: 28, margin: "0 0 8px" }}>🎪 {currentPlayer?.festivalName}</h2>
-          <p style={{ color: "#c4b5fd", fontSize: 16 }}>
-            {gameModeRef.current === "quickYear" && turnsLeft[currentPlayerId] === 1
-              ? <span><strong style={{ color: "#f97316" }}>LAST TURN</strong> — the festival ends after this one.</span>
-              : <>Year {year} — <strong style={{ color: "#fbbf24" }}>{turnsLeft[currentPlayerId]}</strong> turns left</>
-            }
-          </p>
-          {(playerObjectives[currentPlayerId] || []).length > 0 && (() => {
+      {showTurnStart && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div style={{ ...card, textAlign: "center", maxWidth: 460, width: "100%", animation: "fadeSlideIn 0.3s", padding: 28 }}>
+          {/* v199.253: Festival name as eyebrow label, season as hero, then turns left. Previously festival name was the hero which crowded out the season context — now the single modal is: WHO is up, WHEN (season + turns), and WHAT (microtrend + season card) they're playing into. */}
+          <div style={{ fontSize: 13, color: "#c4b5fd", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>🎪 {currentPlayer?.festivalName}'s Turn</div>
+          {gameModeRef.current === "quickYear" && quickYearSeason ? (
+            <>
+              <h2 style={{ color: "#fbbf24", fontSize: 40, margin: "4px 0 2px", fontWeight: 900, letterSpacing: 1 }}>{QUICKYEAR_SEASON_EMOJI[quickYearSeason]} {QUICKYEAR_SEASON_LABELS[quickYearSeason]}</h2>
+              <p style={{ color: "#c4b5fd", fontSize: 13, margin: "0 0 18px" }}>
+                {turnsLeft[currentPlayerId] === 1
+                  ? <span><strong style={{ color: "#f97316" }}>LAST TURN</strong> — the festival ends after this one.</span>
+                  : <><strong style={{ color: "#fbbf24" }}>{turnsLeft[currentPlayerId]}</strong> turn{turnsLeft[currentPlayerId] === 1 ? "" : "s"} left</>
+                }
+              </p>
+            </>
+          ) : (
+            <h2 style={{ color: "#fbbf24", fontSize: 28, margin: "0 0 12px" }}>Year {year} — <strong style={{ color: "#fbbf24" }}>{turnsLeft[currentPlayerId]}</strong> turns left</h2>
+          )}
+          {/* Microtrend chip row. Only show unclaimed trends. */}
+          {microtrends.some(mt => mt.claimedBy === null) && (
+            <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: "rgba(76,29,149,0.25)", border: "1px solid rgba(167,139,250,0.3)" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>🎵 Microtrends — first to match → +1 Fame</div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {microtrends.filter(mt => mt.claimedBy === null).map((mt, i) => mt.kind === "amenity"
+                  ? <span key={i} style={{ padding: "6px 14px", borderRadius: 20, background: "#1e293b", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 12, fontWeight: 700 }}>{AMENITY_ICONS[mt.amenity]} {AMENITY_LABELS[mt.amenity]}</span>
+                  : <span key={i} style={{ padding: "6px 14px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 12, fontWeight: 700 }}>{mt.genre}</span>
+                )}
+              </div>
+            </div>
+          )}
+          {/* Season card (objective or bonus). Previously shown in a separate modal that stacked behind this one. */}
+          {gameModeRef.current === "quickYear" && (() => {
+            const sc = seasonCards?.[quickYearSeason];
+            if (!sc) return null;
+            const isObj = sc.type === "objective";
+            const accent = isObj ? "#86efac" : "#60a5fa";
+            const bg = isObj ? "rgba(34,197,94,0.1)" : "rgba(59,130,246,0.1)";
+            return (
+              <div style={{ marginBottom: 12, padding: 14, borderRadius: 10, background: bg, border: `1px solid ${accent}` }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: accent, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>{isObj ? "📋 Season Objective" : "✨ Season Bonus"}</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#f1f5f9", marginBottom: 4 }}>{sc.label}</div>
+                <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.4 }}>{sc.desc}</div>
+              </div>
+            );
+          })()}
+          {/* Player objectives (Classic only — Quick Play uses season cards). */}
+          {gameModeRef.current !== "quickYear" && (playerObjectives[currentPlayerId] || []).length > 0 && (() => {
             const objs = playerObjectives[currentPlayerId] || [];
-            return <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.25)" }}>
+            return <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.25)" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🎯 Your Objectives</div>
               {objs.map((entry, oi) => <div key={oi} style={{ marginBottom: 4 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: entry.completed ? "#4ade80" : "#e9d5ff" }}>{entry.completed ? "✅ " : ""}{entry.obj.name}</div>
@@ -22137,17 +22175,10 @@ export default function Headliners() {
               </div>)}
             </div>;
           })()}
-          {microtrends.some(mt => mt.claimedBy === null) && <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🎵 Microtrends (first to match → +1 Fame)</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              {microtrends.filter(mt => mt.claimedBy === null).map((mt, i) => mt.kind === "amenity"
-                ? <span key={i} style={{ padding: "3px 10px", borderRadius: 20, background: "#1e293b", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 11, fontWeight: 700 }}>{AMENITY_ICONS[mt.amenity]} {AMENITY_LABELS[mt.amenity]}</span>
-                : <span key={i} style={{ padding: "3px 10px", borderRadius: 20, background: GENRE_COLORS[mt.genre], color: "#fff", fontSize: 11, fontWeight: 700 }}>{mt.genre}</span>
-              )}
-            </div>
-          </div>}
           <button onClick={() => {
             setShowTurnStart(false);
+            // v199.253: dismiss lingering season-card popup — its content was shown inline.
+            setSeasonCardReveal(null);
             setTurnNumber(prev => prev + 1);
             // v197.13: Scouted Talent (sec_2) — draw 3 artists at turn start, keep 1.
             // Fires once per turn per player. Modal for humans; AI auto-picks in aiStep.
@@ -25686,69 +25717,175 @@ export default function Headliners() {
               </div>,
               document.body
             )}
-            {/* v199.252: Management Board — place cube modal. */}
-            {pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId && typeof document !== "undefined" && createPortal(
-              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
-                <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(20,20,40,0.95), rgba(10,10,25,0.95))", border: "2px solid #22c55e", boxShadow: "0 0 40px rgba(34,197,94,0.3)", maxWidth: 820, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
-                  <div style={{ textAlign: "center", marginBottom: 14 }}>
-                    <div style={{ fontSize: 10, color: "#86efac", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 Management Board</div>
-                    <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>Place your cube</h2>
-                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Click a column slot, or the +1 Ticket zone.</p>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
-                    {MGMT_COLUMNS.map(col => {
-                      const colArr = managementBoard[col.id];
-                      const nextVacant = colArr.indexOf(null);
-                      const filled = colArr.filter(x => x !== null).length;
-                      return (
-                        <div key={col.id} style={{ padding: 12, borderRadius: 10, background: "rgba(20,18,34,0.65)", border: `2px solid ${col.color}` }}>
-                          <div style={{ textAlign: "center", marginBottom: 8 }}>
-                            <div style={{ fontSize: 22 }}>{col.emoji}</div>
-                            <div style={{ color: col.color, fontWeight: 800, fontSize: 13 }}>{col.label}</div>
-                            <div style={{ color: "#94a3b8", fontSize: 9, marginTop: 2, minHeight: 24 }}>{col.scoreDesc}</div>
-                            <div style={{ color: "#fcd34d", fontSize: 9, marginTop: 2, fontStyle: "italic", minHeight: 24 }}>🏆 {col.milestoneDesc}</div>
+            {/* v199.254: Management Board — place cube modal, rebuilt to the mockup design. Outer rim shows a 12-turn calendar split into 4 seasons with the current season objective cards. Inner board uses horizontal rows (cubes 1–4 are score cubes with an inline score label, cube 5 is a milestone cube visually separated with a gap + milestone label). Dump zone sits on the LEFT as a simple +1 TICKET / CUBE marker. */}
+            {pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId && typeof document !== "undefined" && createPortal((() => {
+              const currentTurn = QUICKYEAR_TOTAL_TURNS - (turnsLeft[currentPlayerId] || QUICKYEAR_TOTAL_TURNS) + 1;
+              const SEASON_BOUNDS = { autumn: [1, 3], winter: [4, 6], spring: [7, 9], summer: [10, 12] };
+              const SEASON_ORDER = ["autumn", "winter", "spring", "summer"];
+              const curSeason = quickYearSeason || "autumn";
+              return (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "fadeSlideIn 0.25s" }}>
+                  <div style={{ padding: 24, borderRadius: 20, background: "rgba(10,10,20,0.98)", border: "1px solid #86efac", boxShadow: "0 0 80px rgba(134,239,172,0.15)", maxWidth: 1040, width: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+                    {/* Title + prompt */}
+                    <div style={{ textAlign: "center", marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, color: "#86efac", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700 }}>📋 Management Board</div>
+                      <h2 style={{ color: "#f9fafb", fontSize: 22, fontWeight: 800, margin: "6px 0 2px", letterSpacing: 0.5 }}>Place your cube</h2>
+                      <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>Click a slot, or the +1 Ticket zone.</p>
+                    </div>
+                    {/* 4 season-objective cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 0 }}>
+                      {SEASON_ORDER.map(season => {
+                        const isActive = season === curSeason;
+                        const sc = seasonCards?.[season];
+                        const hasBeenRevealed = isActive || SEASON_ORDER.indexOf(season) < SEASON_ORDER.indexOf(curSeason);
+                        return (
+                          <div key={season} style={{
+                            padding: "12px 10px", borderRadius: 14,
+                            background: isActive ? "#22c55e" : hasBeenRevealed ? "rgba(34,197,94,0.15)" : "rgba(30,41,59,0.6)",
+                            border: isActive ? "2px solid #86efac" : "1px solid rgba(100,116,139,0.3)",
+                            minHeight: 68, textAlign: "center",
+                            boxShadow: isActive ? "0 0 20px rgba(134,239,172,0.4)" : "none",
+                          }}>
+                            {hasBeenRevealed && sc ? (
+                              <>
+                                <div style={{ fontSize: 9, color: isActive ? "#0a3a1a" : "#86efac", fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>{QUICKYEAR_SEASON_EMOJI[season]} {QUICKYEAR_SEASON_LABELS[season]} — {sc.type === "objective" ? "Objective" : "Bonus"}</div>
+                                <div style={{ fontSize: 11, color: isActive ? "#0a1a0a" : "#dcfce7", fontWeight: 800, lineHeight: 1.2 }}>{sc.label}</div>
+                              </>
+                            ) : (
+                              <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", lineHeight: 1.35, display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>Flip this card face up at the beginning of {QUICKYEAR_SEASON_LABELS[season]}</div>
+                            )}
                           </div>
-                          <div style={{ display: "flex", flexDirection: "column-reverse", gap: 4 }}>
-                            {colArr.map((slot, ri) => {
-                              const isNext = ri === nextVacant;
-                              const owner = slot ? players.find(p => p.id === slot) : null;
-                              return (
-                                <button
-                                  key={ri}
-                                  onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
-                                  disabled={!isNext}
-                                  style={{
-                                    padding: "8px 6px", borderRadius: 6,
-                                    border: isNext ? `2px solid ${col.color}` : "1px solid #334155",
-                                    background: slot ? "rgba(76,29,149,0.45)" : (isNext ? "rgba(34,197,94,0.15)" : "rgba(15,14,26,0.4)"),
-                                    color: isNext ? "#f9fafb" : "#64748b",
-                                    cursor: isNext ? "pointer" : "not-allowed",
-                                    fontSize: 11, fontWeight: 700,
-                                    textAlign: "center",
-                                  }}
-                                >
-                                  {slot ? `● ${owner?.festivalName?.slice(0, 10) || "?"}` : isNext ? "Place here →" : `Row ${ri + 1}`}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {filled === MGMT_ROWS && (
-                            <div style={{ marginTop: 6, textAlign: "center", fontSize: 10, color: managementMilestones[col.id] === currentPlayerId ? "#86efac" : "#fbbf24", fontWeight: 700 }}>🏆 {players.find(p => p.id === managementMilestones[col.id])?.festivalName || "?"}</div>
-                          )}
+                        );
+                      })}
+                    </div>
+                    {/* Connector lines */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", height: 10 }}>
+                      {SEASON_ORDER.map(season => (
+                        <div key={season} style={{ borderLeft: "1px solid rgba(100,116,139,0.3)", borderRight: "1px solid rgba(100,116,139,0.3)", height: "100%" }} />
+                      ))}
+                    </div>
+                    {/* Outer rim card — calendar + inner board */}
+                    <div style={{ padding: "16px 20px", borderRadius: 16, background: "rgba(76,29,149,0.35)", border: "1px solid rgba(167,139,250,0.3)" }}>
+                      {/* 12-turn calendar bar */}
+                      <div style={{ position: "relative", marginBottom: 20 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", alignItems: "center", gap: 0 }}>
+                          {Array.from({ length: 12 }, (_, i) => {
+                            const turnNum = i + 1;
+                            const isCurrent = turnNum === currentTurn;
+                            const isPast = turnNum < currentTurn;
+                            const seasonOfTurn = SEASON_ORDER.find(s => turnNum >= SEASON_BOUNDS[s][0] && turnNum <= SEASON_BOUNDS[s][1]);
+                            const isSeasonEdge = SEASON_BOUNDS[seasonOfTurn][0] === turnNum;
+                            return (
+                              <div key={turnNum} style={{ textAlign: "center", position: "relative", borderLeft: isSeasonEdge && turnNum > 1 ? "1px solid rgba(167,139,250,0.5)" : "none" }}>
+                                <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", opacity: isSeasonEdge ? 1 : 0, height: 14, textAlign: "left", paddingLeft: 4 }}>
+                                  {isSeasonEdge ? QUICKYEAR_SEASON_LABELS[seasonOfTurn] : ""}
+                                </div>
+                                <div style={{
+                                  fontSize: 16, fontWeight: 800,
+                                  color: isCurrent ? "#fbbf24" : isPast ? "#64748b" : "#cbd5e1",
+                                  padding: "2px 0",
+                                  background: isCurrent ? "rgba(251,191,36,0.15)" : "transparent",
+                                  borderRadius: 4,
+                                }}>{turnNum}</div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </div>
+                      {/* Inner board — 3 horizontal rows */}
+                      <div style={{ display: "flex", gap: 14, alignItems: "stretch" }}>
+                        {/* +1 TICKET / CUBE marker on the left */}
+                        <button onClick={() => { placeCubeOnBoard(currentPlayerId, "dump", 0); setPendingCubePlacement(null); }}
+                          style={{ flexShrink: 0, width: 110, padding: "8px 10px", borderRadius: 10, border: "1px dashed #86efac", background: "rgba(34,197,94,0.08)", color: "#86efac", cursor: "pointer", fontSize: 10, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", lineHeight: 1.3, textAlign: "center" }}
+                        >
+                          +1 Ticket<br/>/ Cube<br/><span style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: "#94a3b8" }}>(you: {managementBoard.dump?.[currentPlayerId] || 0})</span>
+                        </button>
+                        {/* Rows */}
+                        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {MGMT_COLUMNS.map((col, rowIdx) => {
+                            const colArr = managementBoard[col.id];
+                            const nextVacant = colArr.indexOf(null);
+                            return (
+                              <div key={col.id}>
+                                {/* Row content */}
+                                <div style={{ display: "grid", gridTemplateColumns: "88px 1fr 18px 1fr", gap: 10, alignItems: "center", padding: "10px 0" }}>
+                                  {/* Row label */}
+                                  <div style={{ textAlign: "center" }}>
+                                    <div style={{ fontSize: 22 }}>{col.emoji}</div>
+                                    <div style={{ color: col.color, fontWeight: 800, fontSize: 13, fontStyle: "italic" }}>{col.label}</div>
+                                  </div>
+                                  {/* Score cubes + inline label */}
+                                  <div>
+                                    <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", textAlign: "center", marginBottom: 6 }}>
+                                      {col.id === "schmooze" ? "Draw a Schmooze Card" : col.id === "hire" ? "1 Ticket / Catering Van" : "1 Ticket / Artist Played"}
+                                    </div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                                      {[0, 1, 2, 3].map(ri => {
+                                        const slot = colArr[ri];
+                                        const isNext = ri === nextVacant;
+                                        const owner = slot ? players.find(p => p.id === slot) : null;
+                                        const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
+                                        return (
+                                          <button key={ri}
+                                            onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
+                                            disabled={!isNext}
+                                            style={{
+                                              height: 44, borderRadius: 8,
+                                              border: slot ? `2px solid ${ownerColor}` : isNext ? `2px dashed ${col.color}` : "1px solid rgba(100,116,139,0.3)",
+                                              background: slot ? `${ownerColor}33` : isNext ? "rgba(34,197,94,0.1)" : "transparent",
+                                              cursor: isNext ? "pointer" : "default",
+                                              fontSize: 10, fontWeight: 700, color: isNext ? "#86efac" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
+                                            }}
+                                          >
+                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : isNext ? "Place →" : ""}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  {/* Divider */}
+                                  <div style={{ width: "1px", height: "100%", background: "rgba(167,139,250,0.4)", margin: "0 auto" }} />
+                                  {/* Milestone cube + inline label */}
+                                  <div>
+                                    <div style={{ fontSize: 9, color: "#fcd34d", fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", textAlign: "center", marginBottom: 6, lineHeight: 1.25, minHeight: 20 }}>
+                                      {col.id === "schmooze" ? "+1 Fame Card Capacity. Pick a Fame Card." : col.id === "hire" ? "Take an Additional Turn Now." : "Headliner on One Stage Sells Triple Tickets."}
+                                    </div>
+                                    <div style={{ display: "flex", justifyContent: "center" }}>
+                                      {(() => {
+                                        const slot = colArr[4];
+                                        const isNext = nextVacant === 4;
+                                        const owner = slot ? players.find(p => p.id === slot) : null;
+                                        const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
+                                        return (
+                                          <button
+                                            onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, 4); setPendingCubePlacement(null); } }}
+                                            disabled={!isNext}
+                                            style={{
+                                              width: 70, height: 44, borderRadius: 8,
+                                              border: slot ? `2px solid ${ownerColor}` : isNext ? `2px dashed #fcd34d` : "1px solid rgba(100,116,139,0.3)",
+                                              background: slot ? `${ownerColor}33` : isNext ? "rgba(252,211,77,0.1)" : "transparent",
+                                              cursor: isNext ? "pointer" : "default",
+                                              fontSize: 10, fontWeight: 700, color: isNext ? "#fcd34d" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
+                                            }}
+                                          >
+                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : isNext ? "🏆 Place" : ""}
+                                          </button>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
+                                {rowIdx < MGMT_COLUMNS.length - 1 && <div style={{ height: 1, background: "rgba(167,139,250,0.25)" }} />}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => { placeCubeOnBoard(currentPlayerId, "dump", 0); setPendingCubePlacement(null); }}
-                    style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px solid #4ade80", background: "rgba(34,197,94,0.15)", color: "#86efac", fontWeight: 800, fontSize: 13, cursor: "pointer" }}
-                  >
-                    💰 +1 Ticket Zone — place here for a flat +1 ticket (currently {managementBoard.dump?.[currentPlayerId] || 0})
-                  </button>
                 </div>
-              </div>,
-              document.body
-            )}
+              );
+            })(), document.body)}
             {/* v199.234: Rearrange — place amenity picker (type + field). */}
             {rearrangePicker && rearrangePicker.step === "place" && typeof document !== "undefined" && createPortal(
               <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
@@ -25892,7 +26029,8 @@ export default function Headliners() {
               document.body
             )}
             {/* v199.224: Season card reveal modal — shows the drawn card at season start. */}
-            {seasonCardReveal && typeof document !== "undefined" && createPortal(
+            {/* v199.253: suppress the standalone seasonCardReveal — its content now renders inside showTurnStart. Previously both modals stacked, making the UI crowded. */}
+            {seasonCardReveal && !showTurnStart && typeof document !== "undefined" && createPortal(
               <div onClick={() => setSeasonCardReveal(null)} style={{
                 position: "fixed", inset: 0, background: "rgba(15,14,26,0.85)",
                 zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center",
