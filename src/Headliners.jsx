@@ -4182,13 +4182,11 @@ export default function Headliners() {
       keptAll.forEach(k => {
         if (k.trigger === "on_draw") setTimeout(() => fireFameCardEffect(pid, k, { onDraw: true }), 60);
       });
-      // v199.182: drain any pending Fame-draw queued while this modal was open.
-      setTimeout(() => {
-        if (pendingFameDrawQueueRef.current.length > 0) {
-          const next = pendingFameDrawQueueRef.current.shift();
-          drawFameCardsForPlayer(next.pid, next.source);
-        }
-      }, 120);
+      // v199.250: drain the queue synchronously (see pickFameCardReal for rationale).
+      if (pendingFameDrawQueueRef.current.length > 0) {
+        const next = pendingFameDrawQueueRef.current.shift();
+        drawFameCardsForPlayer(next.pid, next.source);
+      }
       return;
     }
     // Single-pick path (original behavior) — delegate to pickFameCardReal.
@@ -4245,12 +4243,11 @@ export default function Headliners() {
     setFameDrawModal(null);
     fameDrawInProgressRef.current = false;
     setTimeout(() => recalcTickets(), 50);
-    setTimeout(() => {
-      if (pendingFameDrawQueueRef.current.length > 0) {
-        const next = pendingFameDrawQueueRef.current.shift();
-        drawFameCardsForPlayer(next.pid, next.source);
-      }
-    }, 120);
+    // v199.250: drain queue synchronously.
+    if (pendingFameDrawQueueRef.current.length > 0) {
+      const next = pendingFameDrawQueueRef.current.shift();
+      drawFameCardsForPlayer(next.pid, next.source);
+    }
   };
 
   const pickFameCardReal = (pid, cardIdx) => {
@@ -4270,13 +4267,11 @@ export default function Headliners() {
     if (picked.trigger === "on_draw") {
       setTimeout(() => fireFameCardEffect(pid, picked, { onDraw: true }), 60);
     }
-    // v199.182: drain any pending Fame-draw queued while this modal was open.
-    setTimeout(() => {
-      if (pendingFameDrawQueueRef.current.length > 0) {
-        const next = pendingFameDrawQueueRef.current.shift();
-        drawFameCardsForPlayer(next.pid, next.source);
-      }
-    }, 120);
+    // v199.250: drain the queue SYNCHRONOUSLY. Previously setTimeout 120ms — if the human clicked End Turn during that gap, the queued draw opened on the next player's turn, got orphaned by the pid !== currentPlayerId guard, and auto-resolved instead of letting the human pick. React batches the setFameDrawModal(null) above with the one inside the drain, so there's no visual flicker.
+    if (pendingFameDrawQueueRef.current.length > 0) {
+      const next = pendingFameDrawQueueRef.current.shift();
+      drawFameCardsForPlayer(next.pid, next.source);
+    }
   };
 
   // v199.156: Reshuffle the artist discard pile back into the deck when the deck is
