@@ -599,6 +599,15 @@ const FAME_CARDS = [
   { id: "FM_END_PAIR_CP",      name: "+3 per Cat+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
   { id: "FM_END_STAGE",        name: "+2 per Stage",              category: "game_end",     trigger: "game_end",     effect: "end_per_stage_2",               copies: 1, desc: "Game end: sell 2 tickets per stage." },
   { id: "FM_END_PAIR_CS",      name: "+3 per Sec+Cat Pair",       category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_sec",              copies: 1, desc: "Game end: sell 3 tickets for every pair of security and catering vans." },
+  // v199.233: new engine cards. Once-a-turn effects reuse the you_may category (click to activate, once per turn, no seasonal expiry). Passives fire automatically from their hook.
+  { id: "FM_ONCE_HAND_CYCLE",  name: "Cycle Hand",                category: "you_may",      trigger: "any_time",    effect: "once_hand_cycle",                copies: 3, desc: "Once a turn: draw 1 artist (from the pool or deck), then discard 1 artist from your hand." },
+  { id: "FM_ONCE_SWAP_AMEN",   name: "Rearrange",                 category: "you_may",      trigger: "any_time",    effect: "once_swap_amenity",              copies: 3, desc: "Once a turn: remove 1 amenity from your festival, then place a new amenity of your choice." },
+  { id: "FM_ONCE_SCRY",        name: "Scout the Deck",            category: "you_may",      trigger: "any_time",    effect: "once_scry_deck",                 copies: 2, desc: "Once a turn: look at the top card of the artist deck. You may draw it to hand or discard it." },
+  { id: "FM_ONCE_FAMECYCLE",   name: "Shop the Industry",         category: "you_may",      trigger: "any_time",    effect: "once_fame_cycle",                copies: 2, desc: "Once a turn: draw 1 Fame card. You may put it on the bottom of the Fame deck, or replace THIS card with that one." },
+  // Always-on passives.
+  { id: "FM_PASS_AMEN_DISCOUNT",name: "Negotiated Rates",         category: "passive",      trigger: "passive",     effect: "passive_amenity_discount",       copies: 3, desc: "Always on: artists cost 1 less amenity to play (any one amenity type of your choice per booking)." },
+  { id: "FM_PASS_DECK_DRAW",   name: "Fan Base",                  category: "passive",      trigger: "passive",     effect: "passive_deck_draw_tix",          copies: 3, desc: "Always on: when you draw an artist from the deck, sell 1 ticket." },
+  { id: "FM_PASS_REFRESH",     name: "Industry Hustle",           category: "passive",      trigger: "passive",     effect: "passive_refresh_tix",            copies: 3, desc: "Always on: when you refresh the artist pool or amenity die, sell 2 tickets." },
 ];
 // v199.130: centralized trigger-aware category label used by every Fame card render site
 // (draw modal, own tray, opponent tray). Keeps the badge language consistent and avoids
@@ -618,6 +627,7 @@ const fameCardCategoryLabel = (card) => {
       return "When Opponent…";
     case "season_start": return "At Season Start";
     case "season_active": return "This Season Only";
+    case "passive": return "Always On";
     case "game_end": return "At Game End";
     default: return "";
   }
@@ -4696,6 +4706,145 @@ export default function Headliners() {
           if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: dice refreshed`, "#fbbf24");
           markFameCardUsedThisTurn(pid, card.instanceId);
           break;
+        // v199.233: Cycle Hand — draw 1 (from pool by default), then discard 1 (auto: lowest-value).
+        // Picker UX for pool/deck choice + discard selection can be added as a follow-up polish pass.
+        case "once_hand_cycle": {
+          const pdHC = (playerDataRef.current || playerData)[pid] || {};
+          const handHC = pdHC.hand || [];
+          const poolHC = artistPoolRef.current || artistPool || [];
+          if (poolHC.length === 0) {
+            const deckHC = artistDeckRef.current || artistDeck || [];
+            if (deckHC.length === 0) {
+              addLog("🔥 Fame", `${festName}: "${card.name}" — no artists available to draw.`);
+              break;
+            }
+          }
+          // Draw from pool if possible (gives player visibility); otherwise from deck.
+          let drawnCard = null;
+          if (poolHC.length > 0) {
+            drawnCard = poolHC[0];
+            setArtistPool(prev => prev.filter((_, i) => i !== 0));
+            refillArtistPool && setTimeout(() => refillArtistPool(), 50);
+          } else {
+            const deckHC = artistDeckRef.current || artistDeck || [];
+            drawnCard = deckHC[0];
+            setArtistDeck(prev => prev.slice(1));
+          }
+          if (!drawnCard) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no artist available.`);
+            break;
+          }
+          // Discard: AI picks lowest ticket value; human also auto-resolved for now (will add picker in polish pass).
+          let discardIdx = -1;
+          if (handHC.length > 0) {
+            const sortedH = handHC.map((a, i) => ({ a, i })).sort((x, y) => (x.a.tickets || 0) - (y.a.tickets || 0));
+            discardIdx = sortedH[0].i;
+          }
+          setPlayerData(p => {
+            const cur = p[pid] || {};
+            const newHand = [...(cur.hand || []), drawnCard];
+            if (discardIdx >= 0 && discardIdx < newHand.length - 1) {
+              const discarded = newHand.splice(discardIdx, 1)[0];
+              setDiscardPile(dp => [...dp, discarded]);
+            }
+            return { ...p, [pid]: { ...cur, hand: newHand } };
+          });
+          addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnCard.name}"${discardIdx >= 0 ? `, discarded "${handHC[discardIdx].name}"` : ""}.`);
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
+          markFameCardUsedThisTurn(pid, card.instanceId);
+          break;
+        }
+        // v199.233: Rearrange amenity — remove one (auto: weakest/most-stocked), place one (auto: least-stocked).
+        case "once_swap_amenity": {
+          const pdSA = (playerDataRef.current || playerData)[pid] || {};
+          const fields = pdSA.fields || emptyFields();
+          const amTypes = ["campsite", "security", "catering", "portaloo"];
+          // Find amenity to remove — pick the field with highest count of your most-stocked type.
+          let removeField = -1, removeType = null, removeMax = 0;
+          fields.forEach((f, fi) => {
+            if (!f) return;
+            amTypes.forEach(t => {
+              const c = f[t] || 0;
+              if (c > removeMax) { removeMax = c; removeField = fi; removeType = t; }
+            });
+          });
+          if (removeField < 0 || !removeType) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no amenity to remove.`);
+            break;
+          }
+          // Place: least-stocked type, in first field with room.
+          const am = pdSA.amenities || {};
+          const typesSorted = [...amTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0));
+          const placeType = typesSorted[0];
+          let placeField = 0;
+          for (let i = 0; i < fields.length; i++) {
+            const f = fields[i] || {};
+            const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+            if (count < 5) { placeField = i; break; }
+          }
+          setPlayerData(p => {
+            let cur = p[pid] || {};
+            cur = mutateAmenity(cur, removeField, removeType, -1);
+            cur = mutateAmenity(cur, placeField, placeType, +1);
+            return { ...p, [pid]: cur };
+          });
+          addLog("🔥 Fame", `${festName}: "${card.name}" — removed ${AMENITY_LABELS[removeType]} from F${removeField + 1}, placed ${AMENITY_LABELS[placeType]} in F${placeField + 1}.`);
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
+          markFameCardUsedThisTurn(pid, card.instanceId);
+          break;
+        }
+        // v199.233: Scout the Deck — look at top deck card; draw if useful, discard otherwise. For humans, same auto-resolve for now; proper peek-modal is a polish-pass item.
+        case "once_scry_deck": {
+          const deckSC = artistDeckRef.current || artistDeck || [];
+          if (deckSC.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — deck is empty.`);
+            break;
+          }
+          const topSC = deckSC[0];
+          // Simple heuristic: draw if hand < 6 or if card is strong (fame >= 3), else discard.
+          const pdSC = (playerDataRef.current || playerData)[pid] || {};
+          const handSize = (pdSC.hand || []).length;
+          const shouldDraw = handSize < 6 || (topSC.fame || 0) >= 3;
+          setArtistDeck(prev => prev.slice(1));
+          if (shouldDraw) {
+            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), topSC] } }));
+            addLog("🔥 Fame", `${festName}: "${card.name}" — peeked "${topSC.name}", drew it to hand.`);
+          } else {
+            setDiscardPile(dp => [...dp, topSC]);
+            addLog("🔥 Fame", `${festName}: "${card.name}" — peeked "${topSC.name}", discarded it.`);
+          }
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
+          markFameCardUsedThisTurn(pid, card.instanceId);
+          break;
+        }
+        // v199.233: Shop the Industry — draw 1 Fame card, keep or bottom-of-deck. Auto-resolve: keep if different + replace current card.
+        case "once_fame_cycle": {
+          const fDeck = fameDeckRef.current || fameDeck || [];
+          if (fDeck.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — Fame deck is empty.`);
+            break;
+          }
+          const drawnFC = fDeck[0];
+          // Simple heuristic: if the drawn card is a different category than THIS card, replace; else bottom-of-deck.
+          const shouldReplace = drawnFC && drawnFC.category !== card.category;
+          setFameDeck(prev => prev.slice(1));
+          if (shouldReplace) {
+            // Replace THIS card with the drawn one.
+            const replacement = { ...drawnFC, instanceId: `fame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, receivedInSeason: quickYearSeasonRef.current };
+            setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? replacement : c) }));
+            setFameDiscardPile(d => [...d, { ...card }]);
+            addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnFC.name}", replaced this card with it.`);
+            if (drawnFC.trigger === "on_draw") {
+              setTimeout(() => fireFameCardEffect(pid, replacement, { onDraw: true }), 60);
+            }
+          } else {
+            setFameDeck(prev => [...prev, drawnFC]);
+            addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnFC.name}", sent to bottom of Fame deck.`);
+            markFameCardUsedThisTurn(pid, card.instanceId);
+          }
+          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
+          break;
+        }
         case "peek_rearrange_deck":
           // v199.122 BUG FIX: FM_PEEK_REARRANGE is a YOU MAY card but the switch above
           // only handled refresh_pool/refresh_die — the peek effect silently did nothing
@@ -7300,6 +7449,16 @@ export default function Headliners() {
     if (counts.length >= 2 && counts[0].count === counts[1].count) return null;
     return counts[0].pid;
   };
+  // v199.233: check if a player has an active passive Fame card with the given effect.
+  const hasPassiveFameCard = (pid, effect) => {
+    const cards = playerFameCardsRef.current[pid] || [];
+    return cards.some(c => c && !c.disabled && c.category === "passive" && c.effect === effect);
+  };
+  // v199.233: count how many copies of a passive Fame effect a player has (stacks for things like discount).
+  const countPassiveFameCard = (pid, effect) => {
+    const cards = playerFameCardsRef.current[pid] || [];
+    return cards.filter(c => c && !c.disabled && c.category === "passive" && c.effect === effect).length;
+  };
   const hasInfraReward = (pid, rewardId) => {
     if (!infraRewardsModeRef.current) return false;
     const rewards = infraRewardsRef.current || {};
@@ -7329,7 +7488,13 @@ export default function Headliners() {
     if (!artist || !pd) return false;
     if ((pd.fame || 0) < effectiveArtistFame(artist, pid)) return false;
     const a = pd.amenities || {};
-    return (a.campsite||0) >= artist.campCost && (a.security||0) >= artist.securityCost && (a.catering||0) >= artist.cateringCost && (a.portaloo||0) >= artist.portalooCost;
+    // v199.233: FM_PASS_AMEN_DISCOUNT ("Negotiated Rates") — each copy forgives 1 unit of amenity shortfall across all four types.
+    const passiveDiscount = countPassiveFameCard(pid, "passive_amenity_discount");
+    const shortfall = Math.max(0, (artist.campCost || 0) - (a.campsite || 0)) +
+                      Math.max(0, (artist.securityCost || 0) - (a.security || 0)) +
+                      Math.max(0, (artist.cateringCost || 0) - (a.catering || 0)) +
+                      Math.max(0, (artist.portalooCost || 0) - (a.portaloo || 0));
+    return shortfall <= passiveDiscount;
   };
   // Short helper for passing to canAffordArtist as 3rd arg — 1 iff the player holds sec_3.
   const sec3Reduction = (pid) => (hasInfraReward(pid, "sec_3") ? 1 : 0);
@@ -16302,11 +16467,17 @@ export default function Headliners() {
   // v199.52: Fame 4+ once-per-turn dice re-roll. Costs no action — pure Fame-tier perk.
   const handleFameDiceRefresh = () => {
     // v199.95/v199.105/v199.109: called ONLY by the Fame REFRESH_DIE card activation.
-    // Log entry is handled by activateFameCard (which calls this). No log here to
-    // avoid the duplicate "refreshed amenity dice" + "activated 'Refresh Die'" pair.
     const fresh = rollDice();
     setDice(fresh);
     showFloatingBonus("🎲 Dice refreshed!", "#fbbf24");
+    // v199.233: FM_PASS_REFRESH ("Industry Hustle") — +2 tickets per copy when refreshing die.
+    const bonus = countPassiveFameCard(currentPlayerId, "passive_refresh_tix") * 2;
+    if (bonus > 0) {
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
+      addLog("🔥 Fame", `${currentPlayer.festivalName}: Industry Hustle → +${bonus} 🎟️ (die refresh).`);
+      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
+    }
   };
   const handleMoveAmenity = () => { /* moveAmenity removed — amenities are now counters */ };
   const handleArtistAction = () => {
@@ -16859,6 +17030,13 @@ export default function Headliners() {
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, kept] } }));
     addLog(currentPlayer.festivalName, `drew ${kept.name} from deck`);
     trackGoalProgress(currentPlayerId, "artistsSigned");
+    // v199.233: FM_PASS_DECK_DRAW ("Fan Base") — +1 ticket per copy on deck draw.
+    const deckBonus = countPassiveFameCard(currentPlayerId, "passive_deck_draw_tix");
+    if (deckBonus > 0) {
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + deckBonus } }));
+      addLog("🔥 Fame", `${currentPlayer.festivalName}: Fan Base → +${deckBonus} 🎟️ (deck draw).`);
+      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${deckBonus} 🎟️`, "#fbbf24");
+    }
     if (other && artistPool.length >= 1) {
       // Player must swap the unchosen card into a pool slot — bonus fires after swap concludes
       setDeckDrawnCard(other); // store the unchosen card
@@ -18740,6 +18918,14 @@ export default function Headliners() {
     if (needed === 0) {
       addLog(currentPlayer.festivalName, "🔁 Pool refresh — nothing to refresh (all artists have agents)");
       return;
+    }
+    // v199.233: FM_PASS_REFRESH ("Industry Hustle") — +2 tickets per passive copy when the current player refreshes.
+    const refreshBonus = countPassiveFameCard(currentPlayerId, "passive_refresh_tix") * 2;
+    if (refreshBonus > 0) {
+      setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + refreshBonus } }));
+      addLog("🔥 Fame", `${currentPlayer.festivalName}: Industry Hustle → +${refreshBonus} 🎟️ (pool refresh).`);
+      if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${refreshBonus} 🎟️`, "#fbbf24");
+      setTimeout(() => recalcTickets(), 50);
     }
     // v199.126: lift side effects out of setArtistDeck updater.
     const prevDeck = artistDeckRef.current || artistDeck;
