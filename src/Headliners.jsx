@@ -22985,10 +22985,30 @@ export default function Headliners() {
                             return `⭐ Click to draw (Lil Angry — need ${needs.join(" + ")})`;
                           })() : extraHighlight ? `🎸 Draw from deck (${extraDrawPicker.cardName})` : extraDrawPickerActive && extraDrawMet ? `Target reached — click Stop to finish` : canBrowseDeck ? "Click to draw 1 from deck" : "Deck (shown for reference)"}
                         >
-                          <div style={{ fontSize: 24, opacity: deckClickable ? 1 : 0.5 }}>🎴</div>
-                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
-                          <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : laHighlight ? "#fef3c7" : extraHighlight ? "#ede9fe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
-                          {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : laHighlight ? "#fef3c7" : extraHighlight ? "#c4b5fd" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                          {(() => {
+                            // v199.244: Well-Connected (SUM_DECK_FLIP) — reveal the top deck card face-up this season.
+                            const deckFlip = currentSeasonCardIs("SUM_DECK_FLIP") && artistDeck.length > 0;
+                            if (deckFlip) {
+                              const topCard = artistDeck[0];
+                              return <>
+                                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.6, color: "#fcd34d", marginBottom: 2 }}>TOP CARD</div>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: "#f9fafb", textAlign: "center", lineHeight: 1.15, padding: "0 4px", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{topCard?.name || "?"}</div>
+                                <div style={{ fontSize: 8, color: "#94a3b8", marginTop: 2 }}>{topCard?.genre || ""}</div>
+                                <div style={{ display: "flex", gap: 4, fontSize: 8, color: "#cbd5e1", marginTop: 2 }}>
+                                  <span>🔥{topCard?.fame || 0}</span>
+                                  <span>🎟️{topCard?.tickets || 0}</span>
+                                </div>
+                                <div style={{ fontSize: 9, fontWeight: 900, color: fameHighlight ? "#fde68a" : laHighlight ? "#fef3c7" : extraHighlight ? "#ede9fe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd", marginTop: 2 }}>📦 {artistDeck.length}</div>
+                                {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : laHighlight ? "#fef3c7" : extraHighlight ? "#c4b5fd" : "#86efac", fontWeight: 700, marginTop: 1 }}>+1 →</div>}
+                              </>;
+                            }
+                            return <>
+                              <div style={{ fontSize: 24, opacity: deckClickable ? 1 : 0.5 }}>🎴</div>
+                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6 }}>DECK</div>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: fameHighlight ? "#fde68a" : laHighlight ? "#fef3c7" : extraHighlight ? "#ede9fe" : canBrowseDeck ? "#bbf7d0" : "#c4b5fd" }}>{artistDeck.length}</div>
+                              {deckClickable && <div style={{ fontSize: 9, color: fameHighlight ? "#fcd34d" : laHighlight ? "#fef3c7" : extraHighlight ? "#c4b5fd" : "#86efac", fontWeight: 700, marginTop: 2 }}>+1 →</div>}
+                            </>;
+                          })()}
                         </div>;
                       })()}
                       {artistPool.map((a, i) => {
