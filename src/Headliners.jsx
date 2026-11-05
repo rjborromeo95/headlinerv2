@@ -3103,6 +3103,23 @@ export default function Headliners() {
   //   { pid: { autumn: [{ name, isHeadliner, baseTickets }], winter: [...], ... } }
   const seasonBookingsRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
+  // v199.235: watch hand sizes across all players so draws from ANY source credit Scouting/Talent ID. Guarded by phase === "game" to skip initial setup and game-over state changes.
+  useEffect(() => {
+    if (phase !== "game" || gameMode !== "quickYear") return;
+    Object.keys(playerData || {}).forEach(pid => {
+      const curSize = (playerData[pid]?.hand || []).length;
+      const prevSize = prevHandSizesRef.current[pid];
+      if (prevSize == null) {
+        prevHandSizesRef.current[pid] = curSize;
+        return;
+      }
+      if (curSize > prevSize) {
+        const delta = curSize - prevSize;
+        trackArtistDrawn(pid, delta);
+      }
+      prevHandSizesRef.current[pid] = curSize;
+    });
+  }, [playerData, phase, gameMode]);
   // v199.227: calc effects moved below computeArtistGameEndBonuses + computeFameCardEndGameTickets to avoid TDZ error.
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
@@ -3124,6 +3141,12 @@ export default function Headliners() {
   const setCalcSteps = _guardSetter("setCalcSteps", _rawSetCalcSteps);
   const [calcDone, _rawSetCalcDone] = useState(false);
   const setCalcDone = _guardSetter("setCalcDone", _rawSetCalcDone);
+  // v199.235: pending tickets still to be added per player for the current step (counts down to zero). Totals count up in parallel.
+  const [calcPendingDeltas, _rawSetCalcPendingDeltas] = useState({});
+  const setCalcPendingDeltas = _guardSetter("setCalcPendingDeltas", _rawSetCalcPendingDeltas);
+  const calcTickIntervalRef = useRef(null);
+  // v199.235: per-player last-seen hand size. Used by the draw-watcher effect below to credit Scouting/Talent ID for ANY draw path (not just Browse). Reset to current sizes at season boundaries via resetSeasonProgress.
+  const prevHandSizesRef = useRef({});
   const quickYearSeasonRef = useRef("autumn");
   useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
@@ -3668,6 +3691,11 @@ export default function Headliners() {
     setSeasonProgress(fresh);
     seasonCardTicketsRef.current = freshTickets;
     seasonHeadlinerBonusRef.current = { ...freshTickets };
+    // v199.235: snapshot hand sizes so the watcher below only counts draws DURING this season.
+    const pdSnap = playerDataRef.current || playerData || {};
+    (players || []).forEach(p => {
+      prevHandSizesRef.current[p.id] = (pdSnap[p.id]?.hand || []).length;
+    });
     // v199.229: ensure per-season log slots exist for each player for THIS season.
     const curSeason = quickYearSeasonRef.current || "autumn";
     (players || []).forEach(p => {
@@ -4578,7 +4606,12 @@ export default function Headliners() {
     setCalcSteps(steps);
   }, [phase, gameMode]);
 
-  // v199.226/v199.229: advance the calculator step-by-step. Reads totals from breakdowns.
+  // v199.235: tick-by-tick calculator animation. For each step:
+  //  1. Read per-player deltas.
+  //  2. Seed pendingDeltas = deltas (floating +N overlays).
+  //  3. Pause briefly so player sees the +N appear, then start a tick interval.
+  //  4. Each tick: for every pid with pendingDeltas[pid] > 0, +1 to running total, -1 from pending, play tick sfx.
+  //  5. When all pendingDeltas reach 0, clear them, pause briefly, advance to next step.
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (!calcSteps || calcDone) return;
@@ -4586,19 +4619,63 @@ export default function Headliners() {
       setCalcDone(true);
       return;
     }
-    const nextStep = calcStep;
-    const timer = setTimeout(() => {
-      const stepData = calcSteps[nextStep];
-      setCalcTotals(prev => {
-        const next = { ...prev };
-        Object.keys(stepData.breakdowns || {}).forEach(pid => {
-          next[pid] = (next[pid] || 0) + (stepData.breakdowns[pid]?.total || 0);
+    const stepData = calcSteps[calcStep];
+    const stepDeltas = {};
+    (players || []).forEach(p => {
+      stepDeltas[p.id] = stepData.breakdowns?.[p.id]?.total || 0;
+    });
+    const maxDelta = Math.max(0, ...Object.values(stepDeltas));
+    // Zero-delta step: show the label briefly then skip to next.
+    if (maxDelta === 0) {
+      const t = setTimeout(() => setCalcStep(s => s + 1), 900);
+      return () => clearTimeout(t);
+    }
+    // Show pending-delta floats first; start the ticker after a short display pause.
+    setCalcPendingDeltas(stepDeltas);
+    const startDelay = setTimeout(() => {
+      // Cap ticks so very big deltas still finish in reasonable time.
+      const tickInterval = Math.max(50, Math.min(110, Math.floor(1600 / maxDelta)));
+      const interval = setInterval(() => {
+        setCalcPendingDeltas(prev => {
+          const nextPend = { ...prev };
+          let anyLeft = false;
+          let anyIncremented = false;
+          setCalcTotals(ct => {
+            const nextTotals = { ...ct };
+            Object.keys(nextPend).forEach(pid => {
+              if (nextPend[pid] > 0) {
+                nextPend[pid] -= 1;
+                nextTotals[pid] = (nextTotals[pid] || 0) + 1;
+                anyIncremented = true;
+                if (nextPend[pid] > 0) anyLeft = true;
+              }
+            });
+            return nextTotals;
+          });
+          if (anyIncremented) {
+            try { playTone(1100, 0.035, "square", 0.07); } catch { /* ignore audio errors */ }
+          }
+          if (!anyLeft) {
+            clearInterval(interval);
+            // Brief rest between steps so the player registers the completion.
+            setTimeout(() => {
+              setCalcPendingDeltas({});
+              setCalcStep(s => s + 1);
+            }, 600);
+          }
+          return nextPend;
         });
-        return next;
-      });
-      setCalcStep(s => s + 1);
-    }, 2600);
-    return () => clearTimeout(timer);
+      }, tickInterval);
+      // Store interval id on a ref so the cleanup can clear it even if the component unmounts mid-tick.
+      calcTickIntervalRef.current = interval;
+    }, 400);
+    return () => {
+      clearTimeout(startDelay);
+      if (calcTickIntervalRef.current) {
+        clearInterval(calcTickIntervalRef.current);
+        calcTickIntervalRef.current = null;
+      }
+    };
   }, [calcStep, calcSteps, calcDone, phase, gameMode]);
 
   // v199.106: live ticket tally for a single game-end Fame card (shown in brackets on
@@ -16958,7 +17035,7 @@ export default function Headliners() {
     // v199.32: Favours now go to HAND like regular artists (no auto-token).
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
     // v199.224: season-card tracking for draws (Autumn Scouting objective).
-    if (picks && picks.length > 0) setTimeout(() => trackArtistDrawn(currentPlayerId, picks.length), 50);
+    // v199.235: no explicit trackArtistDrawn — the hand-size watcher effect picks up every path.
     picks.forEach(pick => {
       if (!pick) return;
       if (pick.isFavour) {
@@ -26135,14 +26212,8 @@ export default function Headliners() {
               </>)}
             </p>
           </div>}
-          {/* v199.229: ticket calculator — animates through each contribution to the final ticket count before revealing the leaderboard. Shows step label, per-player running totals, a visual "queue bar" that fills with colored segments as steps apply, and the per-artist/per-objective breakdown of whatever step is currently animating. */}
-          {gameMode === "quickYear" && calcSteps && !calcDone && (() => {
-            // Compute the maximum total any player will reach, so the queue bars share a consistent scale.
-            const maxFinalTotal = players.reduce((m, p) => {
-              const sum = calcSteps.reduce((acc, step) => acc + (step.breakdowns?.[p.id]?.total || 0), 0);
-              return Math.max(m, sum);
-            }, 0) || 1;
-            return (
+          {/* v199.235: ticket calculator — tick-by-tick animation with floating +N and big totals (no progress bar). */}
+          {gameMode === "quickYear" && calcSteps && !calcDone && (
             <div style={{ marginTop: 20, marginBottom: 20, padding: 20, borderRadius: 16, background: "rgba(15,14,26,0.65)", border: "1px solid #2a2a4a" }}>
               <div style={{ textAlign: "center", marginBottom: 16 }}>
                 <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>Calculating Festival Totals</div>
@@ -26153,44 +26224,45 @@ export default function Headliners() {
                   Step {Math.min(calcStep + 1, calcSteps.length)} of {calcSteps.length}
                 </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {players.map(p => {
                   const total = calcTotals[p.id] || 0;
                   const pendingBd = calcStep < calcSteps.length ? (calcSteps[calcStep]?.breakdowns?.[p.id] || null) : null;
-                  const pendingDelta = pendingBd?.total || 0;
+                  const pendingDelta = calcPendingDeltas[p.id] || 0;
                   const pendingLines = pendingBd?.lines || [];
-                  // Build the stacked queue-bar segments from applied steps (0..calcStep-1).
-                  const segments = [];
-                  for (let i = 0; i < calcStep && i < calcSteps.length; i++) {
-                    const stepTotal = calcSteps[i].breakdowns?.[p.id]?.total || 0;
-                    if (stepTotal > 0) {
-                      segments.push({ width: (stepTotal / maxFinalTotal) * 100, color: calcSteps[i].color });
-                    }
-                  }
+                  const originalDelta = pendingBd?.total || 0;
                   return (
-                    <div key={p.id} style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(20,18,34,0.7)", border: "1px solid #2a2a4a" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.7fr 1fr", gap: 10, alignItems: "center", marginBottom: 8 }}>
-                        <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
-                        <div style={{ textAlign: "center", color: pendingDelta > 0 ? "#86efac" : "#475569", fontWeight: 800, fontSize: 14, animation: pendingDelta > 0 ? "fadeSlideIn 0.4s" : "none" }}>
-                          {pendingDelta > 0 ? `+${pendingDelta}` : "—"}
+                    <div key={p.id} style={{ padding: "16px 18px", borderRadius: 12, background: "rgba(20,18,34,0.7)", border: "1px solid #2a2a4a" }}>
+                      {/* Festival name on the left, big ticket total on the right. +N pill sits between them when active. */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                        <div style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 15, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {p.festivalName}{p.isAI ? " 🤖" : ""}
                         </div>
-                        <div style={{ textAlign: "right", color: "#fcd34d", fontWeight: 900, fontSize: 22, fontVariantNumeric: "tabular-nums", transition: "color 0.3s" }}>
-                          {total.toLocaleString()} 🎟️
+                        {pendingDelta > 0 && (
+                          <div style={{
+                            padding: "6px 14px", borderRadius: 999,
+                            background: "rgba(34,197,94,0.25)",
+                            border: "2px solid #86efac",
+                            color: "#86efac", fontWeight: 900, fontSize: 18, fontVariantNumeric: "tabular-nums",
+                            boxShadow: "0 0 18px rgba(134,239,172,0.35)",
+                            animation: "fadeSlideIn 0.3s ease-out",
+                          }}>
+                            +{pendingDelta}
+                          </div>
+                        )}
+                        <div style={{
+                          minWidth: 110, textAlign: "right",
+                          color: pendingDelta > 0 ? "#fde68a" : "#fcd34d",
+                          fontWeight: 900, fontSize: 36, fontVariantNumeric: "tabular-nums",
+                          transition: "color 0.2s, transform 0.08s",
+                          textShadow: pendingDelta > 0 ? "0 0 14px rgba(252,211,77,0.5)" : "none",
+                          transform: pendingDelta > 0 ? "scale(1.04)" : "scale(1)",
+                        }}>
+                          {total.toLocaleString()} <span style={{ fontSize: 22 }}>🎟️</span>
                         </div>
                       </div>
-                      {/* Queue bar — segments representing each applied step. */}
-                      <div style={{ height: 10, borderRadius: 999, background: "rgba(15,14,26,0.8)", border: "1px solid #2a2a4a", display: "flex", overflow: "hidden" }}>
-                        {segments.map((seg, i) => (
-                          <div key={i} title={calcSteps[i]?.label} style={{
-                            width: `${seg.width}%`,
-                            background: `linear-gradient(90deg, ${seg.color}cc, ${seg.color}ff)`,
-                            borderRight: i < segments.length - 1 ? "1px solid rgba(15,14,26,0.6)" : "none",
-                            animation: "fadeSlideIn 0.5s ease-out",
-                          }} />
-                        ))}
-                      </div>
-                      {/* Breakdown lines for the currently animating step. */}
-                      {pendingLines.length > 0 && (
+                      {/* Breakdown lines for the currently animating step. Shown only while the +N pill is still ticking down (so player sees WHAT gave them these tickets). */}
+                      {pendingLines.length > 0 && originalDelta > 0 && (
                         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 3 }}>
                           {pendingLines.map((ln, i) => (
                             <div key={i} style={{
@@ -26204,8 +26276,8 @@ export default function Headliners() {
                           ))}
                         </div>
                       )}
-                      {pendingLines.length === 0 && pendingDelta === 0 && calcStep < calcSteps.length && (
-                        <div style={{ marginTop: 8, fontSize: 10, color: "#475569", fontStyle: "italic", textAlign: "center" }}>— nothing from this source —</div>
+                      {originalDelta === 0 && calcStep < calcSteps.length && (
+                        <div style={{ marginTop: 6, fontSize: 10, color: "#475569", fontStyle: "italic", textAlign: "center" }}>— nothing from this source —</div>
                       )}
                     </div>
                   );
@@ -26215,15 +26287,25 @@ export default function Headliners() {
                 <button
                   onClick={() => {
                     if (!calcSteps) return;
+                    if (calcTickIntervalRef.current) {
+                      clearInterval(calcTickIntervalRef.current);
+                      calcTickIntervalRef.current = null;
+                    }
                     setCalcTotals(prev => {
                       const next = { ...prev };
-                      for (let i = calcStep; i < calcSteps.length; i++) {
+                      // First, flush any pending ticks for the CURRENT step.
+                      Object.keys(calcPendingDeltas || {}).forEach(pid => {
+                        next[pid] = (next[pid] || 0) + (calcPendingDeltas[pid] || 0);
+                      });
+                      // Then apply all remaining steps' deltas in full.
+                      for (let i = calcStep + 1; i < calcSteps.length; i++) {
                         Object.keys(calcSteps[i].breakdowns || {}).forEach(pid => {
                           next[pid] = (next[pid] || 0) + (calcSteps[i].breakdowns[pid]?.total || 0);
                         });
                       }
                       return next;
                     });
+                    setCalcPendingDeltas({});
                     setCalcStep(calcSteps.length);
                     setCalcDone(true);
                   }}
@@ -26233,8 +26315,7 @@ export default function Headliners() {
                 </button>
               </div>
             </div>
-            );
-          })()}
+          )}
           {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
               per-year columns (there's only one year). Classic keeps the full per-year grid. */}
           {gameMode === "quickYear" && calcDone ? (
