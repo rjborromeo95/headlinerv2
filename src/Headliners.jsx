@@ -3103,25 +3103,8 @@ export default function Headliners() {
   //   { pid: { autumn: [{ name, isHeadliner, baseTickets }], winter: [...], ... } }
   const seasonBookingsRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
-  // v199.235: per-player last-seen hand size. Used by the draw-watcher effect below to credit Scouting/Talent ID for ANY draw path (not just Browse). Reset to current sizes at season boundaries via resetSeasonProgress. Declared here (not alongside the other calculator refs) so the watcher useEffect's dependency check doesn't TDZ in the minified bundle.
+  // v199.235: hand-size watcher ref declared here; the watcher useEffect that uses it + trackArtistDrawn is moved below the trackArtistDrawn definition to avoid TDZ.
   const prevHandSizesRef = useRef({});
-  // v199.235: watch hand sizes across all players so draws from ANY source credit Scouting/Talent ID. Guarded by phase === "game" to skip initial setup and game-over state changes.
-  useEffect(() => {
-    if (phase !== "game" || gameMode !== "quickYear") return;
-    Object.keys(playerData || {}).forEach(pid => {
-      const curSize = (playerData[pid]?.hand || []).length;
-      const prevSize = prevHandSizesRef.current[pid];
-      if (prevSize == null) {
-        prevHandSizesRef.current[pid] = curSize;
-        return;
-      }
-      if (curSize > prevSize) {
-        const delta = curSize - prevSize;
-        trackArtistDrawn(pid, delta);
-      }
-      prevHandSizesRef.current[pid] = curSize;
-    });
-  }, [playerData, phase, gameMode]);
   // v199.227: calc effects moved below computeArtistGameEndBonuses + computeFameCardEndGameTickets to avoid TDZ error.
   // Progress: { [pid]: { amenitiesPlacedSeason: 0, artistsDrawnSeason: 0, stageOpenedSeason: false, firstBookDone: false, actionsTakenSet: { build:false, book:false, browse:false }, bookedThisSeasonCount: 0, finalTurnBookDone: false, bonusTicketsEarnedSeason: 0, objectiveAwarded: false } }
   const [seasonProgress, _rawSetSeasonProgress] = useState({});
@@ -3828,6 +3811,24 @@ export default function Headliners() {
     seasonProgressRef.current = nextProgress;
     setSeasonProgress(nextProgress);
   };
+
+  // v199.235 (moved v199.238 to escape TDZ): watch hand sizes across all players so draws from ANY source credit Scouting/Talent ID. Guarded by phase === "game" to skip initial setup and game-over state changes. Must be placed AFTER trackArtistDrawn's declaration so the minifier doesn't reorder access.
+  useEffect(() => {
+    if (phase !== "game" || gameMode !== "quickYear") return;
+    Object.keys(playerData || {}).forEach(pid => {
+      const curSize = (playerData[pid]?.hand || []).length;
+      const prevSize = prevHandSizesRef.current[pid];
+      if (prevSize == null) {
+        prevHandSizesRef.current[pid] = curSize;
+        return;
+      }
+      if (curSize > prevSize) {
+        const delta = curSize - prevSize;
+        trackArtistDrawn(pid, delta);
+      }
+      prevHandSizesRef.current[pid] = curSize;
+    });
+  }, [playerData, phase, gameMode]);
 
   // Called when a player opens a NEW stage.
   const trackStageOpened = (pid) => {
