@@ -106,6 +106,14 @@ const FAME_CAP_QUICKYEAR = 5; // v199.9: was 7 (status 5 + overflow 2). Hard cap
 const QUICKYEAR_TOTAL_TURNS = 12;
 const QUICKYEAR_SEASONS = ["autumn", "winter", "spring", "summer"];
 const QUICKYEAR_SEASON_LABELS = { autumn: "Autumn", winter: "Winter", spring: "Spring", summer: "Summer" };
+// v199.257: per-seat player colours. Used wherever a cube, chip or marker should be legible as belonging to a specific player. Supports up to 5 players.
+const PLAYER_COLORS = [
+  { solid: "#3b82f6", soft: "rgba(59,130,246,0.25)", label: "Blue" },
+  { solid: "#ef4444", soft: "rgba(239,68,68,0.25)",  label: "Red" },
+  { solid: "#eab308", soft: "rgba(234,179,8,0.25)",  label: "Yellow" },
+  { solid: "#22c55e", soft: "rgba(34,197,94,0.25)",  label: "Green" },
+  { solid: "#a855f7", soft: "rgba(168,85,247,0.25)", label: "Purple" },
+];
 const QUICKYEAR_SEASON_EMOJI = { autumn: "🍂", winter: "❄️", spring: "🌱", summer: "☀️" };
 // Pool of 13 objectives — draw 8 at game start, pair randomly into the 4 seasons
 // (2 per season), no duplicates, no type-locking. Each objective has a metric key
@@ -7741,6 +7749,12 @@ export default function Headliners() {
   const hasPassiveFameCard = (pid, effect) => {
     const cards = playerFameCardsRef.current[pid] || [];
     return cards.some(c => c && !c.disabled && c.category === "passive" && c.effect === effect);
+  };
+  // v199.257: look up a player's seat colour. Seat is their index in the `players` array at setup time.
+  const getPlayerColor = (pid) => {
+    const idx = players.findIndex(p => p.id === pid);
+    if (idx < 0) return PLAYER_COLORS[0];
+    return PLAYER_COLORS[idx % PLAYER_COLORS.length];
   };
   // v199.233: count how many copies of a passive Fame effect a player has (stacks for things like discount).
   const countPassiveFameCard = (pid, effect) => {
@@ -20373,22 +20387,10 @@ export default function Headliners() {
   if (phase === "game") {
     const handCards = currentPD.hand || [];
     const stageArtists = currentPD.stageArtists || currentPD.stages?.map(() => []) || [];
-    // v199.255: compact panel removed from always-visible render — was overlapping End Turn. Replaced with a "View Management Board" sidebar button that opens the full board modal. The schmooze card tray for the current human is kept as an always-visible mini-panel (since schmooze cards need to be clickable mid-turn).
-    const mgmtSchmoozePanel = useManagementBoard && gameMode === "quickYear" && !currentPlayer?.isAI && (schmoozeHands[currentPlayerId] || []).length > 0 ? (
-      <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: "8px 10px", borderRadius: 10, background: "rgba(10,10,20,0.92)", border: "1px solid rgba(244,114,182,0.3)", width: 220 }}>
-        <div style={{ fontSize: 9, color: "#f9a8d4", fontWeight: 800, letterSpacing: 1.5, marginBottom: 6 }}>📋 YOUR SCHMOOZE CARDS</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {(schmoozeHands[currentPlayerId] || []).map((card, idx) => (
-            <button key={card.instanceId || idx} onClick={() => activateSchmoozeCard(currentPlayerId, card)}
-              style={{ padding: "5px 8px", borderRadius: 4, border: "1px solid rgba(244,114,182,0.4)", background: "rgba(131,24,67,0.25)", color: "#f9fafb", cursor: "pointer", fontSize: 10, textAlign: "left", fontWeight: 700 }}
-              title={card.desc}>
-              {card.name}
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
-    const mgmtBoardPanel = mgmtSchmoozePanel;
+    // v199.255/v199.257: all Management Board affordances moved — no always-visible panel at all.
+    // Board summary → "View Management Board" button in the sidebar opens the full modal.
+    // Schmooze cards → now rendered inside the player's hand drawer (v199.257).
+    const mgmtBoardPanel = null;
     const _removedCompactPanel = useManagementBoard && gameMode === "quickYear" ? (
       <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: "10px 12px", borderRadius: 10, background: "rgba(10,10,20,0.92)", border: "1px solid rgba(134,239,172,0.2)", width: 260 }}>
         <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 2, marginBottom: 8 }}>📋 MANAGEMENT</div>
@@ -23848,10 +23850,13 @@ export default function Headliners() {
               hand cards when both are present. */}
           {(() => {
             const principles = (gameMode === "quickYear") ? (playerPrinciples[currentPlayerId] || []) : [];
-            const totalItems = handCards.length + principles.length;
+            // v199.257: Schmooze cards now live in the hand drawer alongside artists + principles.
+            const schmoozeCards = (useManagementBoard && gameMode === "quickYear") ? (schmoozeHands[currentPlayerId] || []) : [];
+            const totalItems = handCards.length + principles.length + schmoozeCards.length;
             if (totalItems === 0) return null;
             const artistCount = handCards.filter(c => !c.isFavour).length;
             const favourCount = handCards.filter(c => c.isFavour).length;
+            const schmoozeCount = schmoozeCards.length;
             return <div style={{
               // v199.86: hybrid of flex ordering + sticky.
               //   order:10 + marginTop:auto → visually push to the END of the main-area
@@ -23944,6 +23949,28 @@ export default function Headliners() {
                         />;
                     })}
                   </div>
+                  {/* v199.257: Schmooze cards — click to activate. One-time use. */}
+                  {schmoozeCards.length > 0 && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(244,114,182,0.3)" }}>
+                      <div style={{ fontSize: 10, color: "#f9a8d4", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6, textAlign: "center" }}>📋 Schmooze Cards · click to play (one-time use)</div>
+                      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, justifyContent: "center" }}>
+                        {schmoozeCards.map((card, i) => (
+                          <button key={card.instanceId || i}
+                            onClick={() => activateSchmoozeCard(currentPlayerId, card)}
+                            style={{
+                              minWidth: 180, maxWidth: 220, padding: "10px 12px", borderRadius: 10,
+                              border: "2px solid rgba(244,114,182,0.5)", background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.25))",
+                              color: "#f9fafb", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                            }}
+                          >
+                            <div style={{ fontSize: 9, color: "#f9a8d4", fontWeight: 800, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>📋 Schmooze</div>
+                            <div style={{ fontSize: 13, color: "#f9fafb", fontWeight: 800, marginBottom: 4 }}>{card.name}</div>
+                            <div style={{ fontSize: 10, color: "#e2e8f0", lineHeight: 1.4 }}>{card.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {/* v199.46: Dedicated Principles row — separate from the hand so artist
                       flow and principle-spending flow don't visually overlap. */}
                   {gameModeRef.current === "quickYear" && principles.length > 0 && (
@@ -23986,7 +24013,7 @@ export default function Headliners() {
                 }}
                 title={showHand ? "Click to collapse hand" : "Click to expand hand"}
               >
-                Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""})
+                Your Hand ({artistCount} artist{artistCount === 1 ? "" : "s"}{favourCount > 0 ? ` + ${favourCount} favour${favourCount === 1 ? "" : "s"}` : ""}{schmoozeCount > 0 ? ` + ${schmoozeCount} schmooze` : ""})
                 <span style={{ fontSize: 12, opacity: 0.7 }}>{showHand ? "▼" : "▲"}</span>
               </button>
             </div>;
@@ -25766,10 +25793,22 @@ export default function Headliners() {
                       <button onClick={closeView} style={{ position: "absolute", top: 12, right: 12, width: 32, height: 32, borderRadius: 16, border: "1px solid rgba(100,116,139,0.4)", background: "rgba(30,41,59,0.6)", color: "#cbd5e1", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} title="Close">✕</button>
                     )}
                     {/* Title + prompt */}
-                    <div style={{ textAlign: "center", marginBottom: 20 }}>
+                    <div style={{ textAlign: "center", marginBottom: 14 }}>
                       <div style={{ fontSize: 11, color: "#86efac", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700 }}>📋 Management Board</div>
                       <h2 style={{ color: "#f9fafb", fontSize: 22, fontWeight: 800, margin: "6px 0 2px", letterSpacing: 0.5 }}>{isPlacementMode ? "Place your cube" : "Current state"}</h2>
                       <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>{isPlacementMode ? "Click a slot, or the +1 Ticket zone." : "Click outside or press ✕ to close."}</p>
+                    </div>
+                    {/* v199.257: seat-colour legend. */}
+                    <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+                      {players.map(p => {
+                        const col = getPlayerColor(p.id);
+                        return (
+                          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 14, background: col.soft, border: `1px solid ${col.solid}` }}>
+                            <div style={{ width: 10, height: 10, borderRadius: 2, background: col.solid }} />
+                            <div style={{ fontSize: 11, color: col.solid, fontWeight: 700 }}>{p.festivalName}{p.isAI ? " 🤖" : ""}</div>
+                          </div>
+                        );
+                      })}
                     </div>
                     {/* 4 season-objective cards */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 0 }}>
@@ -25844,7 +25883,7 @@ export default function Headliners() {
                           <div style={{ flexShrink: 0, width: 110, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(134,239,172,0.3)", background: "rgba(34,197,94,0.05)", color: "#86efac", fontSize: 10, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", lineHeight: 1.3, textAlign: "center" }}>
                             +1 Ticket<br/>/ Cube<br/>
                             {players.map(p => (
-                              <div key={p.id} style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: p.isAI ? "#fbbf24" : "#86efac" }}>{p.festivalName?.slice(0, 10)}: {managementBoard.dump?.[p.id] || 0}</div>
+                              <div key={p.id} style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: getPlayerColor(p.id).solid }}>{p.festivalName?.slice(0, 10)}: {managementBoard.dump?.[p.id] || 0}</div>
                             ))}
                           </div>
                         )}
@@ -25872,7 +25911,7 @@ export default function Headliners() {
                                         const slot = colArr[ri];
                                         const isNext = ri === nextVacant;
                                         const owner = slot ? players.find(p => p.id === slot) : null;
-                                        const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
+                                        const ownerColor = slot ? getPlayerColor(slot).solid : "#64748b";
                                         return (
                                           <button key={ri}
                                             onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
@@ -25903,7 +25942,7 @@ export default function Headliners() {
                                         const slot = colArr[4];
                                         const isNext = nextVacant === 4;
                                         const owner = slot ? players.find(p => p.id === slot) : null;
-                                        const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
+                                        const ownerColor = slot ? getPlayerColor(slot).solid : "#64748b";
                                         return (
                                           <button
                                             onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, 4); setPendingCubePlacement(null); } }}
