@@ -3077,6 +3077,9 @@ export default function Headliners() {
   // When a player should place a cube (after an action). { pid } | null.
   const [pendingCubePlacement, _rawSetPendingCubePlacement] = useState(null);
   const setPendingCubePlacement = _guardSetter("setPendingCubePlacement", _rawSetPendingCubePlacement);
+  // v199.255: view-only Management Board modal (opened via sidebar button).
+  const [showMgmtBoardView, _rawSetShowMgmtBoardView] = useState(false);
+  const setShowMgmtBoardView = _guardSetter("setShowMgmtBoardView", _rawSetShowMgmtBoardView);
   // Per-player flags for pending Schmooze card effects targeted at them.
   // { [pid]: { badMouth: true, rumour: true, dealMakingFrom: targetPid } }
   const [schmoozeTargetFlags, _rawSetSchmoozeTargetFlags] = useState({});
@@ -20366,8 +20369,23 @@ export default function Headliners() {
   if (phase === "game") {
     const handCards = currentPD.hand || [];
     const stageArtists = currentPD.stageArtists || currentPD.stages?.map(() => []) || [];
-    // v199.254: Slimmer always-visible Management Board indicator. Horizontal fill bars per row, score for each player as a chip, schmooze cards for the current human as pills.
-    const mgmtBoardPanel = useManagementBoard && gameMode === "quickYear" ? (
+    // v199.255: compact panel removed from always-visible render — was overlapping End Turn. Replaced with a "View Management Board" sidebar button that opens the full board modal. The schmooze card tray for the current human is kept as an always-visible mini-panel (since schmooze cards need to be clickable mid-turn).
+    const mgmtSchmoozePanel = useManagementBoard && gameMode === "quickYear" && !currentPlayer?.isAI && (schmoozeHands[currentPlayerId] || []).length > 0 ? (
+      <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: "8px 10px", borderRadius: 10, background: "rgba(10,10,20,0.92)", border: "1px solid rgba(244,114,182,0.3)", width: 220 }}>
+        <div style={{ fontSize: 9, color: "#f9a8d4", fontWeight: 800, letterSpacing: 1.5, marginBottom: 6 }}>📋 YOUR SCHMOOZE CARDS</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {(schmoozeHands[currentPlayerId] || []).map((card, idx) => (
+            <button key={card.instanceId || idx} onClick={() => activateSchmoozeCard(currentPlayerId, card)}
+              style={{ padding: "5px 8px", borderRadius: 4, border: "1px solid rgba(244,114,182,0.4)", background: "rgba(131,24,67,0.25)", color: "#f9fafb", cursor: "pointer", fontSize: 10, textAlign: "left", fontWeight: 700 }}
+              title={card.desc}>
+              {card.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null;
+    const mgmtBoardPanel = mgmtSchmoozePanel;
+    const _removedCompactPanel = useManagementBoard && gameMode === "quickYear" ? (
       <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: "10px 12px", borderRadius: 10, background: "rgba(10,10,20,0.92)", border: "1px solid rgba(134,239,172,0.2)", width: 260 }}>
         <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 2, marginBottom: 8 }}>📋 MANAGEMENT</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -22708,6 +22726,18 @@ export default function Headliners() {
                     boxShadow: browseActive ? "0 0 12px rgba(34,197,94,0.5)" : "none",
                     ...dimIf(browseActive),
                   }}>🎤 Browse{browseActive ? picksLabel : ""}</button>
+                  {/* v199.255: View Management Board — opens the full board modal (read-only). */}
+                  {useManagementBoard && gameMode === "quickYear" && (
+                    <button onClick={() => setShowMgmtBoardView(true)} style={{
+                      ...actionBtnBase,
+                      marginTop: 2,
+                      padding: "8px 12px",
+                      background: "rgba(34,197,94,0.1)",
+                      border: "1px solid rgba(134,239,172,0.4)",
+                      color: "#86efac",
+                      fontSize: 11,
+                    }}>📋 View Management Board</button>
+                  )}
                   {/* v199.92: Undo button in the sidebar — visible when an undo snapshot
                       exists AND the player hasn't drawn from the deck yet. Deck draws reveal
                       information (the drawn card), so undoing after a draw would let the
@@ -25717,20 +25747,25 @@ export default function Headliners() {
               </div>,
               document.body
             )}
-            {/* v199.254: Management Board — place cube modal, rebuilt to the mockup design. Outer rim shows a 12-turn calendar split into 4 seasons with the current season objective cards. Inner board uses horizontal rows (cubes 1–4 are score cubes with an inline score label, cube 5 is a milestone cube visually separated with a gap + milestone label). Dump zone sits on the LEFT as a simple +1 TICKET / CUBE marker. */}
-            {pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId && typeof document !== "undefined" && createPortal((() => {
+            {/* v199.254/v199.255: Management Board full view. Opens in two modes — PLACEMENT (click-to-place cube, no Close button) and VIEW (read-only, Close button, no placement affordances). The sidebar "View Management Board" button sets showMgmtBoardView; the per-action flow sets pendingCubePlacement. */}
+            {((pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId) || (showMgmtBoardView && useManagementBoard && gameMode === "quickYear")) && typeof document !== "undefined" && createPortal((() => {
+              const isPlacementMode = !!(pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId);
+              const closeView = () => setShowMgmtBoardView(false);
               const currentTurn = QUICKYEAR_TOTAL_TURNS - (turnsLeft[currentPlayerId] || QUICKYEAR_TOTAL_TURNS) + 1;
               const SEASON_BOUNDS = { autumn: [1, 3], winter: [4, 6], spring: [7, 9], summer: [10, 12] };
               const SEASON_ORDER = ["autumn", "winter", "spring", "summer"];
               const curSeason = quickYearSeason || "autumn";
               return (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "fadeSlideIn 0.25s" }}>
-                  <div style={{ padding: 24, borderRadius: 20, background: "rgba(10,10,20,0.98)", border: "1px solid #86efac", boxShadow: "0 0 80px rgba(134,239,172,0.15)", maxWidth: 1040, width: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+                <div onClick={!isPlacementMode ? closeView : undefined} style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.92)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "fadeSlideIn 0.25s", cursor: !isPlacementMode ? "pointer" : "default" }}>
+                  <div onClick={e => e.stopPropagation()} style={{ padding: 24, borderRadius: 20, background: "rgba(10,10,20,0.98)", border: "1px solid #86efac", boxShadow: "0 0 80px rgba(134,239,172,0.15)", maxWidth: 1040, width: "100%", maxHeight: "92vh", overflowY: "auto", cursor: "default", position: "relative" }}>
+                    {!isPlacementMode && (
+                      <button onClick={closeView} style={{ position: "absolute", top: 12, right: 12, width: 32, height: 32, borderRadius: 16, border: "1px solid rgba(100,116,139,0.4)", background: "rgba(30,41,59,0.6)", color: "#cbd5e1", cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} title="Close">✕</button>
+                    )}
                     {/* Title + prompt */}
                     <div style={{ textAlign: "center", marginBottom: 20 }}>
                       <div style={{ fontSize: 11, color: "#86efac", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700 }}>📋 Management Board</div>
-                      <h2 style={{ color: "#f9fafb", fontSize: 22, fontWeight: 800, margin: "6px 0 2px", letterSpacing: 0.5 }}>Place your cube</h2>
-                      <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>Click a slot, or the +1 Ticket zone.</p>
+                      <h2 style={{ color: "#f9fafb", fontSize: 22, fontWeight: 800, margin: "6px 0 2px", letterSpacing: 0.5 }}>{isPlacementMode ? "Place your cube" : "Current state"}</h2>
+                      <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>{isPlacementMode ? "Click a slot, or the +1 Ticket zone." : "Click outside or press ✕ to close."}</p>
                     </div>
                     {/* 4 season-objective cards */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 0 }}>
@@ -25794,12 +25829,21 @@ export default function Headliners() {
                       </div>
                       {/* Inner board — 3 horizontal rows */}
                       <div style={{ display: "flex", gap: 14, alignItems: "stretch" }}>
-                        {/* +1 TICKET / CUBE marker on the left */}
-                        <button onClick={() => { placeCubeOnBoard(currentPlayerId, "dump", 0); setPendingCubePlacement(null); }}
-                          style={{ flexShrink: 0, width: 110, padding: "8px 10px", borderRadius: 10, border: "1px dashed #86efac", background: "rgba(34,197,94,0.08)", color: "#86efac", cursor: "pointer", fontSize: 10, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", lineHeight: 1.3, textAlign: "center" }}
-                        >
-                          +1 Ticket<br/>/ Cube<br/><span style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: "#94a3b8" }}>(you: {managementBoard.dump?.[currentPlayerId] || 0})</span>
-                        </button>
+                        {/* +1 TICKET / CUBE marker on the left — placement-mode only, else inert label */}
+                        {isPlacementMode ? (
+                          <button onClick={() => { placeCubeOnBoard(currentPlayerId, "dump", 0); setPendingCubePlacement(null); }}
+                            style={{ flexShrink: 0, width: 110, padding: "8px 10px", borderRadius: 10, border: "1px dashed #86efac", background: "rgba(34,197,94,0.08)", color: "#86efac", cursor: "pointer", fontSize: 10, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", lineHeight: 1.3, textAlign: "center" }}
+                          >
+                            +1 Ticket<br/>/ Cube<br/><span style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: "#94a3b8" }}>(you: {managementBoard.dump?.[currentPlayerId] || 0})</span>
+                          </button>
+                        ) : (
+                          <div style={{ flexShrink: 0, width: 110, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(134,239,172,0.3)", background: "rgba(34,197,94,0.05)", color: "#86efac", fontSize: 10, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", lineHeight: 1.3, textAlign: "center" }}>
+                            +1 Ticket<br/>/ Cube<br/>
+                            {players.map(p => (
+                              <div key={p.id} style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0, textTransform: "none", color: p.isAI ? "#fbbf24" : "#86efac" }}>{p.festivalName?.slice(0, 10)}: {managementBoard.dump?.[p.id] || 0}</div>
+                            ))}
+                          </div>
+                        )}
                         {/* Rows */}
                         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
                           {MGMT_COLUMNS.map((col, rowIdx) => {
@@ -25827,17 +25871,17 @@ export default function Headliners() {
                                         const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
                                         return (
                                           <button key={ri}
-                                            onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
-                                            disabled={!isNext}
+                                            onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
+                                            disabled={!isNext || !isPlacementMode}
                                             style={{
                                               height: 44, borderRadius: 8,
-                                              border: slot ? `2px solid ${ownerColor}` : isNext ? `2px dashed ${col.color}` : "1px solid rgba(100,116,139,0.3)",
-                                              background: slot ? `${ownerColor}33` : isNext ? "rgba(34,197,94,0.1)" : "transparent",
-                                              cursor: isNext ? "pointer" : "default",
-                                              fontSize: 10, fontWeight: 700, color: isNext ? "#86efac" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
+                                              border: slot ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed ${col.color}` : "1px solid rgba(100,116,139,0.3)",
+                                              background: slot ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(34,197,94,0.1)" : "transparent",
+                                              cursor: (isNext && isPlacementMode) ? "pointer" : "default",
+                                              fontSize: 10, fontWeight: 700, color: (isNext && isPlacementMode) ? "#86efac" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
                                             }}
                                           >
-                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : isNext ? "Place →" : ""}
+                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "Place →" : ""}
                                           </button>
                                         );
                                       })}
@@ -25858,17 +25902,17 @@ export default function Headliners() {
                                         const ownerColor = owner?.isAI ? "#fbbf24" : "#86efac";
                                         return (
                                           <button
-                                            onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, 4); setPendingCubePlacement(null); } }}
-                                            disabled={!isNext}
+                                            onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, 4); setPendingCubePlacement(null); } }}
+                                            disabled={!isNext || !isPlacementMode}
                                             style={{
                                               width: 70, height: 44, borderRadius: 8,
-                                              border: slot ? `2px solid ${ownerColor}` : isNext ? `2px dashed #fcd34d` : "1px solid rgba(100,116,139,0.3)",
-                                              background: slot ? `${ownerColor}33` : isNext ? "rgba(252,211,77,0.1)" : "transparent",
-                                              cursor: isNext ? "pointer" : "default",
-                                              fontSize: 10, fontWeight: 700, color: isNext ? "#fcd34d" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
+                                              border: slot ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed #fcd34d` : "1px solid rgba(100,116,139,0.3)",
+                                              background: slot ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(252,211,77,0.1)" : "transparent",
+                                              cursor: (isNext && isPlacementMode) ? "pointer" : "default",
+                                              fontSize: 10, fontWeight: 700, color: (isNext && isPlacementMode) ? "#fcd34d" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
                                             }}
                                           >
-                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : isNext ? "🏆 Place" : ""}
+                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "🏆 Place" : ""}
                                           </button>
                                         );
                                       })()}
