@@ -16312,7 +16312,27 @@ export default function Headliners() {
     // Block AI turn while a human-facing modal is open — otherwise the AI plays beneath it.
     if (seasonEndScoring) return;
     if (hotlineSpinPhase !== "idle" && hotlineSpinQueue.length > 0) return;
-    if (fameDrawModal) return;
+    // v199.247: if the Fame modal belongs to a different player than currentPlayer, it's orphaned (e.g. set by a delayed trackArtistDrawn after turn moved on). Auto-pick card 0, drop it, and let AI proceed — don't stall.
+    if (fameDrawModal) {
+      if (fameDrawModal.pid !== currentPlayerId) {
+        const orphanPid = fameDrawModal.pid;
+        const choices = fameDrawModal.choices || [];
+        if (choices.length > 0) {
+          const stamped = { ...choices[0], receivedInSeason: quickYearSeasonRef.current };
+          if (stamped.category === "immediate") stamped.disabled = true;
+          setPlayerFameCards(pc => ({ ...pc, [orphanPid]: [...(pc[orphanPid] || []), stamped] }));
+          setFameDiscardPile(d => [...d, ...choices.slice(1)]);
+          const orphanFest = players.find(pl => pl.id === orphanPid)?.festivalName || "?";
+          addLog("🔥 Fame", `${orphanFest}: Fame draw auto-picked (orphaned past turn end) — kept "${stamped.name}".`);
+          if (stamped.trigger === "on_draw") setTimeout(() => fireFameCardEffect(orphanPid, stamped, { onDraw: true }), 60);
+        }
+        setFameDrawModal(null);
+        fameDrawInProgressRef.current = false;
+        // Fall through — AI can step next cycle.
+      } else {
+        return;
+      }
+    }
     if (fameAmenityPending) return;
     if (fameSeasonPicker) return;
     if (fameDrawPicker) return;
@@ -17155,8 +17175,14 @@ export default function Headliners() {
   const finishDraw2 = (picks) => {
     // v199.32: Favours now go to HAND like regular artists (no auto-token).
     setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...p[currentPlayerId].hand, ...picks] } }));
+    // v199.247: trackArtistDrawn fires SYNCHRONOUSLY here (was via watcher useEffect which could run after turn had moved on, so Fame-card modal landed with pid != currentPlayerId and the render guard silently dropped it). Also sync prevHandSizesRef so the watcher doesn't re-count these draws.
+    if (picks && picks.length > 0) {
+      const pdCur = (playerDataRef.current || playerData)[currentPlayerId] || {};
+      const newHandLen = (pdCur.hand || []).length + picks.length;
+      prevHandSizesRef.current[currentPlayerId] = newHandLen;
+      trackArtistDrawn(currentPlayerId, picks.length);
+    }
     // v199.224: season-card tracking for draws (Autumn Scouting objective).
-    // v199.235: no explicit trackArtistDrawn — the hand-size watcher effect picks up every path.
     picks.forEach(pick => {
       if (!pick) return;
       if (pick.isFavour) {
@@ -17207,6 +17233,13 @@ export default function Headliners() {
       addLog(currentPlayer.festivalName, `drew ${card.name} from deck`);
       setLastActionFor(currentPlayerId, `drew ${card.name} from the deck`);
       trackGoalProgress(currentPlayerId, "artistsSigned");
+      // v199.247: synchronous Scouting objective check (same reason as finishDraw2) + ref sync so the watcher doesn't re-count.
+      {
+        const pdCur = (playerDataRef.current || playerData)[currentPlayerId] || {};
+        const newHandLen = (pdCur.hand || []).length + 1;
+        prevHandSizesRef.current[currentPlayerId] = newHandLen;
+        trackArtistDrawn(currentPlayerId, 1);
+      }
       // v199.245: Fan Base via shared helper.
       creditFanBaseDeckDraw(currentPlayerId, 1);
       applyDrawArtistsBonus(currentPlayerId);
