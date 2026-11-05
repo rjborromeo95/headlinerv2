@@ -15546,7 +15546,9 @@ export default function Headliners() {
       setPhase("game");
     }
     setTimeout(() => recalcTickets(), 50); addLogH("Year 1 Begins", "year"); addLogH(`${players[0]?.festivalName}'s Turn`, "turn");
-    setShowYearAnnouncement(true);
+    // v199.256: in Quick Play, skip the standalone year-announcement popup — its microtrend info is now shown inside the consolidated turn-start modal. Classic keeps the year reveal as a distinct beat.
+    if (gameModeRef.current === "quickYear") setShowTurnStart(true);
+    else setShowYearAnnouncement(true);
   };
 
   // v135: promote the next queued objective picker into the active slot when the current
@@ -19850,7 +19852,9 @@ export default function Headliners() {
     setTimeout(() => recalcTickets(), 50);
     addLogH(`Year ${ny} Begins`, "year");
     const fp = players.find(p => p.id === no[0]); if (fp) addLogH(`${fp.festivalName}'s Turn`, "turn");
-    setShowYearAnnouncement(true);
+    // v199.256: same consolidated-modal path as game-start.
+    if (gameModeRef.current === "quickYear") setShowTurnStart(true);
+    else setShowYearAnnouncement(true);
   };
 
   const winner = useMemo(() => {
@@ -26073,8 +26077,8 @@ export default function Headliners() {
               document.body
             )}
             {/* v199.224: Season card reveal modal — shows the drawn card at season start. */}
-            {/* v199.253: suppress the standalone seasonCardReveal — its content now renders inside showTurnStart. Previously both modals stacked, making the UI crowded. */}
-            {seasonCardReveal && !showTurnStart && typeof document !== "undefined" && createPortal(
+            {/* v199.253/v199.256: suppress the standalone seasonCardReveal — its content now renders inside showTurnStart. Also suppress if showYearAnnouncement is open (Classic game-start sequence). */}
+            {seasonCardReveal && !showTurnStart && !showYearAnnouncement && typeof document !== "undefined" && createPortal(
               <div onClick={() => setSeasonCardReveal(null)} style={{
                 position: "fixed", inset: 0, background: "rgba(15,14,26,0.85)",
                 zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center",
