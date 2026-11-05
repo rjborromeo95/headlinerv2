@@ -531,83 +531,49 @@ const FAME_VP = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
 //   after_book: 4 · reactive: 3 · season_start: 7 · game_end: 6
 //   Total deck: 37 instances.
 const FAME_CARDS = [
-  // YOU MAY — manual activation, 0 action cost. Category badge renders "YOU MAY" so
-  // names here are the EFFECT only.
-  { id: "FM_REFRESH_POOL",     name: "Refresh Pool",              category: "you_may",      trigger: "any_time",    effect: "refresh_pool",                   copies: 2, desc: "On your turn (any time): refresh the artist pool." },
-  { id: "FM_PEEK_REARRANGE",   name: "Peek + Rearrange Deck",     category: "you_may",      trigger: "any_time",    effect: "peek_rearrange_deck",            copies: 1, desc: "On your turn (any time): look at the top 3 artists of the deck and re-arrange them in any order." },
+  // v199.248: revised catalog per River's set.
+  // YOU MAY — manual activation, 0 action cost.
+  { id: "FM_REFRESH_POOL",     name: "Refresh Pool",              category: "you_may",      trigger: "any_time",    effect: "refresh_pool",                   copies: 3, desc: "On your turn (any time): refresh the artist pool." },
+  { id: "FM_PEEK_REARRANGE",   name: "Peek + Rearrange Deck",     category: "you_may",      trigger: "any_time",    effect: "peek_rearrange_deck",            copies: 2, desc: "On your turn (any time): look at the top 3 artists of the deck and re-arrange them in any order." },
   { id: "FM_REFRESH_DIE",      name: "Refresh Die",               category: "you_may",      trigger: "any_time",    effect: "refresh_die",                    copies: 3, desc: "On your turn (any time): refresh the amenity die." },
-  // v199.130: new YOU MAY card. Cycle the active microtrend to the next one. Lets a player
-  // who can't meet the current microtrend force the next one — and potentially claim it
-  // the same turn.
-  { id: "FM_CYCLE_MICROTREND", name: "Cycle Microtrend",          category: "you_may",      trigger: "any_time",    effect: "cycle_microtrend",               copies: 1, desc: "On your turn (any time): discard the current microtrend and reveal the next one." },
-  { id: "FM_TREND_REWRITER",   name: "Trend Rewriter",            category: "you_may",      trigger: "any_time",    effect: "trend_rewriter_once_per_season", copies: 1, desc: "Once per season, on your turn: discard the current microtrend of your choice (genre or amenity) and gain its reward — an artist of that genre free from the pool (Fame required), or that amenity placed on a field." },
-  // THIS FAME CARD — passive bonus Fame on draw. Badge renders "THIS FAME CARD".
-  { id: "FM_SELF_2FAME",       name: "Counts as 2 Fame",          category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "Adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
-  // AFTER BUILD — badge renders "AFTER BUILD ACTION".
-  { id: "FM_BUILD_AMENITY",    name: "Gain 1 Amenity",            category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",          copies: 1, desc: "After you take the Build action: gain another amenity from the die." },
-  { id: "FM_BUILD_AM_OR_DRAW", name: "Gain Amenity or Draw Artist", category: "after_build", trigger: "after_build", effect: "gain_amenity_or_draw_1_artist", copies: 1, desc: "After you take the Build action: gain another amenity OR draw 1 artist." },
-  { id: "FM_BUILD_DRAW2_KEEP1",name: "Draw 2, Keep 1",            category: "after_build",  trigger: "after_build", effect: "draw_2_keep_1",                  copies: 1, desc: "After you take the Build action: draw 2 artists, keep 1, discard the other." },
-  { id: "FM_BUILD_DRAW2",      name: "Draw 2 Artists",            category: "after_build",  trigger: "after_build", effect: "draw_2_artists",                 copies: 1, desc: "After you take the Build action: draw 2 artists." },
-  { id: "FM_BUILD_ANY_AMEN",   name: "Any Amenity (Free Choice)", category: "after_build",  trigger: "after_build", effect: "take_any_amenity",               copies: 1, desc: "After you take the Build action: take any amenity of your choice (not limited to the die)." },
-  // AFTER BROWSE — badge renders "AFTER BROWSE ACTION".
-  { id: "FM_BROWSE_AMENITY",   name: "Gain 1 Amenity",            category: "after_browse", trigger: "after_browse", effect: "gain_amenity_from_die",         copies: 1, desc: "After you take the Browse action: gain an amenity from the die." },
-  { id: "FM_BROWSE_AM_OR_DRAW",name: "Gain Amenity or Draw Artist", category: "after_browse", trigger: "after_browse", effect: "gain_amenity_or_draw_1_artist", copies: 1, desc: "After you take the Browse action: gain an amenity OR draw 1 artist." },
-  { id: "FM_BROWSE_DRAW3_KEEP1",name: "Draw 3, Keep 1",           category: "after_browse", trigger: "after_browse", effect: "draw_3_keep_1",                 copies: 1, desc: "After you take the Browse action: draw 3 artists, keep 1, discard the others." },
-  { id: "FM_BROWSE_DISCARD_FAME",name: "Discard 2 → +1 Fame",     category: "after_browse", trigger: "after_browse", effect: "discard_2_hand_gain_1_fame",    copies: 1, desc: "After you take the Browse action: discard 2 artists from your hand to gain 1 Fame." },
-  // AFTER BOOK — badge renders "AFTER BOOK ACTION".
-  { id: "FM_BOOK_DRAW_GENRE",  name: "Draw Genre-Match",          category: "after_book",   trigger: "after_book",  effect: "draw_keep_if_genre_match",       copies: 1, desc: "After you book an artist: draw an additional artist. Keep if any genre matches the played artist." },
-  // v199.221: Universal Favour removed — "finishing with turns to spare" fix. Was a
-  // once-per-game free pool play that effectively added a 13th action.
-  { id: "FM_BOOK_AM_OR_DRAW",  name: "Gain Amenity or Draw Artist", category: "after_book", trigger: "after_book",  effect: "gain_amenity_or_draw_1_artist",  copies: 1, desc: "After you book an artist: gain an amenity OR draw 1 artist." },
-  { id: "FM_BOOK_PLACE_AM",    name: "Gain 1 Amenity",            category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an amenity from the amenity die." },
-  // REACTIVE — badge renders per-trigger label ("WHEN OPPONENT BUILDS" etc.).
-  { id: "FM_REACT_BUILD",      name: "Copy Amenity",              category: "reactive",     trigger: "opp_build",   effect: "gain_copy_amenity",              copies: 1, desc: "When another player builds an amenity, gain a copy of that amenity." },
-  { id: "FM_REACT_BOOK",       name: "Draw 1 Artist",             category: "reactive",     trigger: "opp_book",    effect: "draw_1_artist",                  copies: 1, desc: "When another player books an artist, draw 1 artist." },
-  { id: "FM_REACT_BROWSE",     name: "Draw 1 Artist",             category: "reactive",     trigger: "opp_browse",  effect: "draw_1_artist",                  copies: 1, desc: "When another player browses the pool, draw 1 artist." },
-  // ON SEASON START — badge renders "AT SEASON START".
-  // v199.176: former FM_SS_PLAY_HEADLINER retooled as a one-time YOU-MAY. Click on your
-  // turn → book an artist from your hand you can afford on an empty slot, Fame-cost free.
-  // After it fires, the card is disabled in the tray (uses the existing `disabled` flag
-  // from Remi Wolf / RAYE fame-kill). The ID is reused so saved games with the old card
-  // still resolve to something.
-  // v199.221: Play an Artist (Once) removed — same reason as Universal Favour.
-  { id: "FM_SS_GAIN_1_FAME",   name: "Gain +1 Fame",              category: "season_start", trigger: "season_start", effect: "ss_gain_1_fame",                copies: 1, desc: "Season start: gain 1 Fame." },
-  { id: "FM_SS_PLACE_AMEN",    name: "Place 1 Amenity",           category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 1, desc: "Season start: place 1 amenity of your choice." },
-  { id: "FM_SS_DRAW_TO_FULL",  name: "Draw Until Hand Full",      category: "season_start", trigger: "season_start", effect: "ss_draw_until_hand_full",       copies: 1, desc: "Season start: draw artists until your hand is full (8)." },
-  // v199.221: Open a Stage + Play (Once) removed — same reason. The stage-open
-  // utility is better served through Festival Principles anyway.
-  { id: "FM_SS_CYCLE",         name: "Discard N → Draw N",        category: "season_start", trigger: "season_start", effect: "ss_discard_n_draw_n",           copies: 1, desc: "Season start: discard any number of artists, then draw that many from the deck." },
-  // v199.130: FM_SS_RECLAIM (Reclaim 2 from discard) removed as requested.
-  // v199.221: Play Any Artist Free removed. Was a season-start free play — different
-  // trigger but same ceiling-raising effect as Universal Favour et al.
-  // v199.222: IMMEDIATE cards — fire the moment they're picked from the draw modal, then
-  // go straight to discard (never added to the Fame tray). Replaces the free-play ceiling
-  // that was removed in v199.221 with punchier, less action-saving rewards.
-  { id: "FM_IMM_2_AMEN",       name: "Instant: Place 2 Amenities",category: "immediate",    trigger: "on_draw",     effect: "immediate_place_2_amenities",    copies: 3, desc: "Immediately place 2 amenities of your choice." },
-  { id: "FM_IMM_DRAW_4",       name: "Instant: Draw 4 Artists",   category: "immediate",    trigger: "on_draw",     effect: "immediate_draw_4_pool",          copies: 3, desc: "Immediately draw 4 artists from the pool." },
-  { id: "FM_IMM_FAME",         name: "Instant: +1 Fame",          category: "immediate",    trigger: "on_draw",     effect: "immediate_gain_fame",            copies: 3, desc: "Immediately gain an extra 1 Fame." },
-  // v199.176: season-active cards. Click once per turn to activate; expire at end of the
-  // season drawn in. The card instance tracks its received-in season via `receivedInSeason`
-  // (stamped at draw time). When the current season differs, the card renders greyed out
-  // and the click handler no-ops. Can be used on the draw-turn itself.
-  { id: "FM_SA_DRAW_1",        name: "Draw 1 Artist / Turn",      category: "season_active", trigger: "any_time",   effect: "sa_draw_1_artist",              copies: 1, desc: "Every turn this season (click to activate): draw 1 artist. Expires at the end of the season drawn." },
-  { id: "FM_SA_PLACE_1",       name: "Place 1 Amenity / Turn",    category: "season_active", trigger: "any_time",   effect: "sa_place_amenity_from_die",     copies: 1, desc: "Every turn this season (click to activate): place 1 amenity from the available amenity dice. Expires at the end of the season drawn." },
-  // GAME END — badge renders "AT GAME END".
-  { id: "FM_END_6",            name: "+6 Tickets",                category: "game_end",     trigger: "game_end",     effect: "end_6",                         copies: 1, desc: "Game end: sell 6 tickets." },
-  { id: "FM_END_LOW_FAME",     name: "+1 per Low-Fame Played",    category: "game_end",     trigger: "game_end",     effect: "end_per_low_fame_artist",       copies: 1, desc: "Game end: sell 1 ticket for every artist you have played that costs less than 2 Fame." },
-  { id: "FM_END_PAIR_SP",      name: "+3 per Sec+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_sec_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of security and portaloos." },
-  { id: "FM_END_PAIR_CP",      name: "+3 per Cat+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
-  { id: "FM_END_STAGE",        name: "+2 per Stage",              category: "game_end",     trigger: "game_end",     effect: "end_per_stage_2",               copies: 1, desc: "Game end: sell 2 tickets per stage." },
-  { id: "FM_END_PAIR_CS",      name: "+3 per Sec+Cat Pair",       category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_sec",              copies: 1, desc: "Game end: sell 3 tickets for every pair of security and catering vans." },
-  // v199.233: new engine cards. Once-a-turn effects reuse the you_may category (click to activate, once per turn, no seasonal expiry). Passives fire automatically from their hook.
   { id: "FM_ONCE_HAND_CYCLE",  name: "Cycle Hand",                category: "you_may",      trigger: "any_time",    effect: "once_hand_cycle",                copies: 3, desc: "Once a turn: draw 1 artist (from the pool or deck), then discard 1 artist from your hand." },
   { id: "FM_ONCE_SWAP_AMEN",   name: "Rearrange",                 category: "you_may",      trigger: "any_time",    effect: "once_swap_amenity",              copies: 3, desc: "Once a turn: remove 1 amenity from your festival, then place a new amenity of your choice." },
   { id: "FM_ONCE_SCRY",        name: "Scout the Deck",            category: "you_may",      trigger: "any_time",    effect: "once_scry_deck",                 copies: 2, desc: "Once a turn: look at the top card of the artist deck. You may draw it to hand or discard it." },
   { id: "FM_ONCE_FAMECYCLE",   name: "Shop the Industry",         category: "you_may",      trigger: "any_time",    effect: "once_fame_cycle",                copies: 2, desc: "Once a turn: draw 1 Fame card. You may put it on the bottom of the Fame deck, or replace THIS card with that one." },
-  // Always-on passives.
-  { id: "FM_PASS_AMEN_DISCOUNT",name: "Negotiated Rates",         category: "passive",      trigger: "passive",     effect: "passive_amenity_discount",       copies: 3, desc: "Always on: artists cost 1 less amenity to play (any one amenity type of your choice per booking)." },
-  { id: "FM_PASS_DECK_DRAW",   name: "Fan Base",                  category: "passive",      trigger: "passive",     effect: "passive_deck_draw_tix",          copies: 3, desc: "Always on: when you draw an artist from the deck, sell 1 ticket." },
-  { id: "FM_PASS_REFRESH",     name: "Industry Hustle",           category: "passive",      trigger: "passive",     effect: "passive_refresh_tix",            copies: 3, desc: "Always on: when you refresh the artist pool or amenity die, sell 2 tickets." },
+  // THIS FAME CARD.
+  { id: "FM_SELF_2FAME",       name: "Counts as 2 Fame",          category: "self_bonus",   trigger: "on_draw",     effect: "self_grants_bonus_fame",         copies: 1, slotWeight: 2, desc: "Adds +2 Fame to your festival and occupies 2 slots in your tray. Does NOT trigger another Fame card draw." },
+  // AFTER BUILD.
+  { id: "FM_BUILD_AMENITY",    name: "Gain 1 Amenity",            category: "after_build",  trigger: "after_build", effect: "gain_amenity_from_die",          copies: 1, desc: "After you take the Build action: gain another amenity from the die." },
+  { id: "FM_BUILD_DRAW_1",     name: "Draw 1 Artist",             category: "after_build",  trigger: "after_build", effect: "draw_1_artist_pool_or_deck",     copies: 1, desc: "After you take the Build action: draw 1 artist from the pool or deck." },
+  // AFTER BROWSE.
+  { id: "FM_BROWSE_AMENITY",   name: "Gain 1 Amenity",            category: "after_browse", trigger: "after_browse", effect: "gain_amenity_from_die",         copies: 1, desc: "After you take the Browse action: gain an amenity from the die." },
+  { id: "FM_BROWSE_DRAW_1",    name: "Draw 1 Artist",             category: "after_browse", trigger: "after_browse", effect: "draw_1_artist_pool_or_deck",    copies: 1, desc: "After you take the Browse action: draw 1 artist from the pool or deck." },
+  // AFTER BOOK.
+  { id: "FM_BOOK_PLACE_AM",    name: "Gain 1 Amenity",            category: "after_book",   trigger: "after_book",  effect: "gain_amenity_from_die",          copies: 1, desc: "After you book an artist: gain an extra amenity from the die." },
+  { id: "FM_BOOK_DRAW_1",      name: "Draw 1 Artist",             category: "after_book",   trigger: "after_book",  effect: "draw_1_artist_pool_or_deck",     copies: 1, desc: "After you book an artist: draw 1 artist from the pool or deck." },
+  // REACTIVE.
+  { id: "FM_REACT_BUILD",      name: "Copy Amenity",              category: "reactive",     trigger: "opp_build",   effect: "gain_copy_amenity",              copies: 2, desc: "When another player builds an amenity, gain a copy of that amenity." },
+  { id: "FM_REACT_BOOK",       name: "Draw 2 Artists",            category: "reactive",     trigger: "opp_book",    effect: "draw_2_artists",                 copies: 2, desc: "When another player books an artist, draw 2 artists." },
+  { id: "FM_REACT_BROWSE",     name: "Draw 1 Artist",             category: "reactive",     trigger: "opp_browse",  effect: "draw_1_artist",                  copies: 2, desc: "When another player browses the pool, draw 1 artist." },
+  // AT SEASON START.
+  { id: "FM_SS_PLACE_AMEN",    name: "Place 1 Amenity",           category: "season_start", trigger: "season_start", effect: "ss_place_amenity",              copies: 2, desc: "Season start: place 1 amenity of your choice." },
+  { id: "FM_SS_DRAW_2",        name: "Draw 2 Artists",            category: "season_start", trigger: "season_start", effect: "ss_draw_2_artists",             copies: 2, desc: "Season start: draw 2 artists (pool or deck)." },
+  // IMMEDIATE — fire the moment they're picked.
+  { id: "FM_IMM_2_AMEN",       name: "Instant: Place 2 Amenities",category: "immediate",    trigger: "on_draw",     effect: "immediate_place_2_amenities",    copies: 3, desc: "Immediately place 2 amenities of your choice (from the amenity die)." },
+  { id: "FM_IMM_DRAW_4",       name: "Instant: Draw 4 Artists",   category: "immediate",    trigger: "on_draw",     effect: "immediate_draw_4_pool",          copies: 3, desc: "Immediately draw 4 artists from the pool or deck." },
+  // SEASON ACTIVE — click once per turn, expires at end of the season drawn in.
+  { id: "FM_SA_DRAW_1",        name: "Draw 1 Artist / Turn",      category: "season_active", trigger: "any_time",   effect: "sa_draw_1_artist",              copies: 2, desc: "Every turn this season (click to activate): draw 1 artist. Expires at the end of the season drawn." },
+  { id: "FM_SA_PLACE_1",       name: "Place 1 Amenity / Turn",    category: "season_active", trigger: "any_time",   effect: "sa_place_amenity_from_die",     copies: 2, desc: "Every turn this season (click to activate): place 1 amenity from the available amenity dice. Expires at the end of the season drawn." },
+  // GAME END.
+  { id: "FM_END_6",            name: "+6 Tickets",                category: "game_end",     trigger: "game_end",     effect: "end_6",                         copies: 1, desc: "Game end: sell 6 tickets." },
+  { id: "FM_END_LOW_FAME",     name: "+1 per Artist Under 3 Fame",category: "game_end",     trigger: "game_end",     effect: "end_per_low_fame_artist",       copies: 1, desc: "Game end: sell 1 ticket for every artist you have played that costs less than 3 Fame." },
+  { id: "FM_END_PAIR_SP",      name: "+3 per Sec+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_sec_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of security and portaloos." },
+  { id: "FM_END_PAIR_CP",      name: "+3 per Cat+Port Pair",      category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_port",             copies: 1, desc: "Game end: sell 3 tickets for every pair of catering vans and portaloos." },
+  { id: "FM_END_PAIR_CS",      name: "+3 per Sec+Cat Pair",       category: "game_end",     trigger: "game_end",     effect: "end_pair_cat_sec",              copies: 1, desc: "Game end: sell 3 tickets for every pair of security and catering vans." },
+  // ALWAYS ON.
+  { id: "FM_PASS_AMEN_DISCOUNT",name: "Negotiated Rates",         category: "passive",      trigger: "passive",     effect: "passive_amenity_discount",       copies: 2, desc: "Always on: artists cost 1 less amenity to play (any one amenity type of your choice per booking)." },
+  { id: "FM_PASS_DECK_DRAW",   name: "Fan Base",                  category: "passive",      trigger: "passive",     effect: "passive_deck_draw_tix",          copies: 2, desc: "Always on: when you draw an artist from the deck, sell 1 ticket." },
+  { id: "FM_PASS_REFRESH",     name: "Industry Hustle",           category: "passive",      trigger: "passive",     effect: "passive_refresh_tix",            copies: 2, desc: "Always on: when you refresh the artist pool or amenity die, sell 2 tickets." },
 ];
 // v199.130: centralized trigger-aware category label used by every Fame card render site
 // (draw modal, own tray, opponent tray). Keeps the badge language consistent and avoids
@@ -4427,9 +4393,9 @@ export default function Headliners() {
     const lines = [];
     cards.forEach(c => {
       let bonus = 0;
-      // v199.113: count artists played with fame cost < 2 (for FM_END_LOW_FAME).
+      // v199.113/v199.248: count artists played with fame cost < 3 (for FM_END_LOW_FAME).
       let lowFameCount = 0;
-      stages.forEach(sa => sa.forEach(a => { if (a && (a.fame || 0) < 2) lowFameCount++; }));
+      stages.forEach(sa => sa.forEach(a => { if (a && (a.fame || 0) < 3) lowFameCount++; }));
       switch (c.effect) {
         // v199.113 current END card set
         case "end_6":                   bonus = 6;                      break;
@@ -4622,8 +4588,20 @@ export default function Headliners() {
       });
       objBreakdowns[p.id] = { total, lines };
     });
+    // v199.249: Campsites comes BEFORE Objectives & Bonuses per River's preferred order. Each campsite is worth 2 tickets by default (3 with infra reward camp_1).
+    const campsiteBreakdowns = {};
+    (players || []).forEach(p => {
+      const pd = (playerDataRef.current || playerData)[p.id] || {};
+      const am = sumFields(pd.fields || emptyFields());
+      const campsiteValue = 2 + (hasInfraReward(p.id, "camp_1") ? 1 : 0);
+      const campCount = am.campsite || 0;
+      const total = campCount * campsiteValue;
+      const lines = total > 0 ? [{ label: `⛺ ${campCount} campsite${campCount === 1 ? "" : "s"} × ${campsiteValue}`, value: total }] : [];
+      campsiteBreakdowns[p.id] = { total, lines };
+    });
+    steps.push({ label: "⛺ Campsites", color: "#22c55e", breakdowns: campsiteBreakdowns });
     steps.push({ label: "📋 Objectives & Bonuses", color: "#4ade80", breakdowns: objBreakdowns });
-    // Step 8: Fame Cards (game-end power tickets).
+    // Step 9: Fame Cards (game-end power tickets).
     const fameBreakdowns = {};
     (players || []).forEach(p => {
       let total = 0;
@@ -4640,6 +4618,23 @@ export default function Headliners() {
       fameBreakdowns[p.id] = { total, lines: powLines };
     });
     steps.push({ label: "🔥 Fame Cards", color: "#fbbf24", breakdowns: fameBreakdowns });
+    // v199.248: reconciliation — any ticket contribution not captured by the explicit steps above (Fan Base, Industry Hustle, Dua Lipa-style "+1 per opponent play", artist on-play ticket effects, microtrend tickets, infra rewards other than camp_1, etc.) lands here as a single "Other Bonuses" step so the animation total always matches the leaderboard.
+    const otherBreakdowns = {};
+    (players || []).forEach(p => {
+      const pd = (playerDataRef.current || playerData)[p.id] || {};
+      const expected = pd.tickets || 0;
+      // Sum what the earlier steps already count for this player.
+      let counted = 0;
+      steps.forEach(st => { counted += (st.breakdowns?.[p.id]?.total || 0); });
+      const remainder = Math.max(0, expected - counted);
+      const lines = remainder > 0 ? [{ label: `🎁 Accumulated bonuses`, value: remainder }] : [];
+      otherBreakdowns[p.id] = { total: remainder, lines };
+    });
+    // Only add the step if anyone actually has leftover bonuses — otherwise it's a wasted animation beat.
+    const anyOther = Object.values(otherBreakdowns).some(b => (b.total || 0) > 0);
+    if (anyOther) {
+      steps.push({ label: "🎁 Other Bonuses", color: "#f472b6", breakdowns: otherBreakdowns });
+    }
     const initTotals = {};
     (players || []).forEach(p => { initTotals[p.id] = 0; });
     setCalcTotals(initTotals);
@@ -6216,9 +6211,49 @@ export default function Headliners() {
             setTimeout(() => refillPool(), 100);
           }
         } else {
-          setFameDrawPicker({ pid, cardName: card.name, remaining: 4, picked: [], allowDeck: false });
+          // v199.248: pool OR deck per revised catalog.
+          setFameDrawPicker({ pid, cardName: card.name, remaining: 4, picked: [], allowDeck: true });
           setPoolDrawerOpen(true);
-          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 4 artists from the pool.`);
+          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 4 artists from the pool or deck.`);
+        }
+        break;
+      }
+      // v199.248: new after-action draw (pool or deck, 1 artist). Humans see the picker; AI blind-draws from the deck.
+      case "draw_1_artist_pool_or_deck": {
+        if (player?.isAI) {
+          const curDeck = artistDeckRef.current || artistDeck;
+          if (curDeck.length === 0) {
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → deck empty, no draw.`);
+            return;
+          }
+          const drawn = curDeck[0];
+          setArtistDeck(curDeck.slice(1));
+          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), drawn] } }));
+          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.name} from deck.`);
+        } else {
+          setFameDrawPicker({ pid, cardName: card.name, remaining: 1, picked: [], allowDeck: true });
+          setPoolDrawerOpen(true);
+          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 1 artist from the pool or deck.`);
+        }
+        break;
+      }
+      // v199.248: season-start variant — draw 2 artists (pool or deck).
+      case "ss_draw_2_artists": {
+        if (player?.isAI) {
+          const curDeck = artistDeckRef.current || artistDeck;
+          if (curDeck.length === 0) {
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → deck empty, no draw.`);
+            return;
+          }
+          const take = Math.min(2, curDeck.length);
+          const drawn = curDeck.slice(0, take);
+          setArtistDeck(curDeck.slice(take));
+          setPlayerData(pd => ({ ...pd, [pid]: { ...pd[pid], hand: [...(pd[pid]?.hand || []), ...drawn] } }));
+          addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → drew ${drawn.map(a => a.name).join(", ")} from deck.`);
+        } else {
+          setFameDrawPicker({ pid, cardName: card.name, remaining: 2, picked: [], allowDeck: true });
+          setPoolDrawerOpen(true);
+          addLog("🔥 Fame", `${festName}: "${card.name}" → pick 2 artists from the pool or deck.`);
         }
         break;
       }
