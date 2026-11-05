@@ -3103,6 +3103,8 @@ export default function Headliners() {
   //   { pid: { autumn: [{ name, isHeadliner, baseTickets }], winter: [...], ... } }
   const seasonBookingsRef = useRef({});
   useEffect(() => { seasonCardsRef.current = seasonCards; }, [seasonCards]);
+  // v199.235: per-player last-seen hand size. Used by the draw-watcher effect below to credit Scouting/Talent ID for ANY draw path (not just Browse). Reset to current sizes at season boundaries via resetSeasonProgress. Declared here (not alongside the other calculator refs) so the watcher useEffect's dependency check doesn't TDZ in the minified bundle.
+  const prevHandSizesRef = useRef({});
   // v199.235: watch hand sizes across all players so draws from ANY source credit Scouting/Talent ID. Guarded by phase === "game" to skip initial setup and game-over state changes.
   useEffect(() => {
     if (phase !== "game" || gameMode !== "quickYear") return;
@@ -3145,8 +3147,6 @@ export default function Headliners() {
   const [calcPendingDeltas, _rawSetCalcPendingDeltas] = useState({});
   const setCalcPendingDeltas = _guardSetter("setCalcPendingDeltas", _rawSetCalcPendingDeltas);
   const calcTickIntervalRef = useRef(null);
-  // v199.235: per-player last-seen hand size. Used by the draw-watcher effect below to credit Scouting/Talent ID for ANY draw path (not just Browse). Reset to current sizes at season boundaries via resetSeasonProgress.
-  const prevHandSizesRef = useRef({});
   const quickYearSeasonRef = useRef("autumn");
   useEffect(() => { quickYearSeasonRef.current = quickYearSeason; }, [quickYearSeason]);
   // quickYearTurnsTaken: total turns taken by all players combined. When it hits
