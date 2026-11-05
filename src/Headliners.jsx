@@ -575,6 +575,21 @@ const FAME_CARDS = [
   { id: "FM_PASS_DECK_DRAW",   name: "Fan Base",                  category: "passive",      trigger: "passive",     effect: "passive_deck_draw_tix",          copies: 2, desc: "Always on: when you draw an artist from the deck, sell 1 ticket." },
   { id: "FM_PASS_REFRESH",     name: "Industry Hustle",           category: "passive",      trigger: "passive",     effect: "passive_refresh_tix",            copies: 2, desc: "Always on: when you refresh the artist pool or amenity die, sell 2 tickets." },
 ];
+// v199.252: Management Board — Quick Play optional subsystem.
+const MGMT_COLUMNS = [
+  { id: "schmooze",  label: "Schmooze",  emoji: "🤝", color: "#f472b6", scoreDesc: "Draw a Schmooze card per cube", milestoneDesc: "Max 6 Fame Cards; pick 1 from 3 now" },
+  { id: "hire",      label: "Hire",      emoji: "👔", color: "#60a5fa", scoreDesc: "+1 ticket per catering van per cube", milestoneDesc: "Take 1 extra action now (13 turns total)" },
+  { id: "advertise", label: "Advertise", emoji: "📢", color: "#fbbf24", scoreDesc: "+1 ticket per headliner played per cube", milestoneDesc: "Stage with your biggest headliner: triple base tickets instead of double" },
+];
+const MGMT_ROWS = 5;
+const SCHMOOZE_CARDS = [
+  { id: "SCH_BACK_CHAN",  name: "Back Channelling", effect: "back_channelling",  desc: "Look through the entire artist deck and draw 1 artist of your choice. Shuffle the artist deck." },
+  { id: "SCH_BAD_MOUTH",  name: "Bad Mouthing",     effect: "bad_mouthing",      desc: "Choose another player. On their next browse, they may only draw 1 artist." },
+  { id: "SCH_RUMOUR",     name: "Rumour Spreading", effect: "rumour_spreading",  desc: "Choose another player. The next artist they book requires 1 additional Fame." },
+  { id: "SCH_STRATEGY",   name: "Strategy Shifting", effect: "strategy_shifting", desc: "Move one of your other cubes on the management board to another row." },
+  { id: "SCH_DEAL",       name: "Deal Making",      effect: "deal_making",       desc: "The next time another player takes the build action, you gain that amenity instead. They then pick from the remaining amenity die." },
+];
+const SCHMOOZE_DECK_COPIES = 3; // 3 copies of each card = 15-card deck
 // v199.130: centralized trigger-aware category label used by every Fame card render site
 // (draw modal, own tray, opponent tray). Keeps the badge language consistent and avoids
 // duplicate wording like "After Browse — After Browse Amenity or Draw".
@@ -3042,6 +3057,42 @@ export default function Headliners() {
   // stage decay removal, year-end draft skip.
   const [gameMode, _rawSetGameMode] = useState("classic");
   const setGameMode = _guardSetter("setGameMode", _rawSetGameMode);
+  // v199.252: Management Board (Quick Play optional subsystem).
+  const [useManagementBoard, _rawSetUseManagementBoard] = useState(false);
+  const setUseManagementBoard = _guardSetter("setUseManagementBoard", _rawSetUseManagementBoard);
+  // Board state: each column is an array of 5 slots; slot value is pid or null.
+  const [managementBoard, _rawSetManagementBoard] = useState({ schmooze: [null,null,null,null,null], hire: [null,null,null,null,null], advertise: [null,null,null,null,null], dump: {} });
+  const setManagementBoard = _guardSetter("setManagementBoard", _rawSetManagementBoard);
+  // Milestones: who triggered each column's 5th-cube bonus (pid or null).
+  const [managementMilestones, _rawSetManagementMilestones] = useState({ schmooze: null, hire: null, advertise: null });
+  const setManagementMilestones = _guardSetter("setManagementMilestones", _rawSetManagementMilestones);
+  // Schmooze deck state.
+  const [schmoozeDeck, _rawSetSchmoozeDeck] = useState([]);
+  const setSchmoozeDeck = _guardSetter("setSchmoozeDeck", _rawSetSchmoozeDeck);
+  const [schmoozeDiscard, _rawSetSchmoozeDiscard] = useState([]);
+  const setSchmoozeDiscard = _guardSetter("setSchmoozeDiscard", _rawSetSchmoozeDiscard);
+  // Each player's held Schmooze cards (drawn via schmooze cubes, held until played).
+  const [schmoozeHands, _rawSetSchmoozeHands] = useState({});
+  const setSchmoozeHands = _guardSetter("setSchmoozeHands", _rawSetSchmoozeHands);
+  // When a player should place a cube (after an action). { pid } | null.
+  const [pendingCubePlacement, _rawSetPendingCubePlacement] = useState(null);
+  const setPendingCubePlacement = _guardSetter("setPendingCubePlacement", _rawSetPendingCubePlacement);
+  // Per-player flags for pending Schmooze card effects targeted at them.
+  // { [pid]: { badMouth: true, rumour: true, dealMakingFrom: targetPid } }
+  const [schmoozeTargetFlags, _rawSetSchmoozeTargetFlags] = useState({});
+  const setSchmoozeTargetFlags = _guardSetter("setSchmoozeTargetFlags", _rawSetSchmoozeTargetFlags);
+  const schmoozeTargetFlagsRef = useRef({});
+  useEffect(() => { schmoozeTargetFlagsRef.current = schmoozeTargetFlags; }, [schmoozeTargetFlags]);
+  // Pickers for Schmooze card activation.
+  const [schmoozePickerCard, _rawSetSchmoozePickerCard] = useState(null); // { pid, cardId, step, ...data }
+  const setSchmoozePickerCard = _guardSetter("setSchmoozePickerCard", _rawSetSchmoozePickerCard);
+  // Refs for sync access.
+  const managementBoardRef = useRef({ schmooze: [null,null,null,null,null], hire: [null,null,null,null,null], advertise: [null,null,null,null,null], dump: {} });
+  useEffect(() => { managementBoardRef.current = managementBoard; }, [managementBoard]);
+  const useManagementBoardRef = useRef(false);
+  useEffect(() => { useManagementBoardRef.current = useManagementBoard; }, [useManagementBoard]);
+  const pendingCubePlacementRef = useRef(null);
+  useEffect(() => { pendingCubePlacementRef.current = pendingCubePlacement; }, [pendingCubePlacement]);
   const gameModeRef = useRef("classic");
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   // v198: Quick Play state. All only used when gameMode === "quickYear".
@@ -4055,10 +4106,12 @@ export default function Headliners() {
     }
     // v199.120: cap uses weighted slot sum (not card count). The "+2 Fame Card"
     // declares slotWeight: 2, so it counts as 2 slots when checking the 5-slot tray cap.
+    // v199.252: Schmooze milestone expands this player's cap to 6.
     const current = (playerFameCardsRef.current[pid] || []);
     const usedSlots = current.reduce((n, c) => n + (c.slotWeight || 1), 0);
-    if (usedSlots >= 5) {
-      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (${usedSlots}/5). ${source || "Fame gain"} skipped.`);
+    const trayCap = ((schmoozeTargetFlagsRef.current || {})[pid] || {}).fameCapExpanded ? 6 : 5;
+    if (usedSlots >= trayCap) {
+      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: Fame tray full (${usedSlots}/${trayCap}). ${source || "Fame gain"} skipped.`);
       return;
     }
     // v199.128: NO side effects inside setFameDeck updater (was causing React error #185
@@ -4613,6 +4666,56 @@ export default function Headliners() {
       fameBreakdowns[p.id] = { total, lines: powLines };
     });
     steps.push({ label: "🔥 Fame Cards", color: "#fbbf24", breakdowns: fameBreakdowns });
+    // v199.252: Management Board scoring (if enabled). Three cube-value steps + dump.
+    if (useManagementBoardRef.current) {
+      const boardNow = managementBoardRef.current;
+      // Hire: +1 ticket per catering per cube.
+      const hireBreakdowns = {};
+      (players || []).forEach(p => {
+        const pd = (playerDataRef.current || playerData)[p.id] || {};
+        const am = sumFields(pd.fields || emptyFields());
+        const cateringCount = am.catering || 0;
+        const cubes = (boardNow.hire || []).filter(x => x === p.id).length;
+        const total = cubes * cateringCount;
+        const lines = total > 0 ? [{ label: `👔 ${cubes} cube${cubes === 1 ? "" : "s"} × ${cateringCount} catering`, value: total }] : [];
+        hireBreakdowns[p.id] = { total, lines };
+      });
+      steps.push({ label: "👔 Hire (Management)", color: "#60a5fa", breakdowns: hireBreakdowns });
+      // Advertise: +1 ticket per headliner played per cube. Plus milestone bonus: biggest-headliner stage triples instead of doubles (we approximate the bonus as +headlinerBaseTickets since headliner already doubled in stage step).
+      const advertiseBreakdowns = {};
+      (players || []).forEach(p => {
+        const pd = (playerDataRef.current || playerData)[p.id] || {};
+        const stages = pd.stageArtists || [];
+        const headliners = stages.map(sa => (sa || [])[(sa || []).length - 1]).filter(Boolean);
+        const headlinerCount = headliners.length;
+        const cubes = (boardNow.advertise || []).filter(x => x === p.id).length;
+        let total = cubes * headlinerCount;
+        const lines = [];
+        if (total > 0) lines.push({ label: `📢 ${cubes} cube${cubes === 1 ? "" : "s"} × ${headlinerCount} headliner${headlinerCount === 1 ? "" : "s"}`, value: total });
+        // Milestone: +headliner-base once (since stage step already doubled, we add a 3rd slice).
+        if (managementMilestones.advertise === p.id && headliners.length > 0) {
+          const biggest = headliners.reduce((best, h) => (h.tickets || 0) > (best?.tickets || 0) ? h : best, null);
+          if (biggest) {
+            const triple = biggest.tickets || 0;
+            total += triple;
+            lines.push({ label: `🏆 Milestone: ${biggest.name} tripled (+${triple})`, value: triple });
+          }
+        }
+        advertiseBreakdowns[p.id] = { total, lines };
+      });
+      steps.push({ label: "📢 Advertise (Management)", color: "#fbbf24", breakdowns: advertiseBreakdowns });
+      // Dump zone: flat +1 per cube.
+      const dumpBreakdowns = {};
+      let anyDump = false;
+      (players || []).forEach(p => {
+        const dumpCount = boardNow.dump?.[p.id] || 0;
+        const lines = dumpCount > 0 ? [{ label: `💰 ${dumpCount} cube${dumpCount === 1 ? "" : "s"} in +1 Ticket zone`, value: dumpCount }] : [];
+        dumpBreakdowns[p.id] = { total: dumpCount, lines };
+        if (dumpCount > 0) anyDump = true;
+      });
+      if (anyDump) steps.push({ label: "💰 +1 Ticket Zone", color: "#86efac", breakdowns: dumpBreakdowns });
+      // Schmooze cubes don't score tickets directly (they drew Schmooze cards). Optional: show info step.
+    }
     // v199.248: reconciliation — any ticket contribution not captured by the explicit steps above (Fan Base, Industry Hustle, Dua Lipa-style "+1 per opponent play", artist on-play ticket effects, microtrend tickets, infra rewards other than camp_1, etc.) lands here as a single "Other Bonuses" step so the animation total always matches the leaderboard.
     const otherBreakdowns = {};
     (players || []).forEach(p => {
@@ -9074,6 +9177,33 @@ export default function Headliners() {
           };
         }
       });
+      // v199.252: apply Management Board ticket contributions to bonusTickets before gameOver, so the leaderboard total includes them.
+      if (useManagementBoardRef.current) {
+        const boardNow = managementBoardRef.current;
+        (players || []).forEach(p => {
+          const pdSrc = freshWithYE[p.id] || currentPD[p.id];
+          const am = sumFields(pdSrc.fields || emptyFields());
+          const cateringCount = am.catering || 0;
+          const stages = pdSrc.stageArtists || [];
+          const headliners = stages.map(sa => (sa || [])[(sa || []).length - 1]).filter(Boolean);
+          const hireCubes = (boardNow.hire || []).filter(x => x === p.id).length;
+          const advCubes = (boardNow.advertise || []).filter(x => x === p.id).length;
+          const dumpCubes = boardNow.dump?.[p.id] || 0;
+          let mgmtTickets = hireCubes * cateringCount + advCubes * headliners.length + dumpCubes;
+          if (managementMilestones.advertise === p.id && headliners.length > 0) {
+            const biggest = headliners.reduce((best, h) => (h.tickets || 0) > (best?.tickets || 0) ? h : best, null);
+            if (biggest) mgmtTickets += (biggest.tickets || 0);
+          }
+          if (mgmtTickets > 0) {
+            freshWithYE[p.id] = {
+              ...freshWithYE[p.id],
+              bonusTickets: (freshWithYE[p.id].bonusTickets || 0) + mgmtTickets,
+              tickets: (freshWithYE[p.id].tickets || 0) + mgmtTickets,
+            };
+            addLog("📋 Management Board", `${p.festivalName}: +${mgmtTickets} 🎟️ from management (Hire ${hireCubes}×${cateringCount} + Advertise ${advCubes}×${headliners.length} + Dump ${dumpCubes}${managementMilestones.advertise === p.id ? ` + Advertise milestone` : ""}).`);
+          }
+        });
+      }
       playerDataRef.current = { ...currentPD, ...freshWithYE };
       setPlayerData(prev => ({ ...prev, ...freshWithYE }));
       setAllTickets(nextAllTickets);
@@ -9369,6 +9499,255 @@ export default function Headliners() {
   };
 
   // Recalculate ALL players' tickets using latest state
+  // v199.252: Management Board helpers.
+  // Place a cube at (column, row) for pid; handles milestone triggers + schmooze card draws + dump zone (col="dump", row ignored).
+  const placeCubeOnBoard = (pid, column, row) => {
+    const board = managementBoardRef.current;
+    const festName = players.find(p => p.id === pid)?.festivalName || "?";
+    if (column === "dump") {
+      const newDump = { ...board.dump, [pid]: (board.dump[pid] || 0) + 1 };
+      const newBoard = { ...board, dump: newDump };
+      managementBoardRef.current = newBoard;
+      setManagementBoard(newBoard);
+      addLog("📋 Management Board", `${festName}: placed cube in +1 Ticket zone (${newDump[pid]} total).`);
+      return;
+    }
+    if (!board[column]) return;
+    if (board[column][row] !== null) return;
+    const newCol = [...board[column]];
+    newCol[row] = pid;
+    const newBoard = { ...board, [column]: newCol };
+    managementBoardRef.current = newBoard;
+    setManagementBoard(newBoard);
+    const colDef = MGMT_COLUMNS.find(c => c.id === column);
+    addLog("📋 Management Board", `${festName}: placed cube on ${colDef?.label || column} row ${row + 1}.`);
+    // v199.252: Schmooze cube draws a Schmooze card.
+    if (column === "schmooze") {
+      drawSchmoozeCardForPlayer(pid);
+    }
+    // Check milestone — did this placement fill the 5th slot?
+    const filled = newCol.every(x => x !== null);
+    if (filled && managementMilestones[column] == null) {
+      triggerManagementMilestone(pid, column);
+    }
+  };
+  // Draw one Schmooze card from the deck for the player.
+  const drawSchmoozeCardForPlayer = (pid) => {
+    let deck = [...schmoozeDeck];
+    if (deck.length === 0) {
+      const disc = [...schmoozeDiscard];
+      if (disc.length === 0) {
+        addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"}: Schmooze deck empty — no card drawn.`);
+        return;
+      }
+      deck = shuffle(disc);
+      setSchmoozeDiscard([]);
+      addLog("📋 Schmooze", `Schmooze deck reshuffled from discard.`);
+    }
+    const card = deck[0];
+    setSchmoozeDeck(deck.slice(1));
+    setSchmoozeHands(prev => ({ ...prev, [pid]: [...(prev[pid] || []), card] }));
+    const festName = players.find(p => p.id === pid)?.festivalName || "?";
+    addLog("📋 Schmooze", `${festName}: drew Schmooze card "${card.name}".`);
+  };
+  // Fire milestone for a column + pid.
+  const triggerManagementMilestone = (pid, column) => {
+    setManagementMilestones(prev => ({ ...prev, [column]: pid }));
+    const festName = players.find(p => p.id === pid)?.festivalName || "?";
+    const colDef = MGMT_COLUMNS.find(c => c.id === column);
+    addLog("📋 Milestone", `${festName}: filled the ${colDef?.label} column — ${colDef?.milestoneDesc}!`);
+    showFloatingBonus(`🏆 ${colDef?.label} Milestone!`, colDef?.color || "#fbbf24");
+    if (column === "hire") {
+      // Take 1 extra action now: reset actionsLeftThisTurn to +1.
+      if (gameModeRef.current === "quickYear") {
+        setActionsLeftThisTurn(a => a + 1);
+        actionsLeftRef.current = (actionsLeftRef.current || 0) + 1;
+        setActionTaken(false);
+        addLog("📋 Milestone", `${festName}: +1 extra action this turn.`);
+      }
+    } else if (column === "schmooze") {
+      // Open a Fame draw with 3 options; also expand tray cap to 6 for this player via flag.
+      setSchmoozeTargetFlags(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), fameCapExpanded: true } }));
+      schmoozeTargetFlagsRef.current = { ...schmoozeTargetFlagsRef.current, [pid]: { ...(schmoozeTargetFlagsRef.current[pid] || {}), fameCapExpanded: true } };
+      setTimeout(() => drawFameCardsForPlayer(pid, "📋 Schmooze Milestone"), 200);
+    }
+    // advertise milestone is handled at endgame scoring (triple base for biggest headliner stage).
+  };
+  // v199.252: Activate a Schmooze card from a player's hand.
+  const activateSchmoozeCard = (pid, card) => {
+    if (!card) return;
+    const festName = players.find(p => p.id === pid)?.festivalName || "?";
+    switch (card.effect) {
+      case "back_channelling": {
+        // Open full-deck picker.
+        setSchmoozePickerCard({ pid, cardInstanceId: card.instanceId, cardName: card.name, effect: card.effect });
+        break;
+      }
+      case "bad_mouthing":
+      case "rumour_spreading":
+      case "deal_making": {
+        // Pick a target player.
+        setSchmoozePickerCard({ pid, cardInstanceId: card.instanceId, cardName: card.name, effect: card.effect, step: "pickTarget" });
+        break;
+      }
+      case "strategy_shifting": {
+        // Pick one of your cubes to move.
+        setSchmoozePickerCard({ pid, cardInstanceId: card.instanceId, cardName: card.name, effect: card.effect, step: "pickCube" });
+        break;
+      }
+      default: {
+        addLog("📋 Schmooze", `${festName}: "${card.name}" has no handler yet.`);
+      }
+    }
+  };
+  // Resolve a Schmooze card: remove from hand, send to discard.
+  const consumeSchmoozeCard = (pid, cardInstanceId) => {
+    setSchmoozeHands(prev => {
+      const next = { ...prev };
+      const list = (next[pid] || []).filter(c => c.instanceId !== cardInstanceId);
+      next[pid] = list;
+      return next;
+    });
+    const card = (schmoozeHands[pid] || []).find(c => c.instanceId === cardInstanceId);
+    if (card) setSchmoozeDiscard(d => [...d, card]);
+  };
+  // v199.252: AI plays a held Schmooze card (if any) with simple heuristics.
+  const aiPlaySchmoozeCardIfUseful = (pid) => {
+    const hand = (schmoozeHands[pid] || []);
+    if (hand.length === 0) return;
+    const pdNow = (playerDataRef.current || playerData)[pid] || {};
+    const opponents = players.filter(p => p.id !== pid);
+    const leader = opponents.reduce((top, p) => {
+      const pd = (playerDataRef.current || playerData)[p.id] || {};
+      return !top || (pd.tickets || 0) > (top.t || 0) ? { p, t: pd.tickets || 0 } : top;
+    }, null);
+    // Prefer cards in this order: Back Channelling (always valuable), Rumour (hurt leader), Bad Mouthing (hurt leader), Deal Making (if build-heavy opponent), Strategy Shifting (if cubes to move).
+    const priority = ["back_channelling", "rumour_spreading", "bad_mouthing", "deal_making", "strategy_shifting"];
+    for (const effect of priority) {
+      const card = hand.find(c => c.effect === effect);
+      if (!card) continue;
+      switch (effect) {
+        case "back_channelling": {
+          // AI: pick the highest-ticket affordable artist from deck.
+          const deckNow = artistDeckRef.current || artistDeck || [];
+          if (deckNow.length === 0) continue;
+          const affordable = deckNow.filter(a => (pdNow.fame || 0) >= (a.fame || 0));
+          const list = affordable.length > 0 ? affordable : deckNow;
+          const picked = [...list].sort((a, b) => (b.tickets || 0) - (a.tickets || 0))[0];
+          const idx = deckNow.indexOf(picked);
+          const remainder = deckNow.filter((_, i) => i !== idx);
+          const reshuffled = shuffle(remainder);
+          setArtistDeck(reshuffled);
+          artistDeckRef.current = reshuffled;
+          setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), picked] } }));
+          addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"} 🤖: Back Channelling → drew ${picked.name}.`);
+          consumeSchmoozeCard(pid, card.instanceId);
+          return;
+        }
+        case "rumour_spreading":
+        case "bad_mouthing": {
+          if (!leader?.p) continue;
+          const flags = { ...(schmoozeTargetFlagsRef.current[leader.p.id] || {}) };
+          if (effect === "rumour_spreading") flags.rumour = true;
+          else flags.badMouth = true;
+          const next = { ...schmoozeTargetFlagsRef.current, [leader.p.id]: flags };
+          schmoozeTargetFlagsRef.current = next;
+          setSchmoozeTargetFlags(next);
+          addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"} 🤖: played "${card.name}" on ${leader.p.festivalName}.`);
+          consumeSchmoozeCard(pid, card.instanceId);
+          return;
+        }
+        case "deal_making": {
+          if (!leader?.p) continue;
+          const flags = { ...(schmoozeTargetFlagsRef.current[leader.p.id] || {}) };
+          flags.dealMakingFrom = pid;
+          const next = { ...schmoozeTargetFlagsRef.current, [leader.p.id]: flags };
+          schmoozeTargetFlagsRef.current = next;
+          setSchmoozeTargetFlags(next);
+          addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"} 🤖: played Deal Making on ${leader.p.festivalName}.`);
+          consumeSchmoozeCard(pid, card.instanceId);
+          return;
+        }
+        case "strategy_shifting": {
+          // AI: move a dump cube or low-value column cube into a high-value column.
+          const board = managementBoardRef.current;
+          // Find any own cube in the LEAST valuable column that could go to a more-full column.
+          let src = null; let dst = null; let bestFill = -1;
+          MGMT_COLUMNS.forEach(col => {
+            board[col.id].forEach((slot, ri) => {
+              if (slot === pid && !src) src = { col: col.id, row: ri };
+            });
+          });
+          MGMT_COLUMNS.forEach(col => {
+            const colArr = board[col.id];
+            const filled = colArr.filter(x => x !== null).length;
+            const vacant = colArr.indexOf(null);
+            if (vacant >= 0 && filled > bestFill && (!src || col.id !== src.col)) {
+              bestFill = filled;
+              dst = { col: col.id, row: vacant };
+            }
+          });
+          if (!src || !dst) continue;
+          const newBoard = {
+            ...board,
+            [src.col]: board[src.col].map((s, i) => i === src.row ? null : s),
+          };
+          newBoard[dst.col] = newBoard[dst.col].map((s, i) => i === dst.row ? pid : s);
+          managementBoardRef.current = newBoard;
+          setManagementBoard(newBoard);
+          addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"} 🤖: Strategy Shifting → moved cube from ${src.col} to ${dst.col}.`);
+          consumeSchmoozeCard(pid, card.instanceId);
+          return;
+        }
+      }
+    }
+  };
+
+  // AI cube placement heuristic.
+  const aiPlaceCube = (pid) => {
+    const board = managementBoardRef.current;
+    const pdNow = (playerDataRef.current || playerData)[pid] || {};
+    // Count the AI's own cubes in each column.
+    const score = {};
+    MGMT_COLUMNS.forEach(col => {
+      const colArr = board[col.id];
+      const mine = colArr.filter(x => x === pid).length;
+      const filled = colArr.filter(x => x !== null).length;
+      const vacant = colArr.indexOf(null);
+      if (vacant < 0) { score[col.id] = -1; return; }
+      // Value per cube by column type.
+      let perCubeValue = 1;
+      if (col.id === "hire") {
+        const catering = (pdNow.amenities?.catering || 0);
+        perCubeValue = Math.max(1, catering);
+      } else if (col.id === "advertise") {
+        // Rough proxy: Fame tier correlates with headliner caliber.
+        perCubeValue = Math.max(1, Math.round((pdNow.fame || 0) * 0.7));
+      } else if (col.id === "schmooze") {
+        // Schmooze draws cards — valuable mid-game.
+        perCubeValue = 2;
+      }
+      // Milestone bonus: if this placement fills the column AND AI isn't already milestone winner, big bonus.
+      const milestoneBonus = (filled + 1 === MGMT_ROWS && managementMilestones[col.id] == null) ? 6 : 0;
+      score[col.id] = perCubeValue + milestoneBonus + mine;
+    });
+    // Compare to dump zone value (1 flat).
+    const dumpValue = 1.2;
+    let bestCol = null;
+    let bestScore = dumpValue;
+    MGMT_COLUMNS.forEach(col => {
+      if (score[col.id] > bestScore) { bestScore = score[col.id]; bestCol = col.id; }
+    });
+    if (bestCol) {
+      const vacantRow = board[bestCol].indexOf(null);
+      placeCubeOnBoard(pid, bestCol, vacantRow);
+    } else {
+      placeCubeOnBoard(pid, "dump", 0);
+    }
+    // v199.252: after placing (and potentially drawing a schmooze card), AI considers playing one.
+    setTimeout(() => aiPlaySchmoozeCardIfUseful(pid), 300);
+  };
+
   const recalcTickets = useCallback(() => {
     setPlayerData(prev => {
       const next = { ...prev };
@@ -14905,6 +15284,30 @@ export default function Headliners() {
       setPlayerFameCards(emptyFameCards);
       playerFameCardsRef.current = emptyFameCards;
       addLog("🔥 Fame Cards", `Fame card deck built — ${deck.length} cards. Complete a microtrend or roll a Fame die to draw 3 and pick 1.`);
+      // v199.252: Management Board init if enabled.
+      if (useManagementBoardRef.current) {
+        const freshBoard = { schmooze: Array(MGMT_ROWS).fill(null), hire: Array(MGMT_ROWS).fill(null), advertise: Array(MGMT_ROWS).fill(null), dump: {} };
+        players.forEach(p => { freshBoard.dump[p.id] = 0; });
+        setManagementBoard(freshBoard);
+        managementBoardRef.current = freshBoard;
+        setManagementMilestones({ schmooze: null, hire: null, advertise: null });
+        // Build Schmooze deck.
+        const schmoozeDeckFull = [];
+        for (let c = 0; c < SCHMOOZE_DECK_COPIES; c++) {
+          SCHMOOZE_CARDS.forEach(card => {
+            schmoozeDeckFull.push({ ...card, instanceId: `sch-${card.id}-${c}-${Math.random().toString(36).slice(2, 6)}` });
+          });
+        }
+        const shuffledSch = shuffle(schmoozeDeckFull);
+        setSchmoozeDeck(shuffledSch);
+        setSchmoozeDiscard([]);
+        const emptySchHands = {};
+        players.forEach(p => { emptySchHands[p.id] = []; });
+        setSchmoozeHands(emptySchHands);
+        setSchmoozeTargetFlags({});
+        schmoozeTargetFlagsRef.current = {};
+        addLog("📋 Management Board", `Enabled — ${shuffledSch.length} Schmooze cards shuffled. After each action, place a cube on Schmooze / Hire / Advertise or the +1 ticket zone.`);
+      }
     }
 
     // v197.12: Roll infrastructure rewards if the mode is enabled. One reward variant
@@ -16751,7 +17154,18 @@ export default function Headliners() {
     // pool refresh (reset here).
     if (gameModeRef.current === "quickYear") {
       const pd = playerDataRef.current?.[currentPlayerId] || playerData[currentPlayerId] || {};
-      const maxPicks = getFameArtistMax(pd);
+      let maxPicks = getFameArtistMax(pd);
+      // v199.252: Bad Mouthing Schmooze card — target's next browse caps to 1 pick.
+      const flags = (schmoozeTargetFlagsRef.current || {})[currentPlayerId] || {};
+      if (flags.badMouth && maxPicks > 1) {
+        maxPicks = 1;
+        addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: Bad Mouthing in effect — browse capped to 1 draw.`);
+        // Clear the flag so it only hits the next browse.
+        const next = { ...schmoozeTargetFlagsRef.current };
+        next[currentPlayerId] = { ...flags, badMouth: false };
+        schmoozeTargetFlagsRef.current = next;
+        setSchmoozeTargetFlags(next);
+      }
       setQyPicksLeft(maxPicks);
       qyPicksLeftRef.current = maxPicks;
       setQyPoolRefreshUsed(false);
@@ -17361,19 +17775,30 @@ export default function Headliners() {
     if (currentPlayer?.isAI) return;
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
+    // v199.252: Rumour Spreading — if the flag is set, this booking requires +1 Fame. Patch the artist object for the check.
+    const rumourFlag = ((schmoozeTargetFlagsRef.current || {})[currentPlayerId] || {}).rumour;
+    const effArtist = rumourFlag ? { ...artist, fame: (artist.fame || 0) + 1 } : artist;
     // v124: per-stage legality check. v199.239: factor in Negotiated Rates passive discount.
     const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
-    const stageEligible = canBookArtistOnStage(artist, currentPD, stageIdx, amenDisc);
+    const stageEligible = canBookArtistOnStage(effArtist, currentPD, stageIdx, amenDisc);
     const pendingFreeAllowed = pendingEffect && pendingEffect.type === "signArtist" && pendingEffectPid === currentPlayerId;
     if (!stageEligible && !pendingFreeAllowed) {
       // Diagnose why for a helpful message
-      if (currentPD.fame < artist.fame) {
-        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — need Fame ${artist.fame} (you have ${currentPD.fame})`);
+      if (currentPD.fame < effArtist.fame) {
+        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — need Fame ${effArtist.fame} (you have ${currentPD.fame})${rumourFlag ? ` [Rumour: +1 required]` : ""}`);
       } else {
         addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} here — amenities short and stage doesn't have a genre-matching pair for headliner rule`);
       }
       showFloatingBonus(`Can't book on that stage`, "#ef4444");
       return;
+    }
+    // Clear the rumour flag — only affects the ONE booking.
+    if (rumourFlag) {
+      const next = { ...schmoozeTargetFlagsRef.current };
+      next[currentPlayerId] = { ...(next[currentPlayerId] || {}), rumour: false };
+      schmoozeTargetFlagsRef.current = next;
+      setSchmoozeTargetFlags(next);
+      addLog("📋 Schmooze", `${currentPlayer?.festivalName}: Rumour Spreading consumed — booking required +1 Fame.`);
     }
     // Detect which path is being used (for logging only; booking treats them identically).
     // v199.239: factor in amenityDiscount so the "genre" label doesn't incorrectly appear when Negotiated Rates covered a shortfall.
@@ -17502,6 +17927,36 @@ export default function Headliners() {
         // see below. The after-trigger queueing (for the acting player's own cards)
         // continues to happen here inside the 120ms setTimeout.
       }, 120);
+      // v199.252: Deal Making — if an opponent of the acting player has the dealMakingFrom flag targeting this acting player, and this was a BUILD, that opponent gains a copy of the amenity die face.
+      if (_wasBuild && _selectedDieFace && (_selectedDieFace !== "fame" && _selectedDieFace !== "stage" && _selectedDieFace !== "wild")) {
+        const flagsAll = schmoozeTargetFlagsRef.current || {};
+        players.forEach(p => {
+          if (p.id === trigPid) return;
+          const theirFlags = flagsAll[p.id] || {};
+          if (theirFlags.dealMakingFrom === trigPid) {
+            // Grant that player a copy of the amenity.
+            const fields = (playerDataRef.current?.[p.id]?.fields) || playerData[p.id]?.fields || emptyFields();
+            // Find first field with room or use field 0.
+            let destField = 0;
+            for (let i = 0; i < fields.length; i++) {
+              const f = fields[i] || {};
+              const cnt = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+              if (cnt < 5) { destField = i; break; }
+            }
+            setPlayerData(pd => {
+              const cur = pd[p.id] || {};
+              return { ...pd, [p.id]: mutateAmenity(cur, destField, _selectedDieFace, +1) };
+            });
+            addLog("📋 Schmooze", `${p.festivalName}: Deal Making triggered — gained a copy of ${AMENITY_LABELS[_selectedDieFace]} in Field ${destField + 1}.`);
+            if (!p.isAI) showFloatingBonus(`📋 Deal Making +${AMENITY_LABELS[_selectedDieFace]}`, "#f472b6");
+            // Clear the flag — only fires once.
+            const nextFlags = { ...flagsAll };
+            nextFlags[p.id] = { ...theirFlags, dealMakingFrom: null };
+            schmoozeTargetFlagsRef.current = nextFlags;
+            setSchmoozeTargetFlags(nextFlags);
+          }
+        });
+      }
       // v199.115: fire reactive effects for OTHER players IMMEDIATELY (0-20ms), BEFORE
       // the acting player's Fame draw modal opens (80ms via logFameGain). This lets the
       // reactive player draw their artist first, then the acting player sees their
@@ -17534,6 +17989,16 @@ export default function Headliners() {
       if (newActions <= 0) {
         // Both actions used — mark actionTaken so End Turn button appears.
         setActionTaken(true);
+      }
+      // v199.252: Management Board — trigger cube placement after this action.
+      if (useManagementBoardRef.current) {
+        const actor = players.find(p => p.id === currentPlayerId);
+        if (actor?.isAI) {
+          // AI auto-picks a column; prefer one where it can milestone-trigger, else highest-value by state.
+          setTimeout(() => aiPlaceCube(currentPlayerId), 250);
+        } else {
+          setTimeout(() => setPendingCubePlacement({ pid: currentPlayerId }), 150);
+        }
       }
       return;
     }
@@ -19670,6 +20135,16 @@ export default function Headliners() {
               <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{gameMode === "quickYear" ? "On — 1-year game: Autumn → Winter → Spring → Summer, 3 turns each. Fame hard-caps at 5 (scales how many artists/amenities you can take per action). Season start: Hotline spin assigns your agent. Season close: +1 🎟️ per campsite + 1 🎟️ per artist + season-objective bonus. Highest tickets at Summer close wins." : "Off — standard multi-year game (uses the year count setting above)."}</div>
             </div>
           </label>
+          {/* v199.252: Management Board toggle — Quick Play only. */}
+          {gameMode === "quickYear" && (
+            <label onClick={() => setUseManagementBoard(v => !v)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 10, border: useManagementBoard ? "2px solid #22c55e" : "1px solid #4c1d95", background: useManagementBoard ? "rgba(34,197,94,0.08)" : "rgba(124,58,237,0.05)" }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${useManagementBoard ? "#22c55e" : "#4c1d95"}`, background: useManagementBoard ? "#22c55e" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#1a1a2e", fontWeight: 800 }}>{useManagementBoard ? "✓" : ""}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: useManagementBoard ? "#86efac" : "#c4b5fd", fontWeight: 700, fontSize: 13 }}>📋 Management Board</div>
+                <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>{useManagementBoard ? "On — after each action, place a cube on Schmooze / Hire / Advertise columns (or the +1 ticket zone). Each cube scores, 5th cube in each column triggers a bonus." : "Off — standard Quick Play without the shared management race."}</div>
+              </div>
+            </label>
+          )}
         </div>
       </div>
       <div style={{ ...card, marginTop: 16, padding: 16 }}>
@@ -19891,7 +20366,58 @@ export default function Headliners() {
   if (phase === "game") {
     const handCards = currentPD.hand || [];
     const stageArtists = currentPD.stageArtists || currentPD.stages?.map(() => []) || [];
-    return (<div style={CS}>{utilButtons}{updateNotesModal}
+    // v199.252: compact Management Board display (bottom-left when enabled).
+    const mgmtBoardPanel = useManagementBoard && gameMode === "quickYear" ? (
+      <div style={{ position: "fixed", bottom: 12, left: 12, zIndex: 400, padding: 8, borderRadius: 10, background: "rgba(15,14,26,0.92)", border: "1px solid #334155", width: 280 }}>
+        <div style={{ fontSize: 9, color: "#86efac", fontWeight: 800, letterSpacing: 1, textAlign: "center", marginBottom: 6 }}>📋 MANAGEMENT BOARD</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
+          {MGMT_COLUMNS.map(col => {
+            const colArr = managementBoard[col.id] || [];
+            const filled = colArr.filter(x => x !== null).length;
+            const milestoneWinner = managementMilestones[col.id];
+            return (
+              <div key={col.id} style={{ padding: 4, borderRadius: 6, background: "rgba(20,18,34,0.6)", border: `1px solid ${col.color}` }}>
+                <div style={{ fontSize: 14, textAlign: "center" }}>{col.emoji}</div>
+                <div style={{ color: col.color, fontSize: 8, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{col.label}</div>
+                <div style={{ display: "flex", flexDirection: "column-reverse", gap: 1 }}>
+                  {colArr.map((slot, ri) => (
+                    <div key={ri} style={{ height: 8, borderRadius: 2, background: slot ? (players.find(p => p.id === slot)?.isAI ? "#fbbf24" : "#86efac") : "rgba(100,116,139,0.2)", border: ri === MGMT_ROWS - 1 ? "1px dashed #fcd34d" : "none" }} />
+                  ))}
+                </div>
+                <div style={{ fontSize: 8, color: "#94a3b8", textAlign: "center", marginTop: 3 }}>{filled}/{MGMT_ROWS}</div>
+                {milestoneWinner && <div style={{ fontSize: 8, color: "#fcd34d", textAlign: "center", fontWeight: 700 }}>🏆 {players.find(p => p.id === milestoneWinner)?.festivalName?.slice(0, 8)}</div>}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 9, color: "#94a3b8" }}>
+          {players.map(p => (
+            <div key={p.id}>
+              <span style={{ color: p.isAI ? "#fbbf24" : "#86efac", fontWeight: 700 }}>{p.festivalName?.slice(0, 8)}</span>: 💰{managementBoard.dump?.[p.id] || 0} 📋{(schmoozeHands[p.id] || []).length}
+            </div>
+          ))}
+        </div>
+        {/* Current human's Schmooze cards — click to activate. */}
+        {!currentPlayer?.isAI && (schmoozeHands[currentPlayerId] || []).length > 0 && (
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #334155" }}>
+            <div style={{ fontSize: 8, color: "#f9a8d4", fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>📋 YOUR SCHMOOZE CARDS — CLICK TO PLAY</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              {(schmoozeHands[currentPlayerId] || []).map((card, idx) => (
+                <button
+                  key={card.instanceId || idx}
+                  onClick={() => activateSchmoozeCard(currentPlayerId, card)}
+                  style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid #f472b6", background: "rgba(131,24,67,0.3)", color: "#f9fafb", cursor: "pointer", fontSize: 10, textAlign: "left", fontWeight: 700 }}
+                  title={card.desc}
+                >
+                  {card.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    ) : null;
+    return (<div style={CS}>{utilButtons}{updateNotesModal}{mgmtBoardPanel}
       {showLog && <GameLog log={gameLog} onClose={() => setShowLog(false)} />}
       {showDiscard && <DiscardViewer discard={discardPile} onClose={() => setShowDiscard(false)} />}
       {/* Headliner celebration */}
@@ -25051,6 +25577,178 @@ export default function Headliners() {
               </div>,
               document.body
             )}
+            {/* v199.252: Schmooze picker modals. */}
+            {schmoozePickerCard && schmoozePickerCard.pid === currentPlayerId && schmoozePickerCard.step === "pickTarget" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", boxShadow: "0 0 40px rgba(244,114,182,0.3)", maxWidth: 480, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 {schmoozePickerCard.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 16, fontWeight: 800, margin: "4px 0 2px" }}>Choose another player</h2>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {players.filter(p => p.id !== schmoozePickerCard.pid).map(target => (
+                      <button key={target.id} onClick={() => {
+                        const flags = { ...(schmoozeTargetFlagsRef.current[target.id] || {}) };
+                        if (schmoozePickerCard.effect === "bad_mouthing") flags.badMouth = true;
+                        if (schmoozePickerCard.effect === "rumour_spreading") flags.rumour = true;
+                        if (schmoozePickerCard.effect === "deal_making") flags.dealMakingFrom = schmoozePickerCard.pid;
+                        const next = { ...schmoozeTargetFlagsRef.current, [target.id]: flags };
+                        schmoozeTargetFlagsRef.current = next;
+                        setSchmoozeTargetFlags(next);
+                        addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: played "${schmoozePickerCard.cardName}" on ${target.festivalName}.`);
+                        consumeSchmoozeCard(schmoozePickerCard.pid, schmoozePickerCard.cardInstanceId);
+                        setSchmoozePickerCard(null);
+                      }} style={{ padding: "12px 16px", borderRadius: 8, border: "1px solid #f472b6", background: "rgba(131,24,67,0.4)", color: "#f9fafb", cursor: "pointer", fontWeight: 700, textAlign: "left" }}>
+                        {target.festivalName}{target.isAI ? " 🤖" : ""}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 10 }}>
+                    <button onClick={() => setSchmoozePickerCard(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {schmoozePickerCard && schmoozePickerCard.pid === currentPlayerId && schmoozePickerCard.effect === "back_channelling" && !schmoozePickerCard.step && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", maxWidth: 900, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 {schmoozePickerCard.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 16, fontWeight: 800, margin: "4px 0 2px" }}>Pick ANY artist from the deck</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>{artistDeck.length} artists in deck. Picking shuffles the remainder.</p>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                    {artistDeck.map((artist, i) => (
+                      <div key={i} onClick={() => {
+                        const picked = artist;
+                        const remainder = artistDeck.filter((_, idx) => idx !== i);
+                        const reshuffled = shuffle(remainder);
+                        setArtistDeck(reshuffled);
+                        artistDeckRef.current = reshuffled;
+                        setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], hand: [...(p[currentPlayerId].hand || []), picked] } }));
+                        addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: "Back Channelling" → drew ${picked.name} from deck.`);
+                        consumeSchmoozeCard(schmoozePickerCard.pid, schmoozePickerCard.cardInstanceId);
+                        setSchmoozePickerCard(null);
+                      }} style={{ cursor: "pointer" }}>
+                        <ArtistCard artist={artist} showCost small />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 10 }}>
+                    <button onClick={() => setSchmoozePickerCard(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {schmoozePickerCard && schmoozePickerCard.pid === currentPlayerId && schmoozePickerCard.step === "pickCube" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", maxWidth: 560, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 {schmoozePickerCard.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 16, fontWeight: 800, margin: "4px 0 2px" }}>{!schmoozePickerCard.movingCube ? "Pick one of YOUR cubes to move" : "Pick a destination row"}</h2>
+                  </div>
+                  {!schmoozePickerCard.movingCube ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {MGMT_COLUMNS.map(col => managementBoard[col.id].map((slot, ri) => slot === currentPlayerId ? (
+                        <button key={`${col.id}-${ri}`} onClick={() => setSchmoozePickerCard(p => ({ ...p, movingCube: { col: col.id, row: ri } }))} style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${col.color}`, background: "rgba(30,27,75,0.5)", color: "#f9fafb", cursor: "pointer", fontWeight: 700, textAlign: "left" }}>
+                          {col.emoji} {col.label} — Row {ri + 1}
+                        </button>
+                      ) : null).filter(Boolean))}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {MGMT_COLUMNS.map(col => managementBoard[col.id].map((slot, ri) => slot === null && (col.id !== schmoozePickerCard.movingCube.col || ri !== schmoozePickerCard.movingCube.row) ? (
+                        <button key={`${col.id}-${ri}`} onClick={() => {
+                          // Move cube: clear old, fill new.
+                          const board = managementBoardRef.current;
+                          const newBoard = {
+                            ...board,
+                            [schmoozePickerCard.movingCube.col]: board[schmoozePickerCard.movingCube.col].map((s, i) => i === schmoozePickerCard.movingCube.row ? null : s),
+                          };
+                          newBoard[col.id] = newBoard[col.id].map((s, i) => i === ri ? currentPlayerId : s);
+                          managementBoardRef.current = newBoard;
+                          setManagementBoard(newBoard);
+                          addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: "${schmoozePickerCard.cardName}" → moved cube to ${col.label} row ${ri + 1}.`);
+                          consumeSchmoozeCard(schmoozePickerCard.pid, schmoozePickerCard.cardInstanceId);
+                          setSchmoozePickerCard(null);
+                        }} style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${col.color}`, background: "rgba(34,197,94,0.15)", color: "#f9fafb", cursor: "pointer", fontWeight: 700, textAlign: "left" }}>
+                          → {col.emoji} {col.label} — Row {ri + 1}
+                        </button>
+                      ) : null).filter(Boolean))}
+                    </div>
+                  )}
+                  <div style={{ textAlign: "center", marginTop: 10 }}>
+                    <button onClick={() => setSchmoozePickerCard(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.252: Management Board — place cube modal. */}
+            {pendingCubePlacement && pendingCubePlacement.pid === currentPlayerId && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(20,20,40,0.95), rgba(10,10,25,0.95))", border: "2px solid #22c55e", boxShadow: "0 0 40px rgba(34,197,94,0.3)", maxWidth: 820, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#86efac", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 Management Board</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>Place your cube</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Click a column slot, or the +1 Ticket zone.</p>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
+                    {MGMT_COLUMNS.map(col => {
+                      const colArr = managementBoard[col.id];
+                      const nextVacant = colArr.indexOf(null);
+                      const filled = colArr.filter(x => x !== null).length;
+                      return (
+                        <div key={col.id} style={{ padding: 12, borderRadius: 10, background: "rgba(20,18,34,0.65)", border: `2px solid ${col.color}` }}>
+                          <div style={{ textAlign: "center", marginBottom: 8 }}>
+                            <div style={{ fontSize: 22 }}>{col.emoji}</div>
+                            <div style={{ color: col.color, fontWeight: 800, fontSize: 13 }}>{col.label}</div>
+                            <div style={{ color: "#94a3b8", fontSize: 9, marginTop: 2, minHeight: 24 }}>{col.scoreDesc}</div>
+                            <div style={{ color: "#fcd34d", fontSize: 9, marginTop: 2, fontStyle: "italic", minHeight: 24 }}>🏆 {col.milestoneDesc}</div>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column-reverse", gap: 4 }}>
+                            {colArr.map((slot, ri) => {
+                              const isNext = ri === nextVacant;
+                              const owner = slot ? players.find(p => p.id === slot) : null;
+                              return (
+                                <button
+                                  key={ri}
+                                  onClick={() => { if (isNext) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
+                                  disabled={!isNext}
+                                  style={{
+                                    padding: "8px 6px", borderRadius: 6,
+                                    border: isNext ? `2px solid ${col.color}` : "1px solid #334155",
+                                    background: slot ? "rgba(76,29,149,0.45)" : (isNext ? "rgba(34,197,94,0.15)" : "rgba(15,14,26,0.4)"),
+                                    color: isNext ? "#f9fafb" : "#64748b",
+                                    cursor: isNext ? "pointer" : "not-allowed",
+                                    fontSize: 11, fontWeight: 700,
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  {slot ? `● ${owner?.festivalName?.slice(0, 10) || "?"}` : isNext ? "Place here →" : `Row ${ri + 1}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {filled === MGMT_ROWS && (
+                            <div style={{ marginTop: 6, textAlign: "center", fontSize: 10, color: managementMilestones[col.id] === currentPlayerId ? "#86efac" : "#fbbf24", fontWeight: 700 }}>🏆 {players.find(p => p.id === managementMilestones[col.id])?.festivalName || "?"}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => { placeCubeOnBoard(currentPlayerId, "dump", 0); setPendingCubePlacement(null); }}
+                    style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px solid #4ade80", background: "rgba(34,197,94,0.15)", color: "#86efac", fontWeight: 800, fontSize: 13, cursor: "pointer" }}
+                  >
+                    💰 +1 Ticket Zone — place here for a flat +1 ticket (currently {managementBoard.dump?.[currentPlayerId] || 0})
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
             {/* v199.234: Rearrange — place amenity picker (type + field). */}
             {rearrangePicker && rearrangePicker.step === "place" && typeof document !== "undefined" && createPortal(
               <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
@@ -26846,6 +27544,13 @@ export default function Headliners() {
               lastActionByPidRef.current = {};
               lastFameGainedByPidRef.current = {};
               currentTurnFameGainedRef.current = false;
+              // v199.252: reset management board state.
+              setManagementBoard({ schmooze: Array(MGMT_ROWS).fill(null), hire: Array(MGMT_ROWS).fill(null), advertise: Array(MGMT_ROWS).fill(null), dump: {} });
+              managementBoardRef.current = { schmooze: Array(MGMT_ROWS).fill(null), hire: Array(MGMT_ROWS).fill(null), advertise: Array(MGMT_ROWS).fill(null), dump: {} };
+              setManagementMilestones({ schmooze: null, hire: null, advertise: null });
+              setSchmoozeDeck([]); setSchmoozeDiscard([]); setSchmoozeHands({}); setSchmoozeTargetFlags({});
+              schmoozeTargetFlagsRef.current = {};
+              setPendingCubePlacement(null); setSchmoozePickerCard(null);
               // v199.251: reset end-game calculator state + per-season accumulator refs. Without this, calcSteps from the prior game is still truthy, so the builder useEffect's `if (calcSteps) return;` guard short-circuits and the animation never runs on game 2+.
               setCalcSteps(null); setCalcStep(0); setCalcTotals({}); setCalcDone(false); setCalcPendingDeltas({});
               if (calcTickIntervalRef.current) { clearInterval(calcTickIntervalRef.current); calcTickIntervalRef.current = null; }
