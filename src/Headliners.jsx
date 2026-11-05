@@ -26846,6 +26846,20 @@ export default function Headliners() {
               lastActionByPidRef.current = {};
               lastFameGainedByPidRef.current = {};
               currentTurnFameGainedRef.current = false;
+              // v199.251: reset end-game calculator state + per-season accumulator refs. Without this, calcSteps from the prior game is still truthy, so the builder useEffect's `if (calcSteps) return;` guard short-circuits and the animation never runs on game 2+.
+              setCalcSteps(null); setCalcStep(0); setCalcTotals({}); setCalcDone(false); setCalcPendingDeltas({});
+              if (calcTickIntervalRef.current) { clearInterval(calcTickIntervalRef.current); calcTickIntervalRef.current = null; }
+              seasonCardTicketsRef.current = {};
+              seasonHeadlinerBonusRef.current = {};
+              seasonPlaysLogRef.current = {};
+              seasonCardEventsRef.current = {};
+              prevHandSizesRef.current = {};
+              prevAmenityTotalsRef.current = {};
+              quickYearHistoryRef.current = {};
+              setQuickYearHistory({});
+              setSeasonProgress({}); seasonProgressRef.current = {};
+              setSeasonCards({}); seasonCardsRef.current = {};
+              setQuickYearSeason("autumn"); quickYearSeasonRef.current = "autumn";
             }} style={{ ...bp, padding: "12px 20px", fontSize: 14 }}>Play Again 🎪</button>
           </div>
         </div>
