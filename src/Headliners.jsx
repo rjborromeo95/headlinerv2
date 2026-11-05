@@ -4460,7 +4460,7 @@ export default function Headliners() {
   // v199.133: compute Game-End scoring from artist effects (e.g. "Game End: Sell 3
   // tickets/pop artist on this stage"). Called at Summer close, parallel to the Fame
   // card end tally. Returns { total, lines[] } for logging.
-  const computeArtistGameEndBonuses = (pid) => {
+  const computeArtistGameEndBonuses = (pid, stageIdxFilter = null) => {
     const pd = (playerDataRef.current || playerData)[pid] || {};
     const stages = pd.stageArtists || [];
     const allPlayed = stages.flat();
@@ -4470,6 +4470,7 @@ export default function Headliners() {
     let total = 0;
     const lines = [];
     stages.forEach((sa, stageIdx) => {
+      if (stageIdxFilter != null && stageIdx !== stageIdxFilter) return;
       sa.forEach(host => {
         const eff = (host?.effect || "").trim();
         if (!eff || !/^game end:/i.test(eff)) return;
@@ -4545,88 +4546,85 @@ export default function Headliners() {
         total += bonus;
       });
     });
-    // Also add +1 per Special Guest tucked behind any host on any stage.
-    stages.forEach(sa => sa.forEach(host => {
-      const guests = (host?.specialGuests || []).length;
-      if (guests > 0) { total += guests; lines.push(`${host.name}: +${guests} (${guests} Special Guest${guests === 1 ? "" : "s"})`); }
-    }));
+    // Also add +1 per Special Guest tucked behind any host on any stage (filtered by stage if given).
+    stages.forEach((sa, stageIdx) => {
+      if (stageIdxFilter != null && stageIdx !== stageIdxFilter) return;
+      sa.forEach(host => {
+        const guests = (host?.specialGuests || []).length;
+        if (guests > 0) { total += guests; lines.push(`${host.name}: +${guests} (${guests} Special Guest${guests === 1 ? "" : "s"})`); }
+      });
+    });
     return { total, lines };
   };
 
-  // v199.226/v199.229: build the ticket-calculator step sequence when the game ends in Quick Play. Each step holds per-player breakdowns: {total, lines: [{label, value}]}, so the UI can show which artists/objectives contributed.
+  // v199.246: ticket-calculator step sequence restructured to go stage-by-stage. The flow is: Stage 1 Tickets → Stage 1 Effects → Stage 2 Tickets → Stage 2 Effects → Stage 3 Tickets → Stage 3 Effects → Objectives & Bonuses → Fame Cards. Headliner (slot 2) counts for its doubled base in the stage-tickets step.
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (calcSteps) return; // already built
     const hist = quickYearHistoryRef.current || quickYearHistory || {};
     const steps = [];
-    const seasons = [
-      { key: "autumn", emoji: "🍂", label: "Autumn", color: "#f97316" },
-      { key: "winter", emoji: "❄️", label: "Winter", color: "#60a5fa" },
-      { key: "spring", emoji: "🌸", label: "Spring", color: "#86efac" },
-      { key: "summer", emoji: "☀️", label: "Summer", color: "#fcd34d" },
-    ];
-    const eventsLog = seasonCardEventsRef.current || {};
-    seasons.forEach(s => {
-      // Step A: objectives/bonuses + base artist tickets this season.
-      const breakdownsA = {};
+    const stageEmojis = ["🎤", "🎸", "🎧"];
+    const stageColors = ["#f472b6", "#a78bfa", "#fcd34d"];
+    // Steps 1-6: per stage (base + effects).
+    for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
+      // Stage base tickets (from artists on this stage). Headliner slot = ×2.
+      const baseBreakdowns = {};
       (players || []).forEach(p => {
-        const seasonHist = hist[p.id]?.[s.key] || {};
-        const bookings = seasonHist.bookings || [];
+        const pd = (playerDataRef.current || playerData)[p.id] || {};
+        const sa = (pd.stageArtists || [])[stageIdx] || [];
         const lines = [];
-        // Objective/bonus contributions — prefer per-event granularity from the events log.
-        const events = (eventsLog[p.id]?.[s.key] || []).filter(ev => ev.tix > 0);
-        if (events.length > 0) {
-          events.forEach(ev => lines.push({ label: `📋 ${ev.label}`, value: ev.tix }));
-        } else {
-          const sCardTix = seasonHist.seasonCardTickets || 0;
-          if (sCardTix > 0) {
-            const scName = (seasonCardsRef.current?.[s.key])?.label || "Season card";
-            lines.push({ label: `📋 ${scName}`, value: sCardTix });
-          }
-        }
-        // Base artist tickets per booking.
-        bookings.forEach(b => {
-          if (b.baseTickets > 0) {
-            lines.push({ label: `🎤 ${b.name}${b.isHeadliner ? " ★" : ""}`, value: b.baseTickets });
+        let total = 0;
+        sa.forEach((a, slot) => {
+          if (!a) return;
+          const multi = slot === 2 ? 2 : 1;
+          const v = (a.tickets || 0) * multi;
+          if (v > 0) {
+            const tag = slot === 2 ? " ★" : "";
+            lines.push({ label: `🎤 ${a.name}${tag}${multi === 2 ? " (headliner ×2)" : ""}`, value: v });
+            total += v;
           }
         });
-        const total = (seasonHist.seasonCardTickets || 0) + (seasonHist.baseArtistTickets || 0);
-        breakdownsA[p.id] = { total, lines };
+        baseBreakdowns[p.id] = { total, lines };
       });
-      steps.push({ label: `${s.emoji} ${s.label} — Objectives, Bonuses & Artists`, color: s.color, breakdowns: breakdownsA });
-      // Step B: headliner bonus tickets this season.
-      const breakdownsB = {};
+      steps.push({ label: `${stageEmojis[stageIdx]} Stage ${stageIdx + 1} Tickets`, color: stageColors[stageIdx], breakdowns: baseBreakdowns });
+      // Stage effects (game-end effects fired by artists on this stage).
+      const effBreakdowns = {};
       (players || []).forEach(p => {
-        const seasonHist = hist[p.id]?.[s.key] || {};
-        const bookings = seasonHist.bookings || [];
-        const lines = bookings
-          .filter(b => b.isHeadliner && b.baseTickets > 0)
-          .map(b => ({ label: `★ ${b.name} headliner bonus`, value: b.baseTickets }));
-        const total = seasonHist.headlinerBonusTickets || 0;
-        breakdownsB[p.id] = { total, lines };
+        let total = 0;
+        let effLines = [];
+        try {
+          const r = computeArtistGameEndBonuses(p.id, stageIdx);
+          total = r?.total || 0;
+          effLines = (r?.lines || []).map(ln => {
+            const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
+            if (m) return { label: `🎸 ${m[1].trim()}`, value: parseInt(m[2], 10) };
+            return { label: `🎸 ${ln}`, value: 0 };
+          }).filter(x => x.value > 0);
+        } catch { /* ignore */ }
+        effBreakdowns[p.id] = { total, lines: effLines };
       });
-      steps.push({ label: `${s.emoji} ${s.label} — Headliner Bonuses`, color: s.color, breakdowns: breakdownsB });
-    });
-    // Artist effects (game-end bonuses from artist cards).
-    const breakdownsArt = {};
+      steps.push({ label: `${stageEmojis[stageIdx]} Stage ${stageIdx + 1} Effects`, color: stageColors[stageIdx], breakdowns: effBreakdowns });
+    }
+    // Step 7: Objectives & Bonuses (season cards, across all seasons).
+    const objBreakdowns = {};
+    const eventsLog = seasonCardEventsRef.current || {};
+    const seasonKeys = ["autumn", "winter", "spring", "summer"];
+    const seasonEmojis = { autumn: "🍂", winter: "❄️", spring: "🌸", summer: "☀️" };
     (players || []).forEach(p => {
       let total = 0;
-      let effLines = [];
-      try {
-        const r = computeArtistGameEndBonuses(p.id);
-        total = r?.total || 0;
-        // r.lines is strings like "ArtistName: +N (reason)" — convert to {label, value}.
-        effLines = (r?.lines || []).map(ln => {
-          const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
-          if (m) return { label: `🎸 ${m[1].trim()}`, value: parseInt(m[2], 10) };
-          return { label: `🎸 ${ln}`, value: 0 };
-        }).filter(x => x.value > 0);
-      } catch { /* ignore */ }
-      breakdownsArt[p.id] = { total, lines: effLines };
+      const lines = [];
+      seasonKeys.forEach(sKey => {
+        const seasonHist = hist[p.id]?.[sKey] || {};
+        const sCardTix = seasonHist.seasonCardTickets || 0;
+        total += sCardTix;
+        const events = (eventsLog[p.id]?.[sKey] || []).filter(ev => ev.tix > 0);
+        events.forEach(ev => lines.push({ label: `${seasonEmojis[sKey]} ${ev.label}`, value: ev.tix }));
+      });
+      objBreakdowns[p.id] = { total, lines };
     });
-    steps.push({ label: "🎸 Artist Effects", color: "#c4b5fd", breakdowns: breakdownsArt });
-    // Game-end power tickets (Fame cards + Legendary Lineup).
-    const breakdownsPow = {};
+    steps.push({ label: "📋 Objectives & Bonuses", color: "#4ade80", breakdowns: objBreakdowns });
+    // Step 8: Fame Cards (game-end power tickets).
+    const fameBreakdowns = {};
     (players || []).forEach(p => {
       let total = 0;
       let powLines = [];
@@ -4639,9 +4637,9 @@ export default function Headliners() {
           return { label: `🔥 ${ln}`, value: 0 };
         }).filter(x => x.value > 0);
       } catch { /* ignore */ }
-      breakdownsPow[p.id] = { total, lines: powLines };
+      fameBreakdowns[p.id] = { total, lines: powLines };
     });
-    steps.push({ label: "🔥 Game-End Power Tickets", color: "#fbbf24", breakdowns: breakdownsPow });
+    steps.push({ label: "🔥 Fame Cards", color: "#fbbf24", breakdowns: fameBreakdowns });
     const initTotals = {};
     (players || []).forEach(p => { initTotals[p.id] = 0; });
     setCalcTotals(initTotals);
@@ -19501,7 +19499,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes slideRightIn { from { opacity:0; transform:translateX(-12px) scaleX(0.92); transform-origin: left; } to { opacity:1; transform:translateX(0) scaleX(1); transform-origin: left; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } } @keyframes specialGuestTuck { 0% { opacity: 0; transform: translateY(-6px) scaleY(0.3); max-height: 0; } 60% { opacity: 0.9; transform: translateY(0) scaleY(1.05); } 100% { opacity: 1; transform: translateY(0) scaleY(1); max-height: 40px; } }`}</style>;
+  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes slideRightIn { from { opacity:0; transform:translateX(-12px) scaleX(0.92); transform-origin: left; } to { opacity:1; transform:translateX(0) scaleX(1); transform-origin: left; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } } @keyframes specialGuestTuck { 0% { opacity: 0; transform: translateY(-6px) scaleY(0.3); max-height: 0; } 60% { opacity: 0.9; transform: translateY(0) scaleY(1.05); } 100% { opacity: 1; transform: translateY(0) scaleY(1); max-height: 40px; } } @keyframes calcConfettiFall { 0% { opacity: 0; transform: translateY(0) rotate(0deg); } 10% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; transform: translateY(105vh) rotate(720deg); } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -26510,12 +26508,105 @@ export default function Headliners() {
           {/* v198.1: Quick Play uses a simplified leaderboard — just tickets + fame, no
               per-year columns (there's only one year). Classic keeps the full per-year grid. */}
           {gameMode === "quickYear" && calcDone ? (
-            /* v199.24: per-season breakdown. Each player gets a row block showing their
-               performance each season (Autumn/Winter/Spring/Summer) side-by-side, plus a
-               bold TOTAL column on the right. For each season: tickets scored + artists
-               played + fame delta. The totals column shows ending Fame, cumulative artists,
-               and total tickets as the big number. */
+            /* v199.246: winner reveal + flavour + confetti; v199.24 per-season breakdown below. */
             <div style={{ marginTop: 12, marginBottom: 20, textAlign: "left" }}>
+              {/* v199.246: confetti on reveal. ~40 falling emoji squares, randomized colors/positions/delays; CSS animation runs once. */}
+              {(() => {
+                const colors = ["#fbbf24", "#f472b6", "#a78bfa", "#60a5fa", "#86efac", "#fcd34d", "#ef4444"];
+                return (
+                  <div aria-hidden style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 9000 }}>
+                    {Array.from({ length: 48 }).map((_, i) => {
+                      const left = Math.random() * 100;
+                      const delay = Math.random() * 1.4;
+                      const dur = 2.6 + Math.random() * 2.2;
+                      const size = 8 + Math.random() * 8;
+                      const color = colors[i % colors.length];
+                      const rot = Math.random() * 360;
+                      return <div key={i} style={{
+                        position: "absolute",
+                        left: `${left}%`,
+                        top: -24,
+                        width: size, height: size,
+                        background: color,
+                        borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+                        transform: `rotate(${rot}deg)`,
+                        animation: `calcConfettiFall ${dur}s linear ${delay}s forwards`,
+                      }} />;
+                    })}
+                  </div>
+                );
+              })()}
+              {/* v199.246: winner banner with flavour text. */}
+              {(() => {
+                const winner = ranked[0];
+                const runnerUp = ranked[1];
+                if (!winner) return null;
+                const margin = winner.total - (runnerUp?.total || 0);
+                let flavourPhrase;
+                if (margin < 5) flavourPhrase = "just barely sold the most tickets";
+                else if (margin <= 15) flavourPhrase = "ran a festival so well";
+                else flavourPhrase = "blew the competition out of the water";
+                const pd = playerData[winner.player.id] || {};
+                const stageArtists = pd.stageArtists || [];
+                const stageNames = pd.stageNames || [];
+                // Headliners = slot-2 artists on each stage (only filled stages).
+                const headliners = stageArtists.map(sa => (sa && sa[2]) ? sa[2].name : null).filter(Boolean);
+                const headlinerPhrase = headliners.length === 0
+                  ? ""
+                  : headliners.length === 1
+                    ? headliners[0]
+                    : headliners.length === 2
+                      ? `${headliners[0]} and ${headliners[1]}`
+                      : `${headliners.slice(0, -1).join(", ")} and ${headliners[headliners.length - 1]}`;
+                // Pick a stage name — prefer one that had a headliner, else any.
+                const stageWithHeadliner = stageArtists.findIndex(sa => sa && sa[2]);
+                const chosenStageName = stageWithHeadliner >= 0
+                  ? (stageNames[stageWithHeadliner] || `Stage ${stageWithHeadliner + 1}`)
+                  : (stageNames[0] || "the main stage");
+                return (
+                  <div style={{
+                    position: "relative",
+                    marginBottom: 24,
+                    padding: "24px 20px",
+                    borderRadius: 16,
+                    background: "linear-gradient(135deg, rgba(252,211,77,0.18), rgba(244,114,182,0.14), rgba(167,139,250,0.14))",
+                    border: "2px solid rgba(252,211,77,0.7)",
+                    boxShadow: "0 0 60px rgba(252,211,77,0.35), inset 0 0 40px rgba(252,211,77,0.08)",
+                    textAlign: "center",
+                    animation: "fadeSlideIn 0.6s ease-out",
+                  }}>
+                    <div style={{ fontSize: 44, marginBottom: 4 }}>🏆</div>
+                    <div style={{ fontSize: 10, color: "#fcd34d", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700 }}>Winner</div>
+                    <h1 style={{
+                      fontSize: 34,
+                      fontWeight: 900,
+                      color: "#fde68a",
+                      margin: "6px 0 10px",
+                      textShadow: "0 0 24px rgba(252,211,77,0.6)",
+                      lineHeight: 1.1,
+                    }}>
+                      {winner.player.festivalName}{winner.player.isAI ? " 🤖" : ""} wins!
+                    </h1>
+                    <p style={{
+                      fontSize: 14,
+                      color: "#f3f4f6",
+                      lineHeight: 1.55,
+                      maxWidth: 580,
+                      margin: "0 auto",
+                      fontStyle: "italic",
+                    }}>
+                      <strong style={{ color: "#fde68a", fontStyle: "normal" }}>{winner.player.festivalName}</strong> {flavourPhrase}
+                      {headlinerPhrase && <> with a lineup that featured stars such as <strong style={{ color: "#f9a8d4", fontStyle: "normal" }}>{headlinerPhrase}</strong> on iconic stages, such as <strong style={{ color: "#c4b5fd", fontStyle: "normal" }}>{chosenStageName}</strong></>}
+                      .
+                    </p>
+                    {runnerUp && (
+                      <div style={{ marginTop: 14, fontSize: 11, color: "#94a3b8" }}>
+                        Winning margin: <strong style={{ color: "#86efac" }}>+{margin} 🎟️</strong> over {runnerUp.player.festivalName}{runnerUp.player.isAI ? " 🤖" : ""}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {ranked.map((row, idx) => {
                 const finalFame = row.byYear[1]?.fame || 0;
                 const finalTickets = row.byYear[1]?.raw || 0;
