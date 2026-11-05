@@ -4706,94 +4706,97 @@ export default function Headliners() {
           if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}: dice refreshed`, "#fbbf24");
           markFameCardUsedThisTurn(pid, card.instanceId);
           break;
-        // v199.233: Cycle Hand — draw 1 (from pool by default), then discard 1 (auto: lowest-value).
-        // Picker UX for pool/deck choice + discard selection can be added as a follow-up polish pass.
+        // v199.234: Cycle Hand — open source picker (pool/deck) for humans; auto-resolve for AI.
         case "once_hand_cycle": {
-          const pdHC = (playerDataRef.current || playerData)[pid] || {};
-          const handHC = pdHC.hand || [];
           const poolHC = artistPoolRef.current || artistPool || [];
-          if (poolHC.length === 0) {
-            const deckHC = artistDeckRef.current || artistDeck || [];
-            if (deckHC.length === 0) {
-              addLog("🔥 Fame", `${festName}: "${card.name}" — no artists available to draw.`);
-              break;
-            }
-          }
-          // Draw from pool if possible (gives player visibility); otherwise from deck.
-          let drawnCard = null;
-          if (poolHC.length > 0) {
-            drawnCard = poolHC[0];
-            setArtistPool(prev => prev.filter((_, i) => i !== 0));
-            refillArtistPool && setTimeout(() => refillArtistPool(), 50);
-          } else {
-            const deckHC = artistDeckRef.current || artistDeck || [];
-            drawnCard = deckHC[0];
-            setArtistDeck(prev => prev.slice(1));
-          }
-          if (!drawnCard) {
-            addLog("🔥 Fame", `${festName}: "${card.name}" — no artist available.`);
+          const deckHC = artistDeckRef.current || artistDeck || [];
+          if (poolHC.length === 0 && deckHC.length === 0) {
+            addLog("🔥 Fame", `${festName}: "${card.name}" — no artists available to draw.`);
             break;
           }
-          // Discard: AI picks lowest ticket value; human also auto-resolved for now (will add picker in polish pass).
-          let discardIdx = -1;
-          if (handHC.length > 0) {
-            const sortedH = handHC.map((a, i) => ({ a, i })).sort((x, y) => (x.a.tickets || 0) - (y.a.tickets || 0));
-            discardIdx = sortedH[0].i;
-          }
-          setPlayerData(p => {
-            const cur = p[pid] || {};
-            const newHand = [...(cur.hand || []), drawnCard];
-            if (discardIdx >= 0 && discardIdx < newHand.length - 1) {
-              const discarded = newHand.splice(discardIdx, 1)[0];
-              setDiscardPile(dp => [...dp, discarded]);
+          if (player?.isAI) {
+            // AI auto-resolve: draw top of pool (or deck if pool empty), discard worst in hand.
+            let drawnCard = null;
+            if (poolHC.length > 0) {
+              drawnCard = poolHC[0];
+              setArtistPool(prev => prev.filter((_, i) => i !== 0));
+            } else {
+              drawnCard = deckHC[0];
+              setArtistDeck(prev => prev.slice(1));
             }
-            return { ...p, [pid]: { ...cur, hand: newHand } };
-          });
-          addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnCard.name}"${discardIdx >= 0 ? `, discarded "${handHC[discardIdx].name}"` : ""}.`);
-          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
-          markFameCardUsedThisTurn(pid, card.instanceId);
+            const pdHC = (playerDataRef.current || playerData)[pid] || {};
+            const handHC = pdHC.hand || [];
+            let discardIdx = -1;
+            if (handHC.length > 0) {
+              const sortedH = handHC.map((a, i) => ({ a, i })).sort((x, y) => (x.a.tickets || 0) - (y.a.tickets || 0));
+              discardIdx = sortedH[0].i;
+            }
+            setPlayerData(p => {
+              const cur = p[pid] || {};
+              const newHand = [...(cur.hand || []), drawnCard];
+              if (discardIdx >= 0 && discardIdx < newHand.length - 1) {
+                const discarded = newHand.splice(discardIdx, 1)[0];
+                setDiscardPile(dp => [...dp, discarded]);
+              }
+              return { ...p, [pid]: { ...cur, hand: newHand } };
+            });
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — drew "${drawnCard.name}"${discardIdx >= 0 ? `, discarded "${handHC[discardIdx].name}"` : ""}.`);
+            markFameCardUsedThisTurn(pid, card.instanceId);
+          } else {
+            // Human: open source picker.
+            setCycleHandPicker({ pid, cardInstanceId: card.instanceId, cardName: card.name, step: "source" });
+          }
           break;
         }
-        // v199.233: Rearrange amenity — remove one (auto: weakest/most-stocked), place one (auto: least-stocked).
+        // v199.234: Rearrange — open remove picker for humans, auto-resolve for AI.
         case "once_swap_amenity": {
           const pdSA = (playerDataRef.current || playerData)[pid] || {};
           const fields = pdSA.fields || emptyFields();
           const amTypes = ["campsite", "security", "catering", "portaloo"];
-          // Find amenity to remove — pick the field with highest count of your most-stocked type.
-          let removeField = -1, removeType = null, removeMax = 0;
-          fields.forEach((f, fi) => {
+          // Check player has at least one amenity to remove.
+          let anyAmenity = false;
+          fields.forEach(f => {
             if (!f) return;
-            amTypes.forEach(t => {
-              const c = f[t] || 0;
-              if (c > removeMax) { removeMax = c; removeField = fi; removeType = t; }
-            });
+            amTypes.forEach(t => { if ((f[t] || 0) > 0) anyAmenity = true; });
           });
-          if (removeField < 0 || !removeType) {
+          if (!anyAmenity) {
             addLog("🔥 Fame", `${festName}: "${card.name}" — no amenity to remove.`);
             break;
           }
-          // Place: least-stocked type, in first field with room.
-          const am = pdSA.amenities || {};
-          const typesSorted = [...amTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0));
-          const placeType = typesSorted[0];
-          let placeField = 0;
-          for (let i = 0; i < fields.length; i++) {
-            const f = fields[i] || {};
-            const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
-            if (count < 5) { placeField = i; break; }
+          if (player?.isAI) {
+            // AI auto: remove the most-stocked type from the field with highest concentration.
+            let removeField = -1, removeType = null, removeMax = 0;
+            fields.forEach((f, fi) => {
+              if (!f) return;
+              amTypes.forEach(t => {
+                const c = f[t] || 0;
+                if (c > removeMax) { removeMax = c; removeField = fi; removeType = t; }
+              });
+            });
+            const am = pdSA.amenities || {};
+            const typesSorted = [...amTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0));
+            const placeType = typesSorted[0];
+            let placeField = 0;
+            for (let i = 0; i < fields.length; i++) {
+              const f = fields[i] || {};
+              const count = (f.campsite || 0) + (f.security || 0) + (f.catering || 0) + (f.portaloo || 0);
+              if (count < 5) { placeField = i; break; }
+            }
+            setPlayerData(p => {
+              let cur = p[pid] || {};
+              cur = mutateAmenity(cur, removeField, removeType, -1);
+              cur = mutateAmenity(cur, placeField, placeType, +1);
+              return { ...p, [pid]: cur };
+            });
+            addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — removed ${AMENITY_LABELS[removeType]} from F${removeField + 1}, placed ${AMENITY_LABELS[placeType]} in F${placeField + 1}.`);
+            markFameCardUsedThisTurn(pid, card.instanceId);
+          } else {
+            // Human: open remove picker first.
+            setRearrangePicker({ pid, cardInstanceId: card.instanceId, cardName: card.name, step: "remove" });
           }
-          setPlayerData(p => {
-            let cur = p[pid] || {};
-            cur = mutateAmenity(cur, removeField, removeType, -1);
-            cur = mutateAmenity(cur, placeField, placeType, +1);
-            return { ...p, [pid]: cur };
-          });
-          addLog("🔥 Fame", `${festName}: "${card.name}" — removed ${AMENITY_LABELS[removeType]} from F${removeField + 1}, placed ${AMENITY_LABELS[placeType]} in F${placeField + 1}.`);
-          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
-          markFameCardUsedThisTurn(pid, card.instanceId);
           break;
         }
-        // v199.233: Scout the Deck — look at top deck card; draw if useful, discard otherwise. For humans, same auto-resolve for now; proper peek-modal is a polish-pass item.
+        // v199.234: Scout the Deck — open peek modal for humans, auto-resolve for AI.
         case "once_scry_deck": {
           const deckSC = artistDeckRef.current || artistDeck || [];
           if (deckSC.length === 0) {
@@ -4801,23 +4804,25 @@ export default function Headliners() {
             break;
           }
           const topSC = deckSC[0];
-          // Simple heuristic: draw if hand < 6 or if card is strong (fame >= 3), else discard.
-          const pdSC = (playerDataRef.current || playerData)[pid] || {};
-          const handSize = (pdSC.hand || []).length;
-          const shouldDraw = handSize < 6 || (topSC.fame || 0) >= 3;
-          setArtistDeck(prev => prev.slice(1));
-          if (shouldDraw) {
-            setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), topSC] } }));
-            addLog("🔥 Fame", `${festName}: "${card.name}" — peeked "${topSC.name}", drew it to hand.`);
+          if (player?.isAI) {
+            const pdSC = (playerDataRef.current || playerData)[pid] || {};
+            const handSize = (pdSC.hand || []).length;
+            const shouldDraw = handSize < 6 || (topSC.fame || 0) >= 3;
+            setArtistDeck(prev => prev.slice(1));
+            if (shouldDraw) {
+              setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), topSC] } }));
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — peeked "${topSC.name}", drew it.`);
+            } else {
+              setDiscardPile(dp => [...dp, topSC]);
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — peeked "${topSC.name}", discarded it.`);
+            }
+            markFameCardUsedThisTurn(pid, card.instanceId);
           } else {
-            setDiscardPile(dp => [...dp, topSC]);
-            addLog("🔥 Fame", `${festName}: "${card.name}" — peeked "${topSC.name}", discarded it.`);
+            setScryPicker({ pid, cardInstanceId: card.instanceId, cardName: card.name, card: topSC });
           }
-          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
-          markFameCardUsedThisTurn(pid, card.instanceId);
           break;
         }
-        // v199.233: Shop the Industry — draw 1 Fame card, keep or bottom-of-deck. Auto-resolve: keep if different + replace current card.
+        // v199.234: Shop the Industry — open comparison modal for humans.
         case "once_fame_cycle": {
           const fDeck = fameDeckRef.current || fameDeck || [];
           if (fDeck.length === 0) {
@@ -4825,24 +4830,25 @@ export default function Headliners() {
             break;
           }
           const drawnFC = fDeck[0];
-          // Simple heuristic: if the drawn card is a different category than THIS card, replace; else bottom-of-deck.
-          const shouldReplace = drawnFC && drawnFC.category !== card.category;
-          setFameDeck(prev => prev.slice(1));
-          if (shouldReplace) {
-            // Replace THIS card with the drawn one.
-            const replacement = { ...drawnFC, instanceId: `fame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, receivedInSeason: quickYearSeasonRef.current };
-            setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? replacement : c) }));
-            setFameDiscardPile(d => [...d, { ...card }]);
-            addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnFC.name}", replaced this card with it.`);
-            if (drawnFC.trigger === "on_draw") {
-              setTimeout(() => fireFameCardEffect(pid, replacement, { onDraw: true }), 60);
+          if (player?.isAI) {
+            const shouldReplace = drawnFC && drawnFC.category !== card.category;
+            setFameDeck(prev => prev.slice(1));
+            if (shouldReplace) {
+              const replacement = { ...drawnFC, instanceId: `fame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, receivedInSeason: quickYearSeasonRef.current };
+              setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === card.instanceId ? replacement : c) }));
+              setFameDiscardPile(d => [...d, { ...card }]);
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — drew "${drawnFC.name}", replaced this card.`);
+              if (drawnFC.trigger === "on_draw") {
+                setTimeout(() => fireFameCardEffect(pid, replacement, { onDraw: true }), 60);
+              }
+            } else {
+              setFameDeck(prev => [...prev, drawnFC]);
+              addLog("🔥 Fame", `${festName} 🤖: "${card.name}" — drew "${drawnFC.name}", bottom of deck.`);
+              markFameCardUsedThisTurn(pid, card.instanceId);
             }
           } else {
-            setFameDeck(prev => [...prev, drawnFC]);
-            addLog("🔥 Fame", `${festName}: "${card.name}" — drew "${drawnFC.name}", sent to bottom of Fame deck.`);
-            markFameCardUsedThisTurn(pid, card.instanceId);
+            setFameShopPicker({ pid, cardInstanceId: card.instanceId, cardName: card.name, originalCard: card, drawnCard: drawnFC });
           }
-          if (!player?.isAI) showFloatingBonus(`🔥 ${card.name}`, "#fbbf24");
           break;
         }
         case "peek_rearrange_deck":
@@ -5057,6 +5063,19 @@ export default function Headliners() {
   // v199.232: when the user clicks a "wild" die in Build mode, we need them to pick which amenity type it represents before they can place it on a field. State: null when idle; { idx } where idx is the die index while the picker is open.
   const [wildDiePicker, _rawSetWildDiePicker] = useState(null);
   const setWildDiePicker = _guardSetter("setWildDiePicker", _rawSetWildDiePicker);
+  // v199.234: pickers for the once-a-turn Fame card choices.
+  // Cycle Hand: { pid, cardInstanceId, step: "source" | "discard", drawnCard }.
+  const [cycleHandPicker, _rawSetCycleHandPicker] = useState(null);
+  const setCycleHandPicker = _guardSetter("setCycleHandPicker", _rawSetCycleHandPicker);
+  // Rearrange: { pid, cardInstanceId, step, removeField, removeType, placeType }.
+  const [rearrangePicker, _rawSetRearrangePicker] = useState(null);
+  const setRearrangePicker = _guardSetter("setRearrangePicker", _rawSetRearrangePicker);
+  // Scout the Deck: { pid, cardInstanceId, card }.
+  const [scryPicker, _rawSetScryPicker] = useState(null);
+  const setScryPicker = _guardSetter("setScryPicker", _rawSetScryPicker);
+  // Shop the Industry: { pid, cardInstanceId, originalCard, drawnCard }.
+  const [fameShopPicker, _rawSetFameShopPicker] = useState(null);
+  const setFameShopPicker = _guardSetter("setFameShopPicker", _rawSetFameShopPicker);
   // v199.98: pending reactive effects queue. When an opponent takes an action, every
   // other player's matching reactive Fame cards queue an entry here. At the holder's
   // next turn start, these entries fire. Shape: { pid: [{ card, context }] }
@@ -24569,6 +24588,277 @@ export default function Headliners() {
                       padding: "6px 14px", borderRadius: 8, border: "1px solid #475569",
                       background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600,
                     }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Cycle Hand source picker (pool/deck). */}
+            {cycleHandPicker && cycleHandPicker.step === "source" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.3))", border: "2px solid #fbbf24", boxShadow: "0 0 40px rgba(251,191,36,0.3)", maxWidth: 520, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, color: "#fcd34d", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {cycleHandPicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>Draw from where?</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Pool shows face-up. Deck is top card, face-down.</p>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <button onClick={() => {
+                      const poolHC = artistPoolRef.current || artistPool || [];
+                      if (poolHC.length === 0) return;
+                      // Open pool-pick sub-step: let player see the pool (visible via normal UI). Pick top for simplicity.
+                      const drawnCard = poolHC[0];
+                      setArtistPool(prev => prev.filter((_, i) => i !== 0));
+                      setCycleHandPicker(p => ({ ...p, step: "discard", drawnCard, source: "pool" }));
+                    }} style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #a78bfa", background: "rgba(76,29,149,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>
+                      <div style={{ fontSize: 22 }}>🪩</div>
+                      <div style={{ fontSize: 13, marginTop: 4 }}>From Pool</div>
+                      <div style={{ fontSize: 10, color: "#c4b5fd", marginTop: 2 }}>Top of pool</div>
+                    </button>
+                    <button onClick={() => {
+                      const deckHC = artistDeckRef.current || artistDeck || [];
+                      if (deckHC.length === 0) return;
+                      const drawnCard = deckHC[0];
+                      setArtistDeck(prev => prev.slice(1));
+                      setCycleHandPicker(p => ({ ...p, step: "discard", drawnCard, source: "deck" }));
+                    }} style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #60a5fa", background: "rgba(30,58,138,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>
+                      <div style={{ fontSize: 22 }}>🂠</div>
+                      <div style={{ fontSize: 13, marginTop: 4 }}>From Deck</div>
+                      <div style={{ fontSize: 10, color: "#93c5fd", marginTop: 2 }}>Top of deck (unknown)</div>
+                    </button>
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 12 }}>
+                    <button onClick={() => setCycleHandPicker(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Cycle Hand discard picker. */}
+            {cycleHandPicker && cycleHandPicker.step === "discard" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.3))", border: "2px solid #fbbf24", boxShadow: "0 0 40px rgba(251,191,36,0.3)", maxWidth: 720, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#fcd34d", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {cycleHandPicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 2px" }}>Drew "{cycleHandPicker.drawnCard?.name}"</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Click an artist from your hand to discard.</p>
+                  </div>
+                  {(() => {
+                    const pdHC = (playerDataRef.current || playerData)[cycleHandPicker.pid] || {};
+                    const handHC = [...(pdHC.hand || []), cycleHandPicker.drawnCard];
+                    return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+                      {handHC.map((artist, i) => (
+                        <button key={i} onClick={() => {
+                          // i is the index in the merged hand (last item = drawn card).
+                          setPlayerData(p => {
+                            const cur = p[cycleHandPicker.pid] || {};
+                            const newHand = [...(cur.hand || []), cycleHandPicker.drawnCard];
+                            const discarded = newHand.splice(i, 1)[0];
+                            setDiscardPile(dp => [...dp, discarded]);
+                            return { ...p, [cycleHandPicker.pid]: { ...cur, hand: newHand } };
+                          });
+                          addLog("🔥 Fame", `${players.find(pl => pl.id === cycleHandPicker.pid)?.festivalName || "?"}: "${cycleHandPicker.cardName}" — drew "${cycleHandPicker.drawnCard?.name}" from ${cycleHandPicker.source}, discarded "${artist.name}".`);
+                          showFloatingBonus(`🔥 ${cycleHandPicker.cardName}`, "#fbbf24");
+                          markFameCardUsedThisTurn(cycleHandPicker.pid, cycleHandPicker.cardInstanceId);
+                          setCycleHandPicker(null);
+                        }} style={{
+                          padding: "10px 8px", borderRadius: 8,
+                          border: i === handHC.length - 1 ? "2px solid #4ade80" : "1px solid #475569",
+                          background: i === handHC.length - 1 ? "rgba(22,101,52,0.3)" : "rgba(30,27,75,0.4)",
+                          color: "#f3f4f6", cursor: "pointer", textAlign: "left",
+                        }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2 }}>{artist.name}{i === handHC.length - 1 ? " ← new" : ""}</div>
+                          <div style={{ fontSize: 9, color: "#94a3b8" }}>🔥{artist.fame || 0} · 🎟️{artist.tickets || 0}</div>
+                        </button>
+                      ))}
+                    </div>;
+                  })()}
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Rearrange — remove amenity picker. */}
+            {rearrangePicker && rearrangePicker.step === "remove" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", boxShadow: "0 0 40px rgba(244,114,182,0.3)", maxWidth: 640, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {rearrangePicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 2px" }}>Remove an amenity</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Click an amenity in any field to remove it.</p>
+                  </div>
+                  {(() => {
+                    const pdR = (playerDataRef.current || playerData)[rearrangePicker.pid] || {};
+                    const fields = pdR.fields || emptyFields();
+                    const amTypes = ["campsite", "security", "catering", "portaloo"];
+                    return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {fields.map((f, fi) => (
+                        <div key={fi} style={{ padding: 10, borderRadius: 8, background: "rgba(20,18,34,0.6)", border: "1px solid #334155" }}>
+                          <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>Field {fi + 1}</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {amTypes.map(t => {
+                              const count = (f && f[t]) || 0;
+                              if (count === 0) return null;
+                              return <button key={t} onClick={() => {
+                                setRearrangePicker(p => ({ ...p, step: "place", removeField: fi, removeType: t }));
+                              }} style={{
+                                padding: "6px 10px", borderRadius: 6,
+                                border: "1px solid #f472b6", background: "rgba(131,24,67,0.4)",
+                                color: "#f3f4f6", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                                display: "flex", alignItems: "center", gap: 4,
+                              }}>
+                                <span style={{ fontSize: 16 }}>{AMENITY_ICONS[t]}</span>
+                                <span>×{count}</span>
+                              </button>;
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>;
+                  })()}
+                  <div style={{ textAlign: "center", marginTop: 12 }}>
+                    <button onClick={() => setRearrangePicker(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Rearrange — place amenity picker (type + field). */}
+            {rearrangePicker && rearrangePicker.step === "place" && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", boxShadow: "0 0 40px rgba(244,114,182,0.3)", maxWidth: 640, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {rearrangePicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 2px" }}>{rearrangePicker.placeType ? "Place it where?" : "Place which amenity?"}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Removed {AMENITY_LABELS[rearrangePicker.removeType]} from F{rearrangePicker.removeField + 1}.</p>
+                  </div>
+                  {!rearrangePicker.placeType ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                      {["campsite", "security", "catering", "portaloo"].map(t => (
+                        <button key={t} onClick={() => setRearrangePicker(p => ({ ...p, placeType: t }))} style={{
+                          padding: "14px 10px", borderRadius: 10, border: "1px solid #f472b6",
+                          background: "rgba(30,27,75,0.5)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700,
+                          display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                        }}>
+                          <span style={{ fontSize: 22 }}>{AMENITY_ICONS[t]}</span>
+                          <span style={{ fontSize: 12 }}>{AMENITY_LABELS[t]}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (() => {
+                    const pdR = (playerDataRef.current || playerData)[rearrangePicker.pid] || {};
+                    const fields = pdR.fields || emptyFields();
+                    return <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {fields.map((f, fi) => {
+                        const count = ((f && f.campsite) || 0) + ((f && f.security) || 0) + ((f && f.catering) || 0) + ((f && f.portaloo) || 0);
+                        const full = count >= 5;
+                        return <button key={fi} disabled={full} onClick={() => {
+                          const { pid, cardInstanceId, cardName, removeField, removeType, placeType } = rearrangePicker;
+                          setPlayerData(p => {
+                            let cur = p[pid] || {};
+                            cur = mutateAmenity(cur, removeField, removeType, -1);
+                            cur = mutateAmenity(cur, fi, placeType, +1);
+                            return { ...p, [pid]: cur };
+                          });
+                          addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — removed ${AMENITY_LABELS[removeType]} from F${removeField + 1}, placed ${AMENITY_LABELS[placeType]} in F${fi + 1}.`);
+                          showFloatingBonus(`🔥 ${cardName}`, "#fbbf24");
+                          markFameCardUsedThisTurn(pid, cardInstanceId);
+                          setRearrangePicker(null);
+                        }} style={{
+                          padding: "10px 14px", borderRadius: 8,
+                          border: "1px solid " + (full ? "#334155" : "#f472b6"),
+                          background: full ? "rgba(30,27,75,0.2)" : "rgba(131,24,67,0.4)",
+                          color: full ? "#64748b" : "#f3f4f6",
+                          cursor: full ? "not-allowed" : "pointer",
+                          textAlign: "left", fontWeight: 700,
+                        }}>
+                          Field {fi + 1} ({count}/5) {full ? "— full" : ""}
+                        </button>;
+                      })}
+                    </div>;
+                  })()}
+                  <div style={{ textAlign: "center", marginTop: 12 }}>
+                    <button onClick={() => setRearrangePicker(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Scout the Deck — peek modal. */}
+            {scryPicker && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(30,58,138,0.4), rgba(23,37,84,0.3))", border: "2px solid #60a5fa", boxShadow: "0 0 40px rgba(96,165,250,0.3)", maxWidth: 480, width: "100%", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#93c5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {scryPicker.cardName}</div>
+                  <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 10px" }}>Top of the deck:</h2>
+                  <div style={{ padding: 18, borderRadius: 12, background: "rgba(20,18,34,0.7)", border: "1px solid #60a5fa", marginBottom: 14 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#f9fafb" }}>{scryPicker.card?.name}</div>
+                    <div style={{ fontSize: 11, color: "#c4b5fd", marginTop: 4 }}>{scryPicker.card?.genre}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>🔥 {scryPicker.card?.fame || 0} Fame · 🎟️ {scryPicker.card?.tickets || 0} tickets</div>
+                    <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>⛺{scryPicker.card?.campCost || 0} 👮‍♀️{scryPicker.card?.securityCost || 0} 🍔{scryPicker.card?.cateringCost || 0} 🚽{scryPicker.card?.portalooCost || 0}</div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <button onClick={() => {
+                      const { pid, cardInstanceId, cardName, card } = scryPicker;
+                      setArtistDeck(prev => prev.slice(1));
+                      setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid].hand || []), card] } }));
+                      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — peeked "${card.name}", drew it.`);
+                      showFloatingBonus(`🔥 ${cardName}`, "#fbbf24");
+                      markFameCardUsedThisTurn(pid, cardInstanceId);
+                      setScryPicker(null);
+                    }} style={{ padding: "12px 10px", borderRadius: 10, border: "1px solid #4ade80", background: "rgba(22,101,52,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>📥 Draw it</button>
+                    <button onClick={() => {
+                      const { pid, cardInstanceId, cardName, card } = scryPicker;
+                      setArtistDeck(prev => prev.slice(1));
+                      setDiscardPile(dp => [...dp, card]);
+                      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — peeked "${card.name}", discarded it.`);
+                      markFameCardUsedThisTurn(pid, cardInstanceId);
+                      setScryPicker(null);
+                    }} style={{ padding: "12px 10px", borderRadius: 10, border: "1px solid #ef4444", background: "rgba(127,29,29,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>🗑️ Discard it</button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            {/* v199.234: Shop the Industry — side-by-side comparison modal. */}
+            {fameShopPicker && typeof document !== "undefined" && createPortal(
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.88)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(76,29,149,0.4), rgba(45,16,96,0.3))", border: "2px solid #a78bfa", boxShadow: "0 0 40px rgba(167,139,250,0.3)", maxWidth: 720, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#c4b5fd", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>🔥 {fameShopPicker.cardName}</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 17, fontWeight: 800, margin: "4px 0 2px" }}>Replace this card, or send the new one to the bottom?</h2>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                    <div style={{ padding: 14, borderRadius: 12, background: "rgba(30,27,75,0.5)", border: "1px solid #64748b" }}>
+                      <div style={{ fontSize: 9, color: "#64748b", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>This card</div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#f9fafb", marginTop: 4 }}>{fameShopPicker.originalCard?.name}</div>
+                      <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.4, marginTop: 6 }}>{fameShopPicker.originalCard?.desc}</div>
+                    </div>
+                    <div style={{ padding: 14, borderRadius: 12, background: "rgba(76,29,149,0.4)", border: "2px solid #a78bfa" }}>
+                      <div style={{ fontSize: 9, color: "#c4b5fd", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Drawn</div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#f9fafb", marginTop: 4 }}>{fameShopPicker.drawnCard?.name}</div>
+                      <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.4, marginTop: 6 }}>{fameShopPicker.drawnCard?.desc}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <button onClick={() => {
+                      const { pid, cardInstanceId, cardName, originalCard, drawnCard } = fameShopPicker;
+                      const replacement = { ...drawnCard, instanceId: `fame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, receivedInSeason: quickYearSeasonRef.current };
+                      setFameDeck(prev => prev.slice(1));
+                      setPlayerFameCards(pc => ({ ...pc, [pid]: (pc[pid] || []).map(c => c.instanceId === cardInstanceId ? replacement : c) }));
+                      setFameDiscardPile(d => [...d, { ...originalCard }]);
+                      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — replaced with "${drawnCard.name}".`);
+                      showFloatingBonus(`🔥 ${drawnCard.name}`, "#fbbf24");
+                      if (drawnCard.trigger === "on_draw") {
+                        setTimeout(() => fireFameCardEffect(pid, replacement, { onDraw: true }), 60);
+                      }
+                      setFameShopPicker(null);
+                    }} style={{ padding: "12px 10px", borderRadius: 10, border: "1px solid #a78bfa", background: "rgba(76,29,149,0.5)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>🔄 Replace this card</button>
+                    <button onClick={() => {
+                      const { pid, cardInstanceId, cardName, drawnCard } = fameShopPicker;
+                      setFameDeck(prev => [...prev.slice(1), drawnCard]);
+                      addLog("🔥 Fame", `${players.find(pl => pl.id === pid)?.festivalName || "?"}: "${cardName}" — "${drawnCard.name}" sent to bottom of Fame deck.`);
+                      markFameCardUsedThisTurn(pid, cardInstanceId);
+                      setFameShopPicker(null);
+                    }} style={{ padding: "12px 10px", borderRadius: 10, border: "1px solid #64748b", background: "rgba(30,27,75,0.4)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700 }}>⬇️ Bottom of deck</button>
                   </div>
                 </div>
               </div>,
