@@ -3103,26 +3103,10 @@ export default function Headliners() {
   // Refs for sync access.
   const managementBoardRef = useRef({ schmooze: [null,null,null,null,null], hire: [null,null,null,null,null], advertise: [null,null,null,null,null], dump: {} });
   useEffect(() => { managementBoardRef.current = managementBoard; }, [managementBoard]);
-  // v199.259: moved up from near drawFameCardsForPlayer so the queue-promotion useEffect below can read them without TDZ. Behavior unchanged.
+  // v199.259: moved up from near drawFameCardsForPlayer so the queue-promotion useEffect can read them without TDZ.
   const pendingFameDrawQueueRef = useRef([]);
   const fameDrawInProgressRef = useRef(false);
-  // v199.259: promote a queued cube placement to the active modal once Fame draws have settled. Settle window is 200ms to catch logFameGain's 80ms setTimeout cascade.
-  useEffect(() => {
-    if (queuedCubePlacementPid == null) return;
-    if (fameDrawModal) return;
-    if (pendingCubePlacement) return;
-    if (fameDrawInProgressRef.current) return;
-    if ((pendingFameDrawQueueRef.current || []).length > 0) return;
-    const timer = setTimeout(() => {
-      // Re-check at timer fire — a Fame draw may have opened in the settle window.
-      if (fameDrawModal) return;
-      if (fameDrawInProgressRef.current) return;
-      if ((pendingFameDrawQueueRef.current || []).length > 0) return;
-      setPendingCubePlacement({ pid: queuedCubePlacementPid });
-      setQueuedCubePlacementPid(null);
-    }, 200);
-    return () => clearTimeout(timer);
-  }, [queuedCubePlacementPid, fameDrawModal, pendingCubePlacement]);
+  // v199.259/v199.261: queue-promotion useEffect lives further down, AFTER fameDrawModal state is declared, to avoid TDZ on the deps array. See block after the fameDrawModal useState.
   const useManagementBoardRef = useRef(false);
   useEffect(() => { useManagementBoardRef.current = useManagementBoard; }, [useManagementBoard]);
   const pendingCubePlacementRef = useRef(null);
@@ -7494,6 +7478,22 @@ export default function Headliners() {
   const setPlayerFameCards = _guardSetter("setPlayerFameCards", _rawSetPlayerFameCards);
   const [fameDrawModal, _rawSetFameDrawModal] = useState(null);
   const setFameDrawModal = _guardSetter("setFameDrawModal", _rawSetFameDrawModal);
+  // v199.259/v199.261: promote a queued Management Board cube placement to the active modal once Fame draws have resolved. Settle window is 200ms to catch logFameGain's 80ms setTimeout cascade. Placed here (after fameDrawModal is declared) to avoid a TDZ on the dependency array.
+  useEffect(() => {
+    if (queuedCubePlacementPid == null) return;
+    if (fameDrawModal) return;
+    if (pendingCubePlacement) return;
+    if (fameDrawInProgressRef.current) return;
+    if ((pendingFameDrawQueueRef.current || []).length > 0) return;
+    const timer = setTimeout(() => {
+      if (fameDrawModal) return;
+      if (fameDrawInProgressRef.current) return;
+      if ((pendingFameDrawQueueRef.current || []).length > 0) return;
+      setPendingCubePlacement({ pid: queuedCubePlacementPid });
+      setQueuedCubePlacementPid(null);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [queuedCubePlacementPid, fameDrawModal, pendingCubePlacement]);
   const playerFameCardsRef = useRef({});
   useEffect(() => { playerFameCardsRef.current = playerFameCards; }, [playerFameCards]);
   // v199.128: refs so drawFameCardsForPlayer can read latest deck/discard without stale
