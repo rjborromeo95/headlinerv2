@@ -3085,6 +3085,9 @@ export default function Headliners() {
   // When a player should place a cube (after an action). { pid } | null.
   const [pendingCubePlacement, _rawSetPendingCubePlacement] = useState(null);
   const setPendingCubePlacement = _guardSetter("setPendingCubePlacement", _rawSetPendingCubePlacement);
+  // v199.259: queue a cube placement until Fame draws for that player are resolved. Without this, when an action triggers BOTH a Fame-card draw (microtrend match, objective completion) AND a cube placement, the cube modal opens on top and covers the Fame modal.
+  const [queuedCubePlacementPid, _rawSetQueuedCubePlacementPid] = useState(null);
+  const setQueuedCubePlacementPid = _guardSetter("setQueuedCubePlacementPid", _rawSetQueuedCubePlacementPid);
   // v199.255: view-only Management Board modal (opened via sidebar button).
   const [showMgmtBoardView, _rawSetShowMgmtBoardView] = useState(false);
   const setShowMgmtBoardView = _guardSetter("setShowMgmtBoardView", _rawSetShowMgmtBoardView);
@@ -3100,6 +3103,23 @@ export default function Headliners() {
   // Refs for sync access.
   const managementBoardRef = useRef({ schmooze: [null,null,null,null,null], hire: [null,null,null,null,null], advertise: [null,null,null,null,null], dump: {} });
   useEffect(() => { managementBoardRef.current = managementBoard; }, [managementBoard]);
+  // v199.259: promote a queued cube placement to the active modal once Fame draws have settled. Settle window is 200ms to catch logFameGain's 80ms setTimeout cascade.
+  useEffect(() => {
+    if (queuedCubePlacementPid == null) return;
+    if (fameDrawModal) return;
+    if (pendingCubePlacement) return;
+    if (fameDrawInProgressRef.current) return;
+    if ((pendingFameDrawQueueRef.current || []).length > 0) return;
+    const timer = setTimeout(() => {
+      // Re-check at timer fire — a Fame draw may have opened in the settle window.
+      if (fameDrawModal) return;
+      if (fameDrawInProgressRef.current) return;
+      if ((pendingFameDrawQueueRef.current || []).length > 0) return;
+      setPendingCubePlacement({ pid: queuedCubePlacementPid });
+      setQueuedCubePlacementPid(null);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [queuedCubePlacementPid, fameDrawModal, pendingCubePlacement]);
   const useManagementBoardRef = useRef(false);
   useEffect(() => { useManagementBoardRef.current = useManagementBoard; }, [useManagementBoard]);
   const pendingCubePlacementRef = useRef(null);
@@ -3718,7 +3738,8 @@ export default function Headliners() {
   };
   // v199.229: log an artist play into the current season's play log.
   const logSeasonPlay = (pid, artist, isHeadliner) => {
-    if (!pid || !artist || gameModeRef.current !== "quickYear") return;
+    // v199.259: pid == null so Player 1 (id=0) isn't short-circuited.
+    if (pid == null || !artist || gameModeRef.current !== "quickYear") return;
     const season = quickYearSeasonRef.current || "autumn";
     if (!seasonPlaysLogRef.current[pid]) seasonPlaysLogRef.current[pid] = {};
     if (!seasonPlaysLogRef.current[pid][season]) seasonPlaysLogRef.current[pid][season] = [];
@@ -3730,7 +3751,8 @@ export default function Headliners() {
   };
   // v199.229: log a card event (objective/bonus trigger) into the current season's event log.
   const logSeasonCardEvent = (pid, label, tix, isFame = false) => {
-    if (!pid || !label || gameModeRef.current !== "quickYear") return;
+    // v199.259: pid == null (not !pid) so Player 1 (id=0) isn't short-circuited.
+    if (pid == null || !label || gameModeRef.current !== "quickYear") return;
     const season = quickYearSeasonRef.current || "autumn";
     if (!seasonCardEventsRef.current[pid]) seasonCardEventsRef.current[pid] = {};
     if (!seasonCardEventsRef.current[pid][season]) seasonCardEventsRef.current[pid][season] = [];
@@ -3738,7 +3760,8 @@ export default function Headliners() {
   };
   // Add N tickets to this season's "card tickets" tally for the player. Also suppresses the floating popup so the player doesn't see the exact amount — the breakdown appears in the end-of-season summary.
   const addSeasonCardTickets = (pid, n) => {
-    if (!pid || !n) return;
+    // v199.259: pid == null so Player 1 (id=0) isn't short-circuited. Keep the !n guard — 0 tickets is genuinely a no-op.
+    if (pid == null || !n) return;
     seasonCardTicketsRef.current = {
       ...seasonCardTicketsRef.current,
       [pid]: (seasonCardTicketsRef.current[pid] || 0) + n,
@@ -7763,7 +7786,8 @@ export default function Headliners() {
   };
   // v199.245: credit Fan Base (passive_deck_draw_tix) for `count` deck-drawn cards. Call this from ANY site that draws from the artist deck — including artist effects like KAYTRANADA, Beastie Boys, Beabadoobee, Maroon 5, etc. — so the passive fires consistently.
   const creditFanBaseDeckDraw = (pid, count) => {
-    if (!pid || !count || count <= 0) return;
+    // v199.259: pid == null so Player 1 (id=0) still earns Fan Base.
+    if (pid == null || !count || count <= 0) return;
     const copies = countPassiveFameCard(pid, "passive_deck_draw_tix");
     if (copies <= 0) return;
     const bonus = copies * count;
@@ -18009,14 +18033,14 @@ export default function Headliners() {
         // Both actions used — mark actionTaken so End Turn button appears.
         setActionTaken(true);
       }
-      // v199.252: Management Board — trigger cube placement after this action.
+      // v199.252/v199.259: Management Board — queue cube placement after this action. The queue waits for any pending Fame-draw modals (microtrend claim, objective completion) to resolve first. See the useEffect below for promotion to pendingCubePlacement.
       if (useManagementBoardRef.current) {
         const actor = players.find(p => p.id === currentPlayerId);
         if (actor?.isAI) {
-          // AI auto-picks a column; prefer one where it can milestone-trigger, else highest-value by state.
-          setTimeout(() => aiPlaceCube(currentPlayerId), 250);
+          // AI: still schedule its placement (AI doesn't interact with Fame modals the same way; its draws auto-resolve).
+          setTimeout(() => aiPlaceCube(currentPlayerId), 400);
         } else {
-          setTimeout(() => setPendingCubePlacement({ pid: currentPlayerId }), 150);
+          setQueuedCubePlacementPid(currentPlayerId);
         }
       }
       return;
@@ -25909,22 +25933,23 @@ export default function Headliners() {
                                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                                       {[0, 1, 2, 3].map(ri => {
                                         const slot = colArr[ri];
+                                        const hasCube = slot != null; // v199.258: Player 1 has id=0 which is falsy; use explicit null check.
                                         const isNext = ri === nextVacant;
-                                        const owner = slot ? players.find(p => p.id === slot) : null;
-                                        const ownerColor = slot ? getPlayerColor(slot).solid : "#64748b";
+                                        const owner = hasCube ? players.find(p => p.id === slot) : null;
+                                        const ownerColor = hasCube ? getPlayerColor(slot).solid : "#64748b";
                                         return (
                                           <button key={ri}
                                             onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, ri); setPendingCubePlacement(null); } }}
                                             disabled={!isNext || !isPlacementMode}
                                             style={{
                                               height: 44, borderRadius: 8,
-                                              border: slot ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed ${col.color}` : "1px solid rgba(100,116,139,0.3)",
-                                              background: slot ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(34,197,94,0.1)" : "transparent",
+                                              border: hasCube ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed ${col.color}` : "1px solid rgba(100,116,139,0.3)",
+                                              background: hasCube ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(34,197,94,0.1)" : "transparent",
                                               cursor: (isNext && isPlacementMode) ? "pointer" : "default",
                                               fontSize: 10, fontWeight: 700, color: (isNext && isPlacementMode) ? "#86efac" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
                                             }}
                                           >
-                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "Place →" : ""}
+                                            {hasCube ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "Place →" : ""}
                                           </button>
                                         );
                                       })}
@@ -25940,22 +25965,23 @@ export default function Headliners() {
                                     <div style={{ display: "flex", justifyContent: "center" }}>
                                       {(() => {
                                         const slot = colArr[4];
+                                        const hasCube = slot != null; // v199.258: pid=0 safe.
                                         const isNext = nextVacant === 4;
-                                        const owner = slot ? players.find(p => p.id === slot) : null;
-                                        const ownerColor = slot ? getPlayerColor(slot).solid : "#64748b";
+                                        const owner = hasCube ? players.find(p => p.id === slot) : null;
+                                        const ownerColor = hasCube ? getPlayerColor(slot).solid : "#64748b";
                                         return (
                                           <button
                                             onClick={() => { if (isNext && isPlacementMode) { placeCubeOnBoard(currentPlayerId, col.id, 4); setPendingCubePlacement(null); } }}
                                             disabled={!isNext || !isPlacementMode}
                                             style={{
                                               width: 70, height: 44, borderRadius: 8,
-                                              border: slot ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed #fcd34d` : "1px solid rgba(100,116,139,0.3)",
-                                              background: slot ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(252,211,77,0.1)" : "transparent",
+                                              border: hasCube ? `2px solid ${ownerColor}` : (isNext && isPlacementMode) ? `2px dashed #fcd34d` : "1px solid rgba(100,116,139,0.3)",
+                                              background: hasCube ? `${ownerColor}33` : (isNext && isPlacementMode) ? "rgba(252,211,77,0.1)" : "transparent",
                                               cursor: (isNext && isPlacementMode) ? "pointer" : "default",
                                               fontSize: 10, fontWeight: 700, color: (isNext && isPlacementMode) ? "#fcd34d" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center",
                                             }}
                                           >
-                                            {slot ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "🏆 Place" : ""}
+                                            {hasCube ? <span style={{ fontSize: 18, color: ownerColor }}>■</span> : (isNext && isPlacementMode) ? "🏆 Place" : ""}
                                           </button>
                                         );
                                       })()}
@@ -27775,7 +27801,7 @@ export default function Headliners() {
               setManagementMilestones({ schmooze: null, hire: null, advertise: null });
               setSchmoozeDeck([]); setSchmoozeDiscard([]); setSchmoozeHands({}); setSchmoozeTargetFlags({});
               schmoozeTargetFlagsRef.current = {};
-              setPendingCubePlacement(null); setSchmoozePickerCard(null);
+              setPendingCubePlacement(null); setSchmoozePickerCard(null); setQueuedCubePlacementPid(null);
               // v199.251: reset end-game calculator state + per-season accumulator refs. Without this, calcSteps from the prior game is still truthy, so the builder useEffect's `if (calcSteps) return;` guard short-circuits and the animation never runs on game 2+.
               setCalcSteps(null); setCalcStep(0); setCalcTotals({}); setCalcDone(false); setCalcPendingDeltas({});
               if (calcTickIntervalRef.current) { clearInterval(calcTickIntervalRef.current); calcTickIntervalRef.current = null; }
