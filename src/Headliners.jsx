@@ -3103,6 +3103,9 @@ export default function Headliners() {
   // Refs for sync access.
   const managementBoardRef = useRef({ schmooze: [null,null,null,null,null], hire: [null,null,null,null,null], advertise: [null,null,null,null,null], dump: {} });
   useEffect(() => { managementBoardRef.current = managementBoard; }, [managementBoard]);
+  // v199.259: moved up from near drawFameCardsForPlayer so the queue-promotion useEffect below can read them without TDZ. Behavior unchanged.
+  const pendingFameDrawQueueRef = useRef([]);
+  const fameDrawInProgressRef = useRef(false);
   // v199.259: promote a queued cube placement to the active modal once Fame draws have settled. Settle window is 200ms to catch logFameGain's 80ms setTimeout cascade.
   useEffect(() => {
     if (queuedCubePlacementPid == null) return;
@@ -4125,8 +4128,7 @@ export default function Headliners() {
   // the React state `fameDrawModal` closure can lag within a single tick (two draws
   // firing from the same event handler batch would both see null), so the ref ensures
   // the second one correctly detects the first and queues.
-  const pendingFameDrawQueueRef = useRef([]);
-  const fameDrawInProgressRef = useRef(false);
+  // v199.259: pendingFameDrawQueueRef + fameDrawInProgressRef moved up near other refs to avoid TDZ when the queuedCubePlacementPid useEffect references them.
   const drawFameCardsForPlayer = (pid, source) => {
     if (gameModeRef.current !== "quickYear") return;
     // v199.182: if a Fame-draw modal is already open for ANY player, queue this draw
