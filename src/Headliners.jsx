@@ -7853,7 +7853,10 @@ export default function Headliners() {
     let reduction = hasInfraReward(pid, "sec_3") ? 1 : 0;
     // v199.224: Spring Thaw season card gives a global 1-Fame discount on all bookings.
     if (currentSeasonCardIs("SPR_FAME_DISCOUNT")) reduction += 1;
-    return Math.max(0, (artist?.fame || 0) - reduction);
+    // v199.265: Rumour Spreading (Schmooze) — if the flag is set for pid, bump the Fame requirement by +1 for this booking. Flag is cleared in the booking commit paths (handleStageSelect for humans, AI booker for AI).
+    const rumourActive = pid != null && ((schmoozeTargetFlagsRef.current || {})[pid] || {}).rumour;
+    const rumourExtra = rumourActive ? 1 : 0;
+    return Math.max(0, (artist?.fame || 0) + rumourExtra - reduction);
   };
   // Same idea as canAffordArtist but with sec_3 applied. Callers pass pid so we know
   // whether to reduce the Fame requirement. Non-Fame checks (amenity costs) unchanged.
@@ -9275,6 +9278,13 @@ export default function Headliners() {
               bonusTickets: (freshWithYE[p.id].bonusTickets || 0) + mgmtTickets,
               tickets: (freshWithYE[p.id].tickets || 0) + mgmtTickets,
             };
+            // v199.264: also push the new total into nextAllTickets so the leaderboard matches. Without this, the leaderboard reads nextAllTickets[p.id][1].raw which was snapshotted BEFORE this block — so Management Board tickets appeared in the animation but not in the final leaderboard.
+            if (nextAllTickets[p.id] && nextAllTickets[p.id][1]) {
+              nextAllTickets[p.id][1] = {
+                ...nextAllTickets[p.id][1],
+                raw: freshWithYE[p.id].tickets || 0,
+              };
+            }
             addLog("📋 Management Board", `${p.festivalName}: +${mgmtTickets} 🎟️ from management (Hire ${hireCubes}×${cateringCount} + Advertise ${advCubes}×${headliners.length} + Dump ${dumpCubes}${managementMilestones.advertise === p.id ? ` + Advertise milestone` : ""}).`);
           }
         });
@@ -14402,6 +14412,16 @@ export default function Headliners() {
       addLog(pName, `Favour card can't be played onto a stage — cash it via the Favour picker instead`);
       return;
     }
+    // v199.265: if this player had a Rumour Spreading flag active, clear it — this booking consumed its +1 Fame requirement. Centralized here so AI, human, agent, tempt, legendary, and chain-booking paths all honour it. Human path also clears + logs in handleStageSelect; the double-clear here is a no-op safety net.
+    const hadRumour = pid != null && ((schmoozeTargetFlagsRef.current || {})[pid] || {}).rumour;
+    if (hadRumour) {
+      const next = { ...schmoozeTargetFlagsRef.current };
+      next[pid] = { ...(next[pid] || {}), rumour: false };
+      schmoozeTargetFlagsRef.current = next;
+      setSchmoozeTargetFlags(next);
+      const festName = players.find(pp => pp.id === pid)?.festivalName || "?";
+      addLog("📋 Schmooze", `${festName}: Rumour Spreading consumed — booking required +1 Fame.`);
+    }
     // v169: derive viaTempt from context. Under tempt mode, viaAgent=true means the
     // artist was tempted onto the stage directly.
     // v177: TEMPT effects fire ONLY when the artist is placed directly from the pool
@@ -17854,17 +17874,15 @@ export default function Headliners() {
     if (currentPlayer?.isAI) return;
     if (!selectedArtist) return;
     const { artist, source, poolIdx, handIdx, discardIdx } = selectedArtist;
-    // v199.252: Rumour Spreading — if the flag is set, this booking requires +1 Fame. Patch the artist object for the check.
+    // v199.265: Rumour Spreading is now applied centrally by effectiveArtistFame (via canAffordArtist). Just check for the flag here so we can log a helpful message and clear it after a successful booking.
     const rumourFlag = ((schmoozeTargetFlagsRef.current || {})[currentPlayerId] || {}).rumour;
-    const effArtist = rumourFlag ? { ...artist, fame: (artist.fame || 0) + 1 } : artist;
-    // v124: per-stage legality check. v199.239: factor in Negotiated Rates passive discount.
     const amenDisc = countPassiveFameCard(currentPlayerId, "passive_amenity_discount");
-    const stageEligible = canBookArtistOnStage(effArtist, currentPD, stageIdx, amenDisc);
+    const stageEligible = canBookArtistOnStage(artist, currentPD, stageIdx, amenDisc);
     const pendingFreeAllowed = pendingEffect && pendingEffect.type === "signArtist" && pendingEffectPid === currentPlayerId;
     if (!stageEligible && !pendingFreeAllowed) {
-      // Diagnose why for a helpful message
-      if (currentPD.fame < effArtist.fame) {
-        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — need Fame ${effArtist.fame} (you have ${currentPD.fame})${rumourFlag ? ` [Rumour: +1 required]` : ""}`);
+      const requiredFame = effectiveArtistFame(artist, currentPlayerId);
+      if (currentPD.fame < requiredFame) {
+        addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} — need Fame ${requiredFame} (you have ${currentPD.fame})${rumourFlag ? ` [Rumour Spreading: +1 required]` : ""}`);
       } else {
         addLog(currentPlayer?.festivalName || "?", `Can't book ${artist.name} here — amenities short and stage doesn't have a genre-matching pair for headliner rule`);
       }
