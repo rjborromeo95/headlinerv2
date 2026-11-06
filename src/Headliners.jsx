@@ -4591,7 +4591,18 @@ export default function Headliners() {
     return { total, lines };
   };
 
-  // v199.246: ticket-calculator step sequence restructured to go stage-by-stage. The flow is: Stage 1 Tickets → Stage 1 Effects → Stage 2 Tickets → Stage 2 Effects → Stage 3 Tickets → Stage 3 Effects → Objectives & Bonuses → Fame Cards. Headliner (slot 2) counts for its doubled base in the stage-tickets step.
+  // v199.262: step order reworked per River's spec:
+  //   1. Stage 1 Tickets (base, no headliner doubling)
+  //   2. Stage 2 Tickets
+  //   3. Stage 3 Tickets
+  //   4. Bonus Tickets from Headliners (extracted — the ×2 of each headliner's base)
+  //   5. Artist Effects (ALL stages combined)
+  //   6. Fame Cards
+  //   7. Objectives & Bonuses (season cards)  [Campsites folded in as a line here since they're the main "built value" bucket]
+  //   8. Hire (Management)
+  //   9. Advertise (Management)
+  //   10. +1 Ticket Zone
+  //   11. Other Bonuses
   useEffect(() => {
     if (phase !== "gameOver" || gameMode !== "quickYear") return;
     if (calcSteps) return; // already built
@@ -4599,9 +4610,8 @@ export default function Headliners() {
     const steps = [];
     const stageEmojis = ["🎤", "🎸", "🎧"];
     const stageColors = ["#f472b6", "#a78bfa", "#fcd34d"];
-    // Steps 1-6: per stage (base + effects).
+    // Steps 1-3: per-stage BASE tickets (no headliner doubling).
     for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
-      // Stage base tickets (from artists on this stage). Headliner slot = ×2.
       const baseBreakdowns = {};
       (players || []).forEach(p => {
         const pd = (playerDataRef.current || playerData)[p.id] || {};
@@ -4610,66 +4620,68 @@ export default function Headliners() {
         let total = 0;
         sa.forEach((a, slot) => {
           if (!a) return;
-          const multi = slot === 2 ? 2 : 1;
-          const v = (a.tickets || 0) * multi;
+          const v = a.tickets || 0;
           if (v > 0) {
             const tag = slot === 2 ? " ★" : "";
-            lines.push({ label: `🎤 ${a.name}${tag}${multi === 2 ? " (headliner ×2)" : ""}`, value: v });
+            lines.push({ label: `🎤 ${a.name}${tag}`, value: v });
             total += v;
           }
         });
         baseBreakdowns[p.id] = { total, lines };
       });
       steps.push({ label: `${stageEmojis[stageIdx]} Stage ${stageIdx + 1} Tickets`, color: stageColors[stageIdx], breakdowns: baseBreakdowns });
-      // Stage effects (game-end effects fired by artists on this stage).
-      const effBreakdowns = {};
-      (players || []).forEach(p => {
-        let total = 0;
-        let effLines = [];
-        try {
-          const r = computeArtistGameEndBonuses(p.id, stageIdx);
-          total = r?.total || 0;
-          effLines = (r?.lines || []).map(ln => {
-            const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
-            if (m) return { label: `🎸 ${m[1].trim()}`, value: parseInt(m[2], 10) };
-            return { label: `🎸 ${ln}`, value: 0 };
-          }).filter(x => x.value > 0);
-        } catch { /* ignore */ }
-        effBreakdowns[p.id] = { total, lines: effLines };
-      });
-      steps.push({ label: `${stageEmojis[stageIdx]} Stage ${stageIdx + 1} Effects`, color: stageColors[stageIdx], breakdowns: effBreakdowns });
     }
-    // Step 7: Objectives & Bonuses (season cards, across all seasons).
-    const objBreakdowns = {};
-    const eventsLog = seasonCardEventsRef.current || {};
-    const seasonKeys = ["autumn", "winter", "spring", "summer"];
-    const seasonEmojis = { autumn: "🍂", winter: "❄️", spring: "🌸", summer: "☀️" };
-    (players || []).forEach(p => {
-      let total = 0;
-      const lines = [];
-      seasonKeys.forEach(sKey => {
-        const seasonHist = hist[p.id]?.[sKey] || {};
-        const sCardTix = seasonHist.seasonCardTickets || 0;
-        total += sCardTix;
-        const events = (eventsLog[p.id]?.[sKey] || []).filter(ev => ev.tix > 0);
-        events.forEach(ev => lines.push({ label: `${seasonEmojis[sKey]} ${ev.label}`, value: ev.tix }));
-      });
-      objBreakdowns[p.id] = { total, lines };
-    });
-    // v199.249: Campsites comes BEFORE Objectives & Bonuses per River's preferred order. Each campsite is worth 2 tickets by default (3 with infra reward camp_1).
-    const campsiteBreakdowns = {};
+    // Step 4: Bonus Tickets from Headliners. Headliner slot = +1× base (so the total effective multiplier is ×2, same as before, but split out). Advertise milestone adds another +base (triple instead of double) for the player's biggest headliner only.
+    const headlinerBreakdowns = {};
     (players || []).forEach(p => {
       const pd = (playerDataRef.current || playerData)[p.id] || {};
-      const am = sumFields(pd.fields || emptyFields());
-      const campsiteValue = 2 + (hasInfraReward(p.id, "camp_1") ? 1 : 0);
-      const campCount = am.campsite || 0;
-      const total = campCount * campsiteValue;
-      const lines = total > 0 ? [{ label: `⛺ ${campCount} campsite${campCount === 1 ? "" : "s"} × ${campsiteValue}`, value: total }] : [];
-      campsiteBreakdowns[p.id] = { total, lines };
+      const stages = pd.stageArtists || [];
+      let total = 0;
+      const lines = [];
+      stages.forEach((sa, stageIdx) => {
+        const headliner = (sa || [])[2];
+        if (!headliner) return;
+        const bonus = headliner.tickets || 0;
+        if (bonus > 0) {
+          lines.push({ label: `${stageEmojis[stageIdx]} ${headliner.name} (headliner bonus)`, value: bonus });
+          total += bonus;
+        }
+      });
+      // Advertise-milestone bonus (triple instead of double for biggest headliner).
+      if (useManagementBoardRef.current && managementMilestones.advertise === p.id) {
+        const headliners = stages.map(sa => (sa || [])[2]).filter(Boolean);
+        const biggest = headliners.reduce((best, h) => (h.tickets || 0) > (best?.tickets || 0) ? h : best, null);
+        if (biggest) {
+          const tripleBonus = biggest.tickets || 0;
+          lines.push({ label: `🏆 ${biggest.name} tripled (Advertise milestone)`, value: tripleBonus });
+          total += tripleBonus;
+        }
+      }
+      headlinerBreakdowns[p.id] = { total, lines };
     });
-    steps.push({ label: "⛺ Campsites", color: "#22c55e", breakdowns: campsiteBreakdowns });
-    steps.push({ label: "📋 Objectives & Bonuses", color: "#4ade80", breakdowns: objBreakdowns });
-    // Step 9: Fame Cards (game-end power tickets).
+    steps.push({ label: "⭐ Bonus Tickets from Headliners", color: "#fbbf24", breakdowns: headlinerBreakdowns });
+    // Step 5: Artist Effects (all stages combined).
+    const effBreakdowns = {};
+    (players || []).forEach(p => {
+      let total = 0;
+      const allLines = [];
+      for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
+        try {
+          const r = computeArtistGameEndBonuses(p.id, stageIdx);
+          total += r?.total || 0;
+          (r?.lines || []).forEach(ln => {
+            const m = String(ln).match(/^(.+?):\s*\+?(\d+)/);
+            if (m) {
+              const v = parseInt(m[2], 10);
+              if (v > 0) allLines.push({ label: `${stageEmojis[stageIdx]} ${m[1].trim()}`, value: v });
+            }
+          });
+        } catch { /* ignore */ }
+      }
+      effBreakdowns[p.id] = { total, lines: allLines };
+    });
+    steps.push({ label: "🎸 Artist Effects", color: "#a78bfa", breakdowns: effBreakdowns });
+    // Step 6: Fame Cards (game-end power tickets).
     const fameBreakdowns = {};
     (players || []).forEach(p => {
       let total = 0;
@@ -4686,6 +4698,34 @@ export default function Headliners() {
       fameBreakdowns[p.id] = { total, lines: powLines };
     });
     steps.push({ label: "🔥 Fame Cards", color: "#fbbf24", breakdowns: fameBreakdowns });
+    // Step 7: Objectives & Bonuses (season cards + campsites folded in as a line).
+    const objBreakdowns = {};
+    const eventsLog = seasonCardEventsRef.current || {};
+    const seasonKeys = ["autumn", "winter", "spring", "summer"];
+    const seasonEmojis = { autumn: "🍂", winter: "❄️", spring: "🌸", summer: "☀️" };
+    (players || []).forEach(p => {
+      let total = 0;
+      const lines = [];
+      seasonKeys.forEach(sKey => {
+        const seasonHist = hist[p.id]?.[sKey] || {};
+        const sCardTix = seasonHist.seasonCardTickets || 0;
+        total += sCardTix;
+        const events = (eventsLog[p.id]?.[sKey] || []).filter(ev => ev.tix > 0);
+        events.forEach(ev => lines.push({ label: `${seasonEmojis[sKey]} ${ev.label}`, value: ev.tix }));
+      });
+      // Campsites folded in as a line within this bucket.
+      const pd = (playerDataRef.current || playerData)[p.id] || {};
+      const am = sumFields(pd.fields || emptyFields());
+      const campsiteValue = 2 + (hasInfraReward(p.id, "camp_1") ? 1 : 0);
+      const campCount = am.campsite || 0;
+      const campTotal = campCount * campsiteValue;
+      if (campTotal > 0) {
+        lines.push({ label: `⛺ ${campCount} campsite${campCount === 1 ? "" : "s"} × ${campsiteValue}`, value: campTotal });
+        total += campTotal;
+      }
+      objBreakdowns[p.id] = { total, lines };
+    });
+    steps.push({ label: "📋 Objectives & Bonuses", color: "#4ade80", breakdowns: objBreakdowns });
     // v199.252: Management Board scoring (if enabled). Three cube-value steps + dump.
     if (useManagementBoardRef.current) {
       const boardNow = managementBoardRef.current;
@@ -4701,7 +4741,7 @@ export default function Headliners() {
         hireBreakdowns[p.id] = { total, lines };
       });
       steps.push({ label: "👔 Hire (Management)", color: "#60a5fa", breakdowns: hireBreakdowns });
-      // Advertise: +1 ticket per headliner played per cube. Plus milestone bonus: biggest-headliner stage triples instead of doubles (we approximate the bonus as +headlinerBaseTickets since headliner already doubled in stage step).
+      // Advertise: +1 ticket per headliner played per cube. v199.262: milestone triple moved to the Headliner Bonus step above (so it reads next to the headliner it modifies).
       const advertiseBreakdowns = {};
       (players || []).forEach(p => {
         const pd = (playerDataRef.current || playerData)[p.id] || {};
@@ -4709,18 +4749,8 @@ export default function Headliners() {
         const headliners = stages.map(sa => (sa || [])[(sa || []).length - 1]).filter(Boolean);
         const headlinerCount = headliners.length;
         const cubes = (boardNow.advertise || []).filter(x => x === p.id).length;
-        let total = cubes * headlinerCount;
-        const lines = [];
-        if (total > 0) lines.push({ label: `📢 ${cubes} cube${cubes === 1 ? "" : "s"} × ${headlinerCount} headliner${headlinerCount === 1 ? "" : "s"}`, value: total });
-        // Milestone: +headliner-base once (since stage step already doubled, we add a 3rd slice).
-        if (managementMilestones.advertise === p.id && headliners.length > 0) {
-          const biggest = headliners.reduce((best, h) => (h.tickets || 0) > (best?.tickets || 0) ? h : best, null);
-          if (biggest) {
-            const triple = biggest.tickets || 0;
-            total += triple;
-            lines.push({ label: `🏆 Milestone: ${biggest.name} tripled (+${triple})`, value: triple });
-          }
-        }
+        const total = cubes * headlinerCount;
+        const lines = total > 0 ? [{ label: `📢 ${cubes} cube${cubes === 1 ? "" : "s"} × ${headlinerCount} headliner${headlinerCount === 1 ? "" : "s"}`, value: total }] : [];
         advertiseBreakdowns[p.id] = { total, lines };
       });
       steps.push({ label: "📢 Advertise (Management)", color: "#fbbf24", breakdowns: advertiseBreakdowns });
@@ -7797,6 +7827,8 @@ export default function Headliners() {
     const festName = players.find(pl => pl.id === pid)?.festivalName || "?";
     const player = players.find(pl => pl.id === pid);
     addLog("🔥 Fame", `${festName}: Fan Base → +${bonus} 🎟️ (${count} from deck).`);
+    // v199.262: tag the ticket ledger so the hover tooltip shows "🔥 Fan Base (passive)" instead of leaving the tickets as unexplained bonus.
+    logTicketGain(pid, bonus, `🔥 Fan Base (deck draw ×${copies} copies)`);
     if (player && !player.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
     setTimeout(() => recalcTickets(), 50);
   };
@@ -17154,6 +17186,7 @@ export default function Headliners() {
     if (bonus > 0) {
       setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
       addLog("🔥 Fame", `${currentPlayer.festivalName}: Industry Hustle → +${bonus} 🎟️ (dice reroll).`);
+      logTicketGain(currentPlayerId, bonus, `🔥 Industry Hustle (dice reroll)`); // v199.262
       if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
     }
@@ -17169,6 +17202,7 @@ export default function Headliners() {
     if (bonus > 0) {
       setPlayerData(p => ({ ...p, [currentPlayerId]: { ...p[currentPlayerId], bonusTickets: (p[currentPlayerId].bonusTickets || 0) + bonus } }));
       addLog("🔥 Fame", `${currentPlayer.festivalName}: Industry Hustle → +${bonus} 🎟️ (die refresh).`);
+      logTicketGain(currentPlayerId, bonus, `🔥 Industry Hustle (die refresh)`); // v199.262
       if (!currentPlayer.isAI) showFloatingBonus(`🔥 +${bonus} 🎟️`, "#fbbf24");
       setTimeout(() => recalcTickets(), 50);
     }
@@ -22537,8 +22571,12 @@ export default function Headliners() {
           )}
           {/* v199.88/v199.89: Default view content gated INDIVIDUALLY per panel on
               sidebarView to avoid fragment nesting issues. Legendary Lineup below is
-              gated to objectives view. */}
-          {sidebarView === "default" && players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
+              gated to objectives view.
+              v199.262: wrap the player list in a scrollable container with a max-height
+              so 3+ players don't push the End Turn button off the bottom. */}
+          {sidebarView === "default" && (
+            <div style={{ maxHeight: players.length > 2 ? "40vh" : "none", overflowY: players.length > 2 ? "auto" : "visible", marginBottom: 8, paddingRight: players.length > 2 ? 4 : 0 }}>
+          {players.map(p => { const pd = playerData[p.id] || {}; const ic = p.id === currentPlayerId; const isViewing = viewingPlayerId === p.id; const fame = pd.fame || 0; const onFire = fame >= 5; const yellowed = fame >= 3 && fame < 5;
             const fameBg = onFire ? "linear-gradient(135deg, rgba(249,115,22,0.32) 0%, rgba(239,68,68,0.32) 100%)"
               : yellowed ? "rgba(251,191,36,0.16)"
               : ic ? "rgba(124,58,237,0.2)"
@@ -22565,13 +22603,21 @@ export default function Headliners() {
                 <StarBadge pid={p.id} size={13} />
               </div>
               {/* v199.79: BIG ticket count + 5-star Fame row on the same line. */}
+              {/* v199.262: in Quick Play, ticket counter is hidden during the game to keep end-game scoring suspenseful. Classic still shows it live. */}
               <div style={{ display: "flex", alignItems: "stretch", gap: 8, marginBottom: 6 }}>
-                <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ flex: 1, display: "block" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)", height: "100%" }}>
-                    <span style={{ fontSize: 14, opacity: 0.9 }}>🎟️</span>
-                    <span style={{ fontSize: 28, fontWeight: 900, color: "#60a5fa", letterSpacing: -1, lineHeight: 1 }}>{pd.tickets || 0}</span>
+                {gameMode === "quickYear" ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 12px", borderRadius: 10, background: "rgba(76,29,149,0.25)", border: "1px dashed rgba(167,139,250,0.4)" }} title="Final ticket count revealed at end of game">
+                    <span style={{ fontSize: 14, opacity: 0.6 }}>🎟️</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: "#a78bfa", letterSpacing: 0.5, lineHeight: 1 }}>?  ?  ?</span>
                   </div>
-                </TicketBreakdown>
+                ) : (
+                  <TicketBreakdown pd={pd} pid={p.id} ticketsLog={ticketsLog} year={year} councilQualifies={councilQualifies} style={{ flex: 1, display: "block" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, background: "linear-gradient(135deg, rgba(96,165,250,0.14), rgba(251,191,36,0.08))", border: "1px solid rgba(96,165,250,0.35)", height: "100%" }}>
+                      <span style={{ fontSize: 14, opacity: 0.9 }}>🎟️</span>
+                      <span style={{ fontSize: 28, fontWeight: 900, color: "#60a5fa", letterSpacing: -1, lineHeight: 1 }}>{pd.tickets || 0}</span>
+                    </div>
+                  </TicketBreakdown>
+                )}
                 <FameBreakdown pid={p.id} fameLog={fameLog} year={year} currentFame={pd.fame || 0}>
                   <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "6px 8px", borderRadius: 10, background: "rgba(76,29,149,0.3)", border: "1px solid rgba(251,191,36,0.3)", gap: 2 }} title={`Fame: ${pd.fame || 0}/5`}>
                     <div style={{ display: "flex", gap: 1 }}>
@@ -22687,6 +22733,8 @@ export default function Headliners() {
                 </div>;
               })()}
             </div>); })}
+            </div>
+          )}
 
           {/* v199.79: Sidebar Actions panel + Fame tray placeholder.
               Build / Buy / Browse stacked vertically. Clicking an action triggers the
@@ -25765,7 +25813,8 @@ export default function Headliners() {
                 <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.3))", border: "2px solid #f472b6", maxWidth: 560, width: "100%" }}>
                   <div style={{ textAlign: "center", marginBottom: 12 }}>
                     <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>📋 {schmoozePickerCard.cardName}</div>
-                    <h2 style={{ color: "#f9fafb", fontSize: 16, fontWeight: 800, margin: "4px 0 2px" }}>{!schmoozePickerCard.movingCube ? "Pick one of YOUR cubes to move" : "Pick a destination row"}</h2>
+                    <h2 style={{ color: "#f9fafb", fontSize: 16, fontWeight: 800, margin: "4px 0 2px" }}>{!schmoozePickerCard.movingCube ? "Pick one of YOUR cubes to move" : "Pick a destination lane"}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: "4px 0 0" }}>{!schmoozePickerCard.movingCube ? "" : "The cube will land in the leftmost empty slot of the lane you choose."}</p>
                   </div>
                   {!schmoozePickerCard.movingCube ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -25776,25 +25825,54 @@ export default function Headliners() {
                       ) : null).filter(Boolean))}
                     </div>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {MGMT_COLUMNS.map(col => managementBoard[col.id].map((slot, ri) => slot === null && (col.id !== schmoozePickerCard.movingCube.col || ri !== schmoozePickerCard.movingCube.row) ? (
-                        <button key={`${col.id}-${ri}`} onClick={() => {
-                          // Move cube: clear old, fill new.
-                          const board = managementBoardRef.current;
-                          const newBoard = {
-                            ...board,
-                            [schmoozePickerCard.movingCube.col]: board[schmoozePickerCard.movingCube.col].map((s, i) => i === schmoozePickerCard.movingCube.row ? null : s),
-                          };
-                          newBoard[col.id] = newBoard[col.id].map((s, i) => i === ri ? currentPlayerId : s);
-                          managementBoardRef.current = newBoard;
-                          setManagementBoard(newBoard);
-                          addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: "${schmoozePickerCard.cardName}" → moved cube to ${col.label} row ${ri + 1}.`);
-                          consumeSchmoozeCard(schmoozePickerCard.pid, schmoozePickerCard.cardInstanceId);
-                          setSchmoozePickerCard(null);
-                        }} style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${col.color}`, background: "rgba(34,197,94,0.15)", color: "#f9fafb", cursor: "pointer", fontWeight: 700, textAlign: "left" }}>
-                          → {col.emoji} {col.label} — Row {ri + 1}
-                        </button>
-                      ) : null).filter(Boolean))}
+                    // v199.263: destination picker reduced to 3 lane buttons. Cube auto-places in the leftmost empty slot of the chosen lane (matches normal cube placement behaviour). Full lanes are disabled.
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                      {MGMT_COLUMNS.map(col => {
+                        const srcCol = schmoozePickerCard.movingCube.col;
+                        const srcRow = schmoozePickerCard.movingCube.row;
+                        // Compute the resulting board after the cube is removed from its source — that way the leftmost-empty check works even if the lane is the same as the source.
+                        const resultingLane = col.id === srcCol ? managementBoard[col.id].map((s, i) => i === srcRow ? null : s) : managementBoard[col.id];
+                        const landingIdx = resultingLane.indexOf(null);
+                        const isSame = col.id === srcCol;
+                        const laneFull = landingIdx < 0;
+                        return (
+                          <button key={col.id}
+                            disabled={laneFull || isSame}
+                            onClick={() => {
+                              if (laneFull || isSame) return;
+                              const board = managementBoardRef.current;
+                              // Remove from source first.
+                              const srcNewArr = board[srcCol].map((s, i) => i === srcRow ? null : s);
+                              const workingBoard = { ...board, [srcCol]: srcNewArr };
+                              // Find landing index in destination (which may be the same lane as source — but that case is disabled above so we only hit this when col.id !== srcCol).
+                              const destArr = workingBoard[col.id];
+                              const landing = destArr.indexOf(null);
+                              if (landing < 0) return;
+                              const newBoard = { ...workingBoard, [col.id]: destArr.map((s, i) => i === landing ? currentPlayerId : s) };
+                              managementBoardRef.current = newBoard;
+                              setManagementBoard(newBoard);
+                              addLog("📋 Schmooze", `${currentPlayer?.festivalName || "?"}: "${schmoozePickerCard.cardName}" → moved cube to ${col.label} (row ${landing + 1}).`);
+                              consumeSchmoozeCard(schmoozePickerCard.pid, schmoozePickerCard.cardInstanceId);
+                              setSchmoozePickerCard(null);
+                            }}
+                            style={{
+                              padding: "16px 10px", borderRadius: 10,
+                              border: `2px solid ${(laneFull || isSame) ? "rgba(100,116,139,0.3)" : col.color}`,
+                              background: (laneFull || isSame) ? "rgba(30,41,59,0.3)" : "rgba(34,197,94,0.1)",
+                              color: (laneFull || isSame) ? "#64748b" : "#f9fafb",
+                              cursor: (laneFull || isSame) ? "not-allowed" : "pointer",
+                              fontWeight: 800, textAlign: "center",
+                              fontSize: 13,
+                            }}
+                          >
+                            <div style={{ fontSize: 24, marginBottom: 4 }}>{col.emoji}</div>
+                            <div style={{ color: (laneFull || isSame) ? "#64748b" : col.color }}>{col.label}</div>
+                            <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 4, fontWeight: 600 }}>
+                              {isSame ? "same lane — pick another" : laneFull ? "full" : `→ Row ${landingIdx + 1}`}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                   <div style={{ textAlign: "center", marginTop: 10 }}>
