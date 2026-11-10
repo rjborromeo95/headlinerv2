@@ -3391,26 +3391,34 @@ export default function Headliners() {
   const playerDataRef = useRef(playerData);
   useEffect(() => { playerDataRef.current = playerData; }, [playerData]);
   // v199.272: keep pd.fame in sync with pd.baseFame. Multiple Fame-gain sites (season-card bonuses, artist effects, Festival Expansion fallback, etc.) only write baseFame — pd.fame was only resynced on the next recalcTickets, so until then the sidebar would show a stale number (typically 1 lower than the player's actual Fame). This effect patches any drift on the very next render. The Fame cap is mode-aware; councilFame is Classic-only (Quick Play has no contracts so it's 0).
+  // v199.290: switched to a functional setPlayerData updater. The previous non-functional form
+  // (setPlayerData(patched) where patched was captured from the closure) was racing concurrent
+  // Fame-gain setters — if two +1 Fame gains fired in quick succession, the sync could read stale
+  // playerData, compute patched off it, and when React processed the sync's whole-state replace it
+  // would wipe out the second gain's baseFame increment. Net effect: user saw 4 gains in the log
+  // but only 3 Fame to spend. Functional updater always reads the freshest state inside React.
   useEffect(() => {
     if (!playerData) return;
-    const cap = gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
-    const yIdx = Math.max(0, (yearRef.current || 1) - 1);
-    let drift = false;
-    const patched = { ...playerData };
-    for (const pid in patched) {
-      const pd = patched[pid];
-      if (!pd) continue;
-      let councilFame = 0;
-      for (const c of (pd.contracts || [])) {
-        if (c?.reward?.type === "fame") councilFame += (c.reward.perYear?.[yIdx]) || 0;
+    setPlayerData(prev => {
+      if (!prev) return prev;
+      const cap = gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
+      const yIdx = Math.max(0, (yearRef.current || 1) - 1);
+      let drift = false;
+      const patched = { ...prev };
+      for (const pid in patched) {
+        const pd = patched[pid];
+        if (!pd) continue;
+        let councilFame = 0;
+        for (const c of (pd.contracts || [])) {
+          if (c?.reward?.type === "fame") councilFame += (c.reward.perYear?.[yIdx]) || 0;
+        }
+        const expected = Math.min(cap, (pd.baseFame || 0) + councilFame);
+        if (pd.fame !== expected) { patched[pid] = { ...pd, fame: expected }; drift = true; }
       }
-      const expected = Math.min(cap, (pd.baseFame || 0) + councilFame);
-      if (pd.fame !== expected) { patched[pid] = { ...pd, fame: expected }; drift = true; }
-    }
-    if (drift) {
+      if (!drift) return prev; // Same reference → React bails, no re-render loop.
       playerDataRef.current = patched;
-      setPlayerData(patched);
-    }
+      return patched;
+    });
   }, [playerData]);
   const [setupIndex, _rawSetSetupIndex] = useState(0);
   const setSetupIndex = _guardSetter("setSetupIndex", _rawSetSetupIndex);
