@@ -3388,6 +3388,28 @@ export default function Headliners() {
   // setTimeout chains (year-end effects flow) where the closure-captured state can be stale.
   const playerDataRef = useRef(playerData);
   useEffect(() => { playerDataRef.current = playerData; }, [playerData]);
+  // v199.272: keep pd.fame in sync with pd.baseFame. Multiple Fame-gain sites (season-card bonuses, artist effects, Festival Expansion fallback, etc.) only write baseFame — pd.fame was only resynced on the next recalcTickets, so until then the sidebar would show a stale number (typically 1 lower than the player's actual Fame). This effect patches any drift on the very next render. The Fame cap is mode-aware; councilFame is Classic-only (Quick Play has no contracts so it's 0).
+  useEffect(() => {
+    if (!playerData) return;
+    const cap = gameModeRef.current === "quickYear" ? FAME_CAP_QUICKYEAR : FAME_MAX;
+    const yIdx = Math.max(0, (yearRef.current || 1) - 1);
+    let drift = false;
+    const patched = { ...playerData };
+    for (const pid in patched) {
+      const pd = patched[pid];
+      if (!pd) continue;
+      let councilFame = 0;
+      for (const c of (pd.contracts || [])) {
+        if (c?.reward?.type === "fame") councilFame += (c.reward.perYear?.[yIdx]) || 0;
+      }
+      const expected = Math.min(cap, (pd.baseFame || 0) + councilFame);
+      if (pd.fame !== expected) { patched[pid] = { ...pd, fame: expected }; drift = true; }
+    }
+    if (drift) {
+      playerDataRef.current = patched;
+      setPlayerData(patched);
+    }
+  }, [playerData]);
   const [setupIndex, _rawSetSetupIndex] = useState(0);
   const setSetupIndex = _guardSetter("setSetupIndex", _rawSetSetupIndex);
   const [setupStep, _rawSetSetupStep] = useState("pickAmenity");
