@@ -1262,21 +1262,53 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
   const mob = typeof window !== "undefined" && window.innerWidth < 768;
   const cardWidth = small ? (mob ? 130 : 110) : (mob ? 165 : 150);
   const cardHeight = Math.round(cardWidth / 0.7143);
+  // v199.209: hover-to-enlarge state for art cards. 300ms delay before showing to
+  // prevent flicker on quick mouseover; preview positioned beside the thumbnail with
+  // viewport edge detection so it never clips off-screen.
+  const [hoverPreview, setHoverPreview] = useState(null); // null | { x, y, preferRight }
+  const hoverTimerRef = useRef(null);
   // v199.201: art-forward card. When an artist has an `art` field, render the physical
   // card artwork as the whole card, since the art already contains name/genre/costs/
   // effect/tickets. Keeps the clickable wrapper + glow/selection/affordability states
   // so interactivity is identical to text cards.
-  // v199.288: hover-to-enlarge preview + browser title tooltip removed. The thumbnails
-  // are readable at the 5:7 ratio now so the enlarge was more noise than help, and the
-  // native `title` tooltip was dumping stats on top of the card the user was looking at.
+  // v199.289: native `title` stat tooltip removed (was dumping stats on top of the card
+  // the user was already looking at). Hover-to-enlarge preview kept.
   if (artist && artist.art) {
     const borderA = genreMatchGlow ? "2px solid #fbbf24" : (selected ? "2px solid #fbbf24" : affordable ? "2px solid rgba(251,191,36,0.5)" : "2px solid rgba(255,255,255,0.15)");
     const shadowA = genreMatchGlow
       ? "0 0 16px rgba(251,191,36,0.85), 0 0 32px rgba(251,191,36,0.45)"
       : (selected ? "0 0 12px rgba(251,191,36,0.4)" : "0 2px 8px rgba(0,0,0,0.3)");
+    // Preview dimensions — ~1.75× the thumbnail (v199.219: shrunk 30% from v199.209's size
+    // which felt too dominant on-screen). Physical card aspect ratio preserved.
+    const previewWidth = mob ? 196 : 266;
+    const previewHeight = Math.round(previewWidth / 0.7143);
+    const handleMouseEnter = (e) => {
+      if (mob) return; // Hover doesn't exist on touch devices.
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = setTimeout(() => {
+        // Edge-aware placement: prefer right side; fall back to left if no room.
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const spaceRight = viewportWidth - rect.right;
+        const preferRight = spaceRight >= previewWidth + 24;
+        const x = preferRight ? rect.right + 12 : Math.max(12, rect.left - previewWidth - 12);
+        // Vertical: center on the thumbnail, but clamp to viewport.
+        let y = rect.top + rect.height / 2 - previewHeight / 2;
+        y = Math.max(12, Math.min(y, viewportHeight - previewHeight - 12));
+        setHoverPreview({ x, y, preferRight });
+      }, 300);
+    };
+    const handleMouseLeave = () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      setHoverPreview(null);
+    };
     return (
+      <>
       <div
         onClick={disabled ? undefined : onClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         style={{
           width: cardWidth, height: cardHeight, borderRadius: mob ? 12 : 10, border: borderA,
           cursor: disabled ? "default" : "pointer",
@@ -1293,6 +1325,29 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
         }} />
         {genreMatchGlow && <div style={{ position: "absolute", top: 4, right: 4, background: "rgba(251,191,36,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 900, padding: "2px 5px", borderRadius: 5, letterSpacing: 0.5, boxShadow: "0 0 6px rgba(251,191,36,0.8)" }}>🎸</div>}
       </div>
+      {hoverPreview && typeof document !== "undefined" && createPortal(
+        <div style={{
+          position: "fixed",
+          left: hoverPreview.x,
+          top: hoverPreview.y,
+          width: previewWidth,
+          height: previewHeight,
+          borderRadius: 14,
+          overflow: "hidden",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.7), 0 0 0 2px rgba(251,191,36,0.6), 0 0 40px rgba(251,191,36,0.25)",
+          zIndex: 10000,
+          pointerEvents: "none", // Don't block clicks on things underneath.
+          animation: "fadeSlideIn 0.18s ease-out",
+          background: "#0a0a1a",
+        }}>
+          <img src={`/artist-art/${artist.art}`} alt={artist.name} style={{
+            width: "100%", height: "100%", display: "block",
+            objectFit: "cover", objectPosition: "center",
+          }} />
+        </div>,
+        document.body
+      )}
+      </>
     );
   }
   // v199.32: Favour cards — solid genre color, big genre name, dual-use hint.
