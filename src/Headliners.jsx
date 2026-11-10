@@ -1253,11 +1253,15 @@ function FameBreakdown({ pid, fameLog, year, children, style, currentFame }) {
 
 function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affordable, genreMatchGlow }) {
   // v199.204: unified card dimensions. All three card variants (image, Favour, text)
-  // share the physical card aspect ratio of 0.579 (825×1425 printed) so hand/pool/stage
-  // rows look consistent whether cards have artwork or not.
+  // share the physical card aspect ratio so hand/pool/stage rows look consistent whether
+  // cards have artwork or not.
+  // v199.287: ratio updated 0.579 → 0.7143 (5:7, standard poker card) to match the current
+  // 750×1050 physical card dimensions. The old 0.579 (825×1425) made the on-screen card
+  // narrower than the art, so `objectFit: cover` was clipping the left column (the amenity
+  // icons) and right edge. New ratio renders the full art uncropped.
   const mob = typeof window !== "undefined" && window.innerWidth < 768;
   const cardWidth = small ? (mob ? 130 : 110) : (mob ? 165 : 150);
-  const cardHeight = Math.round(cardWidth / 0.579);
+  const cardHeight = Math.round(cardWidth / 0.7143);
   // v199.209: hover-to-enlarge state for art cards. 300ms delay before showing to
   // prevent flicker on quick mouseover; preview positioned beside the thumbnail with
   // viewport edge detection so it never clips off-screen.
@@ -1278,7 +1282,7 @@ function ArtistCard({ artist, onClick, small, disabled, selected, showCost, affo
     // Preview dimensions — ~1.75× the thumbnail (v199.219: shrunk 30% from v199.209's size
     // which felt too dominant on-screen). Physical card aspect ratio preserved.
     const previewWidth = mob ? 196 : 266;
-    const previewHeight = Math.round(previewWidth / 0.579);
+    const previewHeight = Math.round(previewWidth / 0.7143);
     const handleMouseEnter = (e) => {
       if (mob) return; // Hover doesn't exist on touch devices.
       const rect = e.currentTarget.getBoundingClientRect();
