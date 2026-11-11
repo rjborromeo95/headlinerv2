@@ -489,6 +489,13 @@ const STAGE_COLORS = [
   "#c026d3","#2563eb","#ca8a04","#dc2626","#059669",
   "#8b5cf6","#d97706","#0d9488","#be185d","#4f46e5"
 ];
+// v199.291: per-stage gradient palette — 3 stages, 3 moods. Stage 0 "Sunset" (pink→red),
+// stage 1 "Twilight" (purple→indigo), stage 2 "Dawn" (yellow→orange).
+const STAGE_GRADIENTS = [
+  "linear-gradient(135deg, #ff6b9d 0%, #e11d48 60%, #9f1239 100%)",
+  "linear-gradient(135deg, #a78bfa 0%, #7c3aed 60%, #4338ca 100%)",
+  "linear-gradient(135deg, #fde047 0%, #f59e0b 60%, #c2410c 100%)",
+];
 const RANDOM_NAMES = [
   "Glastonbury 2.0","Mudstock","Basswave","Sunblaze","Neon Fields",
   "Echo Valley","Thunderdome","Starlight Meadow","Cosmic Grove","Rhythmia",
@@ -1638,7 +1645,7 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages, fameTrayNode }) {
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -1684,139 +1691,259 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
 
   const totalAmenities = (am.campsite || 0) + (am.security || 0) + (am.catering || 0) + (am.portaloo || 0);
 
+  // v199.291: new scamp-style layout — LEFT column (Fame Tray placeholder + green Festival Area for
+  // amenities) + RIGHT column (3 stage rows stacked, each with a vertical name banner on the left
+  // and 3 artist slots left-to-right). Closed stages show a grey "CLOSED" bar. Replaces the old
+  // flex-wrap stages row + aggregate Festival Grounds box below it.
+  const slotLabel = (slot) => slot === 0 ? "Opening Artist" : slot === 1 ? "Middle Artist" : "Headliner";
   return (
     <div style={{ width: "100%" }}>
-      {/* Stages row */}
-      {stages.length > 0 && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginBottom: 14 }}>
-        {stages.map((_st, si) => {
-          const sa = stageArtists[si] || [];
-          const stageColor = sColors[si] || "#7c3aed";
-          const isHL = highlightStageIdx === si;
-          const isBookable = pickStageMode && sa.length < 3;
-          // v124: genre-match highlight. When the caller passes a genreMatchStages set,
-          // stages in it use a gold accent + "Genre Match" hint to distinguish from
-          // regular (amenity-paid) bookable stages.
-          const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
-          const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
-          return <div key={si} onClick={() => onStageClick && onStageClick(si)} style={{
-            ...stageBox,
-            borderColor: isBookable ? displayColor : (isHL ? stageColor : "#2a2a4a"),
-            borderWidth: isBookable ? 2 : 1,
-            background: isBookable ? `${displayColor}15` : stageBox.background,
-            boxShadow: isBookable ? `0 0 12px ${displayColor}80` : (isHL ? `0 0 12px ${stageColor}80` : "none"),
-            animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: stageColor }} />
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#e9d5ff", textTransform: "uppercase", letterSpacing: 0.5 }}>🎤 {stageNames[si] || `Stage ${si + 1}`}</div>
-              {sa.length === 3 && <span style={{ fontSize: 9, color: "#34d399", marginLeft: "auto" }}>✅</span>}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: compact ? "140px 1fr" : (fameTrayNode ? "360px 1fr" : "230px 1fr"),
+        gap: compact ? 8 : 14,
+        alignItems: "stretch",
+      }}>
+        {/* ─────────── LEFT COLUMN ─────────── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: compact ? 8 : 12 }}>
+          {/* v199.292: Fame Tray now lives IN the board layout, not a floating portal. The parent
+              passes the full interactive tray as fameTrayNode when it's the current player's turn.
+              For opponents / setup, fall back to a labelled placeholder so the layout stays. */}
+          {fameTrayNode ? fameTrayNode : (
+            <div style={{
+              minHeight: compact ? 72 : 110,
+              padding: compact ? 8 : 12,
+              borderRadius: compact ? 10 : 14,
+              background: "linear-gradient(180deg, rgba(76,29,149,0.18), rgba(45,16,96,0.08))",
+              border: "1px solid rgba(167,139,250,0.3)",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            }}>
+              <div style={{ fontSize: compact ? 9 : 11, color: "#c4b5fd", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.6 }}>
+                🔥 Fame Tray
+              </div>
+              <div style={{ fontSize: compact ? 8 : 9, color: "#64748b", marginTop: 4, fontStyle: "italic", textAlign: "center" }}>
+                Cards show on your turn
+              </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              {[0, 1, 2].map(slot => {
-                // v199.140: hard guard — sa might be non-array in some edge cases, and
-                // a slot entry might be undefined (even in the middle of the array if a
-                // previous resolve passed an invalid handIdx). Render Empty for both.
-                const a = (Array.isArray(sa) ? sa[slot] : null);
-                if (!a || typeof a !== "object") return <div key={slot} style={{ padding: "3px 6px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: "1px dashed #4c1d9540", color: "#4c1d95", fontSize: 9, textAlign: "center" }}>Empty</div>;
-                const isHeadliner = slot === 2;
-                const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
-                // v199.133: Headliner doubles ticket display; v199.134: show +N special
-                // guests chip under the host name.
-                // v199.180: show the BASE ticket count with "×2" as a suffix for the
-                // headliner, so e.g. a 6-ticket artist in the headliner slot reads as
-                // "6×2" — clear multiplication the player can resolve to 12. The old
-                // display showed "12×2" which read as "12 twice" and was confusing.
-                const baseTickets = a.tickets || 0;
-                return (
-                  <div key={slot}>
-                    <div style={{ padding: "3px 6px", borderRadius: 6, background: genreGradient(a.genre || ""), color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", gap: 4, border: isHeadliner ? "1px solid #fbbf24" : "1px solid transparent" }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isHeadliner ? "★ " : ""}{a.name || "Unknown"}</span>
-                      <span style={{ flexShrink: 0 }} title={isHeadliner ? `${baseTickets} × 2 (headliner) = ${baseTickets * 2} tickets` : `${baseTickets} tickets`}>🎟️{baseTickets}{isHeadliner ? "×2" : ""}</span>
-                    </div>
-                    {guests.length > 0 && (
-                      <div title={`Special Guests: ${guests.map(g => g && g.name).filter(Boolean).join(", ")}`} style={{ padding: "1px 6px", borderRadius: 4, marginTop: 1, background: "linear-gradient(90deg, rgba(236,72,153,0.25), rgba(190,24,93,0.15))", border: "1px dashed #f472b6", color: "#fce7f3", fontSize: 8, fontWeight: 600, textAlign: "center", transformOrigin: "top center", animation: "specialGuestTuck 0.45s ease-out" }}>
-                        🎸 +{guests.length} Special Guest{guests.length === 1 ? "" : "s"} (+{guests.length} 🎟️ at close)
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {isBookable && !isGenreMatch && <div style={{ fontSize: 9, color: "#fbbf24", fontStyle: "italic", marginTop: 4, textAlign: "center" }}>↑ Click to book here</div>}
-            {isBookable && isGenreMatch && <div style={{ fontSize: 9, color: "#fbbf24", fontWeight: 700, marginTop: 4, textAlign: "center", background: "rgba(251,191,36,0.15)", padding: "2px 4px", borderRadius: 4 }}>🎸 Genre Match — no amenities needed!</div>}
-          </div>;
-        })}
-      </div>}
-      {/* v199.42: multi-field layout for Quick Play (pd.fields.length > 1).
-          Each field is its own clickable card. Classic single-field falls through to the
-          original aggregate "Festival Grounds" display below. */}
-      {(() => {
-        const fields = pd?.fields || [];
-        const multi = fields.length > 1;
-        if (multi) {
-          return <div style={{ display: "grid", gridTemplateColumns: `repeat(${fields.length}, 1fr)`, gap: 10, maxWidth: 720, margin: "0 auto" }}>
-            {fields.map((f, fIdx) => {
-              const fieldTotal = AMENITY_TYPES.reduce((s, t) => s + (f?.[t] || 0), 0);
-              const canClick = pickFieldMode && !fieldsDisabled && onFieldClick;
-              return <div
-                key={fIdx}
-                onClick={canClick ? () => onFieldClick(fIdx) : undefined}
-                style={{
-                  padding: compact ? 8 : 12,
-                  borderRadius: 12,
-                  background: canClick ? "rgba(167,139,250,0.14)" : "rgba(15,14,26,0.6)",
-                  border: canClick ? "2px solid #a78bfa" : "1px solid rgba(124,58,237,0.2)",
-                  cursor: canClick ? "pointer" : "default",
-                  display: "flex",
-                  flexDirection: "column",
-                  transition: "all 0.15s",
-                  boxShadow: canClick ? "0 0 10px rgba(167,139,250,0.3)" : "none",
-                }}
-              >
-                <div style={{ fontSize: 10, color: canClick ? "#c4b5fd" : "#a78bfa", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8, textAlign: "center" }}>Field {fIdx + 1}</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {AMENITY_TYPES.map(t => {
-                    const c = f?.[t] || 0;
-                    return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 24 : 28 }}>
-                      <span style={{ fontSize: 11, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
-                      {c > 0 && renderFieldTokens({ [t]: c }, t)}
-                    </div>;
-                  })}
-                </div>
-                {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
-              </div>;
-            })}
-          </div>;
-        }
-        // Classic single-field: original aggregate display.
-        const totals = am;
-        const anyAmenity = totalAmenities > 0;
-        return <div style={{ display: "flex", justifyContent: "center", maxWidth: 620, margin: "0 auto" }}>
+          )}
+
+          {/* Festival Area — green rounded box with amenity totals */}
           <div style={{
+            flex: 1,
+            minHeight: compact ? 180 : 240,
             padding: compact ? 10 : 14,
-            borderRadius: 12,
-            background: "rgba(15,14,26,0.6)",
-            border: "1px solid rgba(124,58,237,0.2)",
-            display: "flex",
-            flexDirection: "column",
-            width: "100%",
-            transition: "all 0.2s",
+            borderRadius: compact ? 14 : 20,
+            background: "linear-gradient(135deg, rgba(34,197,94,0.22), rgba(16,185,129,0.10))",
+            border: "2px solid rgba(34,197,94,0.4)",
+            display: "flex", flexDirection: "column",
           }}>
-            <div style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, textAlign: "center" }}>🎪 Festival Grounds</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ fontSize: compact ? 9 : 11, color: "#4ade80", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.3, marginBottom: 10, textAlign: "center" }}>
+              🏕️ Festival Area
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               {AMENITY_TYPES.map(t => {
-                const c = totals[t] || 0;
-                return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 28 : 32 }}>
-                  <span style={{ fontSize: 12, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                const c = am[t] || 0;
+                return <div key={t} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: compact ? "4px 6px" : "6px 10px",
+                  borderRadius: 6,
+                  background: c > 0 ? `${AMENITY_COLORS[t]}22` : "rgba(0,0,0,0.18)",
+                  opacity: c > 0 ? 1 : 0.4,
+                  minHeight: compact ? 24 : 30,
+                }}>
+                  <span style={{ fontSize: compact ? 10 : 12, color: AMENITY_COLORS[t], fontWeight: 700 }}>
+                    {AMENITY_ICONS[t]} {c}
+                  </span>
                   {c > 0 && renderFieldTokens({ [t]: c }, t)}
                 </div>;
               })}
             </div>
-            {!anyAmenity && <div style={{ fontSize: 10, color: "#475569", textAlign: "center", marginTop: 8, fontStyle: "italic" }}>no amenities yet</div>}
+            {totalAmenities === 0 && <div style={{ fontSize: compact ? 9 : 10, color: "#4ade80", textAlign: "center", marginTop: 10, fontStyle: "italic", opacity: 0.7 }}>no amenities yet</div>}
           </div>
-        </div>;
-      })()}
-      {totalAmenities === 0 && stages.length === 0 && <div style={{ textAlign: "center", color: "#6b7280", fontSize: 12, padding: 20 }}>No stages or amenities yet</div>}
+        </div>
+
+        {/* ─────────── RIGHT COLUMN — 3 stage rows stacked ─────────── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: compact ? 6 : 10 }}>
+          {[0, 1, 2].map(si => {
+            const isOpen = si < stages.length;
+            // Closed stage — grey bar with the word CLOSED
+            if (!isOpen) {
+              return <div key={si} style={{
+                padding: compact ? "14px 10px" : "22px 14px",
+                borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(148,163,184,0.12), rgba(100,116,139,0.06))",
+                border: "2px dashed rgba(148,163,184,0.28)",
+                textAlign: "center",
+                color: "#64748b",
+                fontWeight: 800,
+                fontSize: compact ? 11 : 14,
+                letterSpacing: 2,
+                textTransform: "uppercase",
+                flex: 1,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              }}>
+                <span style={{ opacity: 0.6 }}>Stage {si + 1}</span>
+                <span style={{ color: "#94a3b8" }}>· CLOSED</span>
+              </div>;
+            }
+            // Open stage — gradient background, left name banner, 3 artist slots across.
+            const sa = stageArtists[si] || [];
+            const stageColor = sColors[si] || STAGE_COLORS[si % STAGE_COLORS.length];
+            const gradient = STAGE_GRADIENTS[si % STAGE_GRADIENTS.length];
+            const name = stageNames[si] || STAGE_NAMES[si] || `Stage ${si + 1}`;
+            const isHL = highlightStageIdx === si;
+            const isBookable = pickStageMode && sa.length < 3;
+            const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
+            const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
+            return <div key={si}
+              onClick={() => onStageClick && onStageClick(si)}
+              style={{
+                display: "grid",
+                gridTemplateColumns: compact ? "68px repeat(3, 1fr)" : "100px repeat(3, 1fr)",
+                gap: compact ? 4 : 8,
+                padding: compact ? 6 : 10,
+                borderRadius: 12,
+                background: gradient,
+                border: isBookable ? `2px solid ${displayColor}` : (isHL ? `2px solid ${stageColor}` : "2px solid rgba(255,255,255,0.08)"),
+                boxShadow: isBookable ? `0 0 14px ${displayColor}80` : (isHL ? `0 0 10px ${stageColor}80` : "0 2px 10px rgba(0,0,0,0.35)"),
+                cursor: onStageClick ? "pointer" : "default",
+                transition: "all 0.15s",
+                animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
+                position: "relative",
+                minHeight: compact ? 60 : 84,
+              }}>
+              {/* Left name banner */}
+              <div style={{
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: compact ? 10 : 13,
+                textTransform: "uppercase",
+                textAlign: "center",
+                letterSpacing: 0.4,
+                textShadow: "0 2px 6px rgba(0,0,0,0.6)",
+                padding: "0 4px",
+                lineHeight: 1.1,
+              }}>
+                {name}
+              </div>
+              {/* 3 artist slots left-to-right */}
+              {[0, 1, 2].map(slot => {
+                const a = Array.isArray(sa) ? sa[slot] : null;
+                const isHeadliner = slot === 2;
+                // Empty slot — show its role name + "Double Ticket bonus" on the headliner.
+                if (!a || typeof a !== "object") {
+                  return <div key={slot} style={{
+                    padding: compact ? "6px 4px" : "8px 6px",
+                    borderRadius: 7,
+                    background: "rgba(255,255,255,0.18)",
+                    border: isHeadliner ? "1.5px solid rgba(251,191,36,0.75)" : "1.5px dashed rgba(255,255,255,0.3)",
+                    color: "#fff",
+                    fontSize: compact ? 8 : 10,
+                    fontWeight: 700,
+                    textAlign: "center",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    gap: 3,
+                    textShadow: "0 1px 3px rgba(0,0,0,0.5)",
+                  }}>
+                    <span>{slotLabel(slot)}</span>
+                    {isHeadliner && <span style={{ fontSize: compact ? 7 : 8, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.1 }}>Double Ticket bonus</span>}
+                  </div>;
+                }
+                // Filled slot — artist name + tickets, keeping headliner ×2 indicator + guests chip.
+                const baseTickets = a.tickets || 0;
+                const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
+                return <div key={slot} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{
+                    padding: compact ? "5px 6px" : "8px 8px",
+                    borderRadius: 7,
+                    background: genreGradient(a.genre || ""),
+                    color: "#fff",
+                    fontSize: compact ? 9 : 11,
+                    fontWeight: 700,
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                    border: isHeadliner ? "1.5px solid #fbbf24" : "1.5px solid transparent",
+                    flex: 1,
+                    justifyContent: "center",
+                  }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                      {isHeadliner ? "★ " : ""}{a.name || "Unknown"}
+                    </span>
+                    <span style={{ fontSize: compact ? 8 : 10, opacity: 0.95 }} title={isHeadliner ? `${baseTickets} × 2 (headliner) = ${baseTickets * 2} tickets` : `${baseTickets} tickets`}>
+                      🎟️{baseTickets}{isHeadliner ? "×2" : ""}
+                    </span>
+                  </div>
+                  {guests.length > 0 && (
+                    <div title={`Special Guests: ${guests.map(g => g && g.name).filter(Boolean).join(", ")}`} style={{
+                      padding: "1px 4px", borderRadius: 4,
+                      background: "linear-gradient(90deg, rgba(236,72,153,0.4), rgba(190,24,93,0.25))",
+                      border: "1px dashed #f472b6",
+                      color: "#fce7f3",
+                      fontSize: 8,
+                      fontWeight: 700,
+                      textAlign: "center",
+                      animation: "specialGuestTuck 0.45s ease-out",
+                    }}>
+                      🎸 +{guests.length}
+                    </div>
+                  )}
+                </div>;
+              })}
+              {/* Click-to-book hint — overlays the top-right corner so it doesn't distort the grid */}
+              {isBookable && (
+                <div style={{
+                  position: "absolute", top: -8, right: 10,
+                  padding: "2px 8px",
+                  borderRadius: 10,
+                  background: isGenreMatch ? "linear-gradient(90deg, #fbbf24, #f59e0b)" : "#fbbf24",
+                  color: "#1a1a2e",
+                  fontSize: 9,
+                  fontWeight: 900,
+                  letterSpacing: 0.5,
+                  textTransform: "uppercase",
+                  boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+                }}>
+                  {isGenreMatch ? "🎸 Genre Match" : "Click to book"}
+                </div>
+              )}
+            </div>;
+          })}
+        </div>
+      </div>
+      {/* v199.291: multi-field per-stage amenity breakdown — kept available for Quick Play where
+          amenities live in per-stage fields, but hidden by default for the cleaner scamp layout.
+          Click-to-pick-field still works via the existing onFieldClick prop path (callers pass it
+          when the game needs per-field selection). */}
+      {pickFieldMode && (pd?.fields?.length || 0) > 1 && (
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: `repeat(${pd.fields.length}, 1fr)`, gap: 10, maxWidth: 720, margin: "14px auto 0" }}>
+          {pd.fields.map((f, fIdx) => {
+            const fieldTotal = AMENITY_TYPES.reduce((s, t) => s + (f?.[t] || 0), 0);
+            const canClick = pickFieldMode && !fieldsDisabled && onFieldClick;
+            return <div key={fIdx} onClick={canClick ? () => onFieldClick(fIdx) : undefined}
+              style={{
+                padding: compact ? 8 : 12, borderRadius: 12,
+                background: canClick ? "rgba(167,139,250,0.14)" : "rgba(15,14,26,0.6)",
+                border: canClick ? "2px solid #a78bfa" : "1px solid rgba(124,58,237,0.2)",
+                cursor: canClick ? "pointer" : "default",
+                display: "flex", flexDirection: "column",
+                transition: "all 0.15s",
+                boxShadow: canClick ? "0 0 10px rgba(167,139,250,0.3)" : "none",
+              }}>
+              <div style={{ fontSize: 10, color: canClick ? "#c4b5fd" : "#a78bfa", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8, textAlign: "center" }}>Field {fIdx + 1}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {AMENITY_TYPES.map(t => {
+                  const c = f?.[t] || 0;
+                  return <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", borderRadius: 6, background: c > 0 ? `${AMENITY_COLORS[t]}18` : "rgba(0,0,0,0.18)", opacity: c > 0 ? 1 : 0.4, minHeight: compact ? 24 : 28 }}>
+                    <span style={{ fontSize: 11, color: AMENITY_COLORS[t], fontWeight: 700 }}>{AMENITY_ICONS[t]} {c}</span>
+                    {c > 0 && renderFieldTokens({ [t]: c }, t)}
+                  </div>;
+                })}
+              </div>
+              {fieldTotal === 0 && <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 6, fontStyle: "italic" }}>empty</div>}
+            </div>;
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -22973,13 +23100,11 @@ export default function Headliners() {
                   )}
                 </div>
               </div>
-              {/* v199.84: Fame tray — portal-rendered at document.body with position:fixed
-                  so the sidebar's overflow doesn't clip it. Position measured from
-                  actionsBoxRef on mount. */}
-              {/* v199.100: Fame tray visible for the player's ENTIRE turn (not just when an
-                  action is active) so YOU_MAY cards + pending after-action triggers are
-                  always reachable. Shown when it's a human's turn in Quick Play. */}
-              {!currentPlayer?.isAI && phase === "game" && !noTurnsLeft && typeof document !== "undefined" && createPortal(<div style={{
+              {/* v199.292: Fame tray moved into the board layout (passed to PlayerBoard as
+                  fameTrayNode). The portal/floating version below is retained in commented
+                  form only as a reference for what the sidebar used to show; the gating now
+                  renders `null` so it's permanently out of the DOM. */}
+              {false && !currentPlayer?.isAI && phase === "game" && !noTurnsLeft && typeof document !== "undefined" && createPortal(<div style={{
                 position: "fixed",
                 left: fameTrayPos.left + 10,
                 top: fameTrayPos.top,
@@ -23981,6 +24106,15 @@ export default function Headliners() {
             </p>
           </div>
 
+          {/* v199.292: build the Fame Tray inline so it slots into the board's left column
+              instead of floating via portal. Only rendered on the current (human) player's
+              own turn in Quick Play. The JSX inside mirrors the sidebar-floating version
+              exactly; only the outer container is now in-flow instead of fixed. */}
+          {(() => {
+            // Defined but immediately consumed below. Left as an IIFE so the closure on the
+            // currentPlayerId/playerFameCards/etc. state is captured at render time.
+            return null;
+          })()}
           {/* Board + stage artists */}
           <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 12 : 16, justifyContent: "center", alignItems: "center" }}>
             <PlayerBoard
@@ -23990,6 +24124,140 @@ export default function Headliners() {
               pickFieldMode={pickingFieldFor != null}
               onFieldClick={handleFieldClickForPlacement}
               year={year}
+              fameTrayNode={gameMode === "quickYear" && !currentPlayer?.isAI && !noTurnsLeft ? (
+                <div style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "12px 16px",
+                  borderRadius: 12,
+                  background: "linear-gradient(180deg, rgba(76,29,149,0.95), rgba(45,16,96,0.95))",
+                  border: "1px solid rgba(251,191,36,0.4)",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+                  gap: 10,
+                }}>
+                  <div style={{ fontSize: 11, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, textAlign: "center" }}>Fame Tray · {(playerFameCards[currentPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
+                  {(() => {
+                    const pendCount = (pendingAfterTriggers[currentPlayerId] || []).length;
+                    if (pendCount === 0) return null;
+                    return <div style={{
+                      fontSize: 10, color: "#1a1a2e", textAlign: "center",
+                      fontWeight: 800, letterSpacing: 0.5,
+                      padding: "6px 8px", borderRadius: 6,
+                      background: "linear-gradient(135deg, #fbbf24, #f59e0b)",
+                      boxShadow: "0 0 14px rgba(251,191,36,0.6)",
+                      animation: "pulse 1.4s ease-in-out infinite",
+                    }}>
+                      ⚡ {pendCount} Fame trigger{pendCount === 1 ? "" : "s"} ready — click glowing card{pendCount === 1 ? "" : "s"}!
+                    </div>;
+                  })()}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, alignItems: "stretch" }}>
+                    {(() => {
+                      const _cards = playerFameCards[currentPlayerId] || [];
+                      const _used = _cards.reduce((n, c) => n + (c.slotWeight || 1), 0);
+                      const _emptyN = Math.max(0, 5 - _used);
+                      const _slots = [
+                        ..._cards.map((c, idx) => ({ card: c, keyIdx: `c-${idx}` })),
+                        ...Array.from({ length: _emptyN }, (_, idx) => ({ card: null, keyIdx: `e-${idx}` })),
+                      ];
+                      return _slots;
+                    })().map(({ card, keyIdx }) => {
+                      const empty = !card;
+                      const catBg = card ? (
+                        card.category === "you_may"       ? "linear-gradient(180deg, #78350f, #431407)"  :
+                        card.category === "self_bonus"    ? "linear-gradient(180deg, #7f1d1d, #450a0a)"  :
+                        card.category === "after_build"   ? "linear-gradient(180deg, #4c1d95, #2e1065)"  :
+                        card.category === "after_browse"  ? "linear-gradient(180deg, #14532d, #052e16)"  :
+                        card.category === "after_book"    ? "linear-gradient(180deg, #831843, #500724)"  :
+                        card.category === "reactive"      ? "linear-gradient(180deg, #164e63, #083344)"  :
+                        card.category === "season_start"  ? "linear-gradient(180deg, #713f12, #422006)"  :
+                        card.category === "season_active" ? "linear-gradient(180deg, #0e7490, #164e63)"  :
+                                                            "linear-gradient(180deg, #581c87, #3b0764)"
+                      ) : "rgba(49,46,129,0.3)";
+                      const catBorder = card ? (
+                        card.category === "you_may"       ? "#f59e0b" :
+                        card.category === "self_bonus"    ? "#fb7185" :
+                        card.category === "after_build"   ? "#a78bfa" :
+                        card.category === "after_browse"  ? "#4ade80" :
+                        card.category === "after_book"    ? "#ec4899" :
+                        card.category === "reactive"      ? "#06b6d4" :
+                        card.category === "season_start"  ? "#fbbf24" :
+                        card.category === "season_active" ? "#22d3ee" :
+                                                            "#c084fc"
+                      ) : "rgba(100,116,139,0.3)";
+                      const isYouMay = card && card.category === "you_may";
+                      const isSeasonActive = card && card.category === "season_active";
+                      const usedThisTurn = card ? isFameCardUsedThisTurn(currentPlayerId, card.instanceId) : false;
+                      const isPendingTrigger = card && (pendingAfterTriggers[currentPlayerId] || []).some(p => p.cardInstanceId === card.instanceId);
+                      const isDisabled = !!(card && card.disabled);
+                      const isExpired = isSeasonActive && card.receivedInSeason && card.receivedInSeason !== quickYearSeason;
+                      const isSeasonUsed = !!(card && card.usedThisSeason === quickYearSeason);
+                      const youMayClickable = isYouMay && !usedThisTurn && !isDisabled && !isSeasonUsed;
+                      const seasonActiveClickable = isSeasonActive && !usedThisTurn && !isDisabled && !isExpired;
+                      const afterActionClickable = isPendingTrigger && !isDisabled;
+                      const clickable = youMayClickable || seasonActiveClickable || afterActionClickable;
+                      const slotStyle = {
+                        display: "flex", flexDirection: "column",
+                        padding: 4, borderRadius: 6,
+                        background: catBg,
+                        border: `${clickable ? 2 : 1}px solid ${(isDisabled || isExpired || isSeasonUsed) ? "#475569" : catBorder}`,
+                        minHeight: 86,
+                        justifyContent: empty ? "center" : "flex-start",
+                        gap: 2,
+                        transition: "all 0.2s",
+                        cursor: clickable ? "pointer" : "default",
+                        opacity: (isDisabled || isExpired || isSeasonUsed) ? 0.4 : (card && usedThisTurn ? 0.4 : 1),
+                        filter: (isDisabled || isExpired || isSeasonUsed) ? "grayscale(100%)" : "none",
+                        boxShadow: clickable ? `0 0 14px ${catBorder}, 0 0 24px ${catBorder}60` : "none",
+                        animation: clickable ? "affordPulse 1.4s ease-in-out infinite" : "none",
+                        position: "relative",
+                      };
+                      const inner = empty ? (
+                        <span style={{ fontSize: 22, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 7, fontWeight: 800, color: (isDisabled || isExpired || isSeasonUsed) ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                            {isDisabled ? "Disabled" :
+                             isExpired ? "Expired" :
+                             isSeasonUsed ? "Season Used" :
+                             afterActionClickable ? "Fire!" :
+                             card.category === "you_may" ? (usedThisTurn ? "Used" : "Click") :
+                             card.category === "season_active" ? (usedThisTurn ? "Used" : "Click") :
+                             card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" :
+                             fameCardCategoryLabel(card)}
+                          </div>
+                          <div style={{ fontSize: 8, color: (isDisabled || isExpired || isSeasonUsed) ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: (isDisabled || isExpired || isSeasonUsed) ? "line-through" : "none" }}>
+                            <div>{card.name}</div>
+                            {card.category === "game_end" && !isDisabled && (() => {
+                              const tally = computeFameCardEndTally(currentPlayerId, card);
+                              return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
+                            })()}
+                            {card.category === "game_end" && isDisabled && (
+                              <div style={{ fontSize: 9, color: "#64748b", fontWeight: 800 }}>(0 🎟️)</div>
+                            )}
+                          </div>
+                          {isDisabled && <div style={{ position: "absolute", top: 2, right: 4, fontSize: 10, color: "#f87171", fontWeight: 900 }} title="This Fame card was disabled and no longer fires">✖</div>}
+                        </>
+                      );
+                      const titleText = card
+                        ? `${card.name} — ${card.desc}${isDisabled ? " · DISABLED (no longer fires)" : afterActionClickable ? " · trigger ready — click to activate!" : isYouMay ? (usedThisTurn ? " (used this turn)" : " · click to activate") : ""}${card.category === "game_end" ? ` · currently worth ${isDisabled ? 0 : computeFameCardEndTally(currentPlayerId, card)} 🎟️` : ""}`
+                        : "Empty slot — gain Fame to draw a card";
+                      const spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
+                      return clickable ? (
+                        <button key={keyIdx} onClick={() => activateFameCard(currentPlayerId, card)} style={{ ...slotStyle, ...spanStyle, color: "inherit", font: "inherit" }} title={titleText}>
+                          {inner}
+                        </button>
+                      ) : (
+                        <div key={keyIdx} style={{ ...slotStyle, ...spanStyle }} title={titleText}>
+                          {inner}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#8b5cf6", textAlign: "center", fontStyle: "italic" }}>
+                    Deck: {fameDeck.length} · Discard: {fameDiscardPile.length}
+                  </div>
+                </div>
+              ) : null}
               genreMatchStages={(() => {
                 // v124: compute which stages allow the currently-selected artist via the
                 // genre-match headliner rule, so PlayerBoard can render them with the gold
