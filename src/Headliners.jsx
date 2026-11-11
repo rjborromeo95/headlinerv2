@@ -1766,10 +1766,13 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
         <div style={{ display: "flex", flexDirection: "column", gap: compact ? 6 : 10 }}>
           {[0, 1, 2].map(si => {
             const isOpen = si < stages.length;
-            // Closed stage — grey bar with the word CLOSED
+            // Closed stage — grey bar with the word CLOSED. Matches the open stage's row height
+            // so the 3 stacked rows read as a consistent column.
             if (!isOpen) {
+              const _slotW = compact ? 110 : 150;
+              const _slotH = Math.round(_slotW / 0.7143);
               return <div key={si} style={{
-                padding: compact ? "14px 10px" : "22px 14px",
+                padding: compact ? 8 : 12,
                 borderRadius: 12,
                 background: "linear-gradient(135deg, rgba(148,163,184,0.12), rgba(100,116,139,0.06))",
                 border: "2px dashed rgba(148,163,184,0.28)",
@@ -1779,7 +1782,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 fontSize: compact ? 11 : 14,
                 letterSpacing: 2,
                 textTransform: "uppercase",
-                flex: 1,
+                minHeight: _slotH + (compact ? 16 : 24),
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
               }}>
                 <span style={{ opacity: 0.6 }}>Stage {si + 1}</span>
@@ -1795,13 +1798,16 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             const isBookable = pickStageMode && sa.length < 3;
             const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
             const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
+            // v199.293: slot dimensions mirror the ArtistCard (150×210 desktop = 5:7 ratio, 110×154 compact).
+            const slotW = compact ? 110 : 150;
+            const slotH = Math.round(slotW / 0.7143);
             return <div key={si}
               onClick={() => onStageClick && onStageClick(si)}
               style={{
                 display: "grid",
-                gridTemplateColumns: compact ? "68px repeat(3, 1fr)" : "100px repeat(3, 1fr)",
-                gap: compact ? 4 : 8,
-                padding: compact ? 6 : 10,
+                gridTemplateColumns: compact ? `68px repeat(3, ${slotW}px)` : `100px repeat(3, ${slotW}px)`,
+                gap: compact ? 6 : 10,
+                padding: compact ? 8 : 12,
                 borderRadius: 12,
                 background: gradient,
                 border: isBookable ? `2px solid ${displayColor}` : (isHL ? `2px solid ${stageColor}` : "2px solid rgba(255,255,255,0.08)"),
@@ -1810,7 +1816,8 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 transition: "all 0.15s",
                 animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
                 position: "relative",
-                minHeight: compact ? 60 : 84,
+                minHeight: slotH + (compact ? 16 : 24), // slot height + padding
+                justifyContent: "start",
               }}>
               {/* Left name banner */}
               <div style={{
@@ -1831,60 +1838,67 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
               {[0, 1, 2].map(slot => {
                 const a = Array.isArray(sa) ? sa[slot] : null;
                 const isHeadliner = slot === 2;
-                // Empty slot — show its role name + "Double Ticket bonus" on the headliner.
+                // Empty slot — card-shaped (5:7), labelled with the slot role. Headliner has the
+                // gold border + "Double Ticket bonus" sublabel.
                 if (!a || typeof a !== "object") {
                   return <div key={slot} style={{
-                    padding: compact ? "6px 4px" : "8px 6px",
-                    borderRadius: 7,
+                    width: slotW,
+                    height: slotH,
+                    padding: compact ? 8 : 10,
+                    borderRadius: 10,
                     background: "rgba(255,255,255,0.18)",
-                    border: isHeadliner ? "1.5px solid rgba(251,191,36,0.75)" : "1.5px dashed rgba(255,255,255,0.3)",
+                    border: isHeadliner ? "2px solid rgba(251,191,36,0.8)" : "2px dashed rgba(255,255,255,0.35)",
                     color: "#fff",
-                    fontSize: compact ? 8 : 10,
+                    fontSize: compact ? 10 : 12,
                     fontWeight: 700,
                     textAlign: "center",
                     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                    gap: 3,
-                    textShadow: "0 1px 3px rgba(0,0,0,0.5)",
+                    gap: 6,
+                    textShadow: "0 1px 3px rgba(0,0,0,0.6)",
                   }}>
                     <span>{slotLabel(slot)}</span>
-                    {isHeadliner && <span style={{ fontSize: compact ? 7 : 8, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.1 }}>Double Ticket bonus</span>}
+                    {isHeadliner && <span style={{ fontSize: compact ? 8 : 9, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.2 }}>Double Ticket bonus</span>}
                   </div>;
                 }
-                // Filled slot — artist name + tickets, keeping headliner ×2 indicator + guests chip.
+                // Filled slot — render the full ArtistCard so art, costs, effect, tickets stay
+                // visible after booking. The headliner gets a gold ×2 badge overlay and the
+                // Special Guests chip tucks under the card.
                 const baseTickets = a.tickets || 0;
                 const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
-                return <div key={slot} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <div style={{
-                    padding: compact ? "5px 6px" : "8px 8px",
-                    borderRadius: 7,
-                    background: genreGradient(a.genre || ""),
-                    color: "#fff",
-                    fontSize: compact ? 9 : 11,
-                    fontWeight: 700,
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-                    border: isHeadliner ? "1.5px solid #fbbf24" : "1.5px solid transparent",
-                    flex: 1,
-                    justifyContent: "center",
-                  }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                      {isHeadliner ? "★ " : ""}{a.name || "Unknown"}
-                    </span>
-                    <span style={{ fontSize: compact ? 8 : 10, opacity: 0.95 }} title={isHeadliner ? `${baseTickets} × 2 (headliner) = ${baseTickets * 2} tickets` : `${baseTickets} tickets`}>
-                      🎟️{baseTickets}{isHeadliner ? "×2" : ""}
-                    </span>
+                return <div key={slot} style={{ width: slotW, display: "flex", flexDirection: "column", gap: 3, position: "relative" }}>
+                  <div style={{ position: "relative" }}>
+                    <ArtistCard artist={a} small={compact} showCost />
+                    {isHeadliner && (
+                      <div style={{
+                        position: "absolute",
+                        top: -6, right: -6,
+                        padding: compact ? "2px 6px" : "3px 8px",
+                        borderRadius: 10,
+                        background: "linear-gradient(135deg, #fbbf24, #f59e0b)",
+                        color: "#1a1a2e",
+                        fontSize: compact ? 9 : 10,
+                        fontWeight: 900,
+                        letterSpacing: 0.3,
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.5), 0 0 10px rgba(251,191,36,0.5)",
+                        pointerEvents: "none",
+                        zIndex: 2,
+                      }} title={`${baseTickets} × 2 (headliner) = ${baseTickets * 2} tickets`}>
+                        ★ ×2 = {baseTickets * 2} 🎟️
+                      </div>
+                    )}
                   </div>
                   {guests.length > 0 && (
                     <div title={`Special Guests: ${guests.map(g => g && g.name).filter(Boolean).join(", ")}`} style={{
-                      padding: "1px 4px", borderRadius: 4,
-                      background: "linear-gradient(90deg, rgba(236,72,153,0.4), rgba(190,24,93,0.25))",
+                      padding: "2px 6px", borderRadius: 4,
+                      background: "linear-gradient(90deg, rgba(236,72,153,0.5), rgba(190,24,93,0.3))",
                       border: "1px dashed #f472b6",
                       color: "#fce7f3",
-                      fontSize: 8,
+                      fontSize: compact ? 8 : 9,
                       fontWeight: 700,
                       textAlign: "center",
                       animation: "specialGuestTuck 0.45s ease-out",
                     }}>
-                      🎸 +{guests.length}
+                      🎸 +{guests.length} Special Guest{guests.length === 1 ? "" : "s"}
                     </div>
                   )}
                 </div>;
