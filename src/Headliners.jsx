@@ -91,6 +91,23 @@ const AMENITY_IMAGES = {
   security: "/amenity-art/security.webp",
   catering: "/amenity-art/catering.webp",
 };
+// v199.297: shared die-face renderer. All 4 dice display sites (DiceDisplay component,
+// roll-prompt modal, main-board dice row, Claim-Dice picker) use this so Fame/Stage/Wild
+// emojis and amenity images stay consistent across every spot the dice appear. Fame now
+// renders as ⭐ instead of 🔥.
+function DieFace({ d, size }) {
+  const sz = size || 32;
+  if (d === "fame")  return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>⭐</span>;
+  if (d === "stage") return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>🎪</span>;
+  if (d === "wild")  return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>✨</span>;
+  if (AMENITY_IMAGES[d]) {
+    return <img src={AMENITY_IMAGES[d]} alt={d} style={{
+      width: sz, height: sz, objectFit: "contain",
+      filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
+    }} />;
+  }
+  return <span style={{ fontSize: sz * 0.9 }}>{d}</span>;
+}
 const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f87171", catering: "#fbbf24" };
 // v166: dice faces are now 6 pure options (one per side of a d6). Removed the compound
 // "catering_or_portaloo" and "security_or_campsite" faces; added "stage" — picking a
@@ -1439,21 +1456,17 @@ function DiceDisplay({ dice, onPick, disabled, onReroll, canReroll }) {
         const isFame = d === "fame";
         const isStage = d === "stage";
         const isWild = d === "wild";
-        const isAmenity = !isFame && !isStage && !isWild && AMENITY_IMAGES[d];
         const sub = isFame ? "Fame" : isStage ? "Stage" : isWild ? "Wild" : AMENITY_LABELS[d];
         const borderColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f472b6" : "#7c3aed";
         const bg = isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : isWild ? "linear-gradient(135deg, #500724, #831843)" : "linear-gradient(135deg, #1e1b4b, #312e81)";
         const textColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f9a8d4" : "#e9d5ff";
-        const faceGlyph = isAmenity
-          ? <img src={AMENITY_IMAGES[d]} alt={sub} style={{ width: 40, height: 40, objectFit: "contain", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))" }} />
-          : <span style={{ fontSize: 24 }}>{isFame ? "🔥" : isStage ? "🎪" : "✨"}</span>;
         return <button key={i} onClick={() => !disabled && onPick(i, d)} disabled={disabled} style={{
           width: 72, height: 80, borderRadius: 12, border: `2px solid ${borderColor}`,
           background: bg, color: textColor,
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           gap: 2, cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.4 : 1, transition: "all 0.2s",
-        }}>{faceGlyph}<span style={{ fontSize: 9, opacity: 0.85, fontWeight: 700 }}>{sub}</span></button>;
+        }}><DieFace d={d} size={40} /><span style={{ fontSize: 9, opacity: 0.85, fontWeight: 700 }}>{sub}</span></button>;
       })}
       {canReroll && <button onClick={onReroll} style={{
         width: 72, height: 80, borderRadius: 12, border: "2px dashed #fbbf24",
@@ -1567,12 +1580,6 @@ function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
   };
 
   const display = finalResults || (rolling ? animFrames : null);
-  const diceLabel = (d) => {
-    if (d === "fame") return "🔥";
-    if (d === "stage") return "🎪";
-    if (d === "wild") return "✨";
-    return AMENITY_ICONS[d] || d;
-  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 960, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1592,9 +1599,9 @@ function DiceRollOverlay({ pendingRoll, onRoll, onComplete, sfx }) {
             background: d === "fame" ? "linear-gradient(135deg, #422006, #713f12)" : "linear-gradient(135deg, #1e1b4b, #312e81)",
             color: d === "fame" ? "#fbbf24" : "#e9d5ff",
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            fontSize: 24, transition: rolling ? "none" : "all 0.3s",
+            transition: rolling ? "none" : "all 0.3s",
             transform: rolling ? `rotate(${Math.random() * 20 - 10}deg)` : "none",
-          }}><span>{diceLabel(d)}</span></div>)}
+          }}><DieFace d={d} size={36} /></div>)}
         </div>}
         {finalResults && !rolling && <>
           <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 12 }}>{typeof pendingRoll.resultText === "function" ? pendingRoll.resultText(finalResults) : (pendingRoll.resultText || "")}</div>
@@ -1797,7 +1804,6 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                         width: tokenSize,
                         height: tokenSize,
                         objectFit: "contain",
-                        transform: `rotate(${pos.rot}deg)`,
                         filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))",
                         pointerEvents: "none",
                       }}
@@ -1918,6 +1924,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                   return <div key={slot} style={{
                     width: slotW,
                     height: slotH,
+                    boxSizing: "border-box",
                     padding: compact ? 8 : 10,
                     borderRadius: 10,
                     background: "rgba(255,255,255,0.18)",
@@ -1939,7 +1946,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 // Special Guests chip tucks under the card.
                 const baseTickets = a.tickets || 0;
                 const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
-                return <div key={slot} style={{ width: slotW, display: "flex", flexDirection: "column", gap: 3, position: "relative" }}>
+                return <div key={slot} style={{ width: slotW, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 3, position: "relative" }}>
                   <div style={{ position: "relative" }}>
                     <ArtistCard artist={a} small showCost />
                     {isHeadliner && (
@@ -24123,7 +24130,6 @@ export default function Headliners() {
                         {dice.map((d, i) => {
                           const isFame = d === "fame";
                           const isStage = d === "stage";
-                          const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
                           const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
                           // v199.105/v199.106: when a Fame amenity pick is pending FOR THE
                           // CURRENT PLAYER, dice are clickable for the Fame pick (only
@@ -24157,7 +24163,7 @@ export default function Headliners() {
                             }}
                             title={famePickActive ? `🔥 Place ${sub} (Fame card: ${fameAmenityPending.cardName})` : inBuildMode ? `Pick ${sub}` : `${sub} (click Build to use)`}
                           >
-                            <span>{label}</span>
+                            <DieFace d={d} size={34} />
                             <span style={{ fontSize: 8, opacity: 0.8 }}>{sub}</span>
                           </button>;
                         })}
@@ -25179,12 +25185,11 @@ export default function Headliners() {
                     {dice.length === 0 && <div style={{ gridColumn: "1 / -1", color: "#fde68a", textAlign: "center", padding: 12, fontStyle: "italic" }}>No dice left to claim.</div>}
                     {dice.map((d, i) => {
                       const isFame = d === "fame"; const isStage = d === "stage";
-                      const label = isFame ? "🔥" : isStage ? "🎪" : AMENITY_ICONS[d];
                       const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
                       const canPick = picker.filter === "any" || amenityTypes.includes(d);
                       return <button key={i} disabled={!canPick} onClick={() => canPick && claimDie(i)}
-                        style={{ padding: "12px 6px", borderRadius: 10, background: canPick ? (isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)") : "rgba(100,116,139,0.2)", border: `2px solid ${canPick ? "#fbbf24" : "#475569"}`, color: canPick ? "#f3f4f6" : "#64748b", fontSize: 20, cursor: canPick ? "pointer" : "not-allowed", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, opacity: canPick ? 1 : 0.4 }}>
-                        <span>{label}</span><span style={{ fontSize: 9 }}>{sub}</span>
+                        style={{ padding: "12px 6px", borderRadius: 10, background: canPick ? (isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)") : "rgba(100,116,139,0.2)", border: `2px solid ${canPick ? "#fbbf24" : "#475569"}`, color: canPick ? "#f3f4f6" : "#64748b", cursor: canPick ? "pointer" : "not-allowed", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, opacity: canPick ? 1 : 0.4 }}>
+                        <DieFace d={d} size={32} /><span style={{ fontSize: 9 }}>{sub}</span>
                       </button>;
                     })}
                   </div>
