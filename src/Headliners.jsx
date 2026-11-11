@@ -84,6 +84,13 @@ const INFRA_REWARDS_BY_AMENITY = {
   security: ["sec_1", "sec_2", "sec_3"],
 };
 const AMENITY_ICONS = { campsite: "⛺", portaloo: "🚽", security: "👮‍♀️", catering: "🍔" };
+// v199.295: illustrated amenity art — used on die faces and in the Festival Area scatter.
+const AMENITY_IMAGES = {
+  campsite: "/amenity-art/campsite.webp",
+  portaloo: "/amenity-art/portaloo.webp",
+  security: "/amenity-art/security.webp",
+  catering: "/amenity-art/catering.webp",
+};
 const AMENITY_COLORS = { campsite: "#4ade80", portaloo: "#60a5fa", security: "#f87171", catering: "#fbbf24" };
 // v166: dice faces are now 6 pure options (one per side of a d6). Removed the compound
 // "catering_or_portaloo" and "security_or_campsite" faces; added "stage" — picking a
@@ -1432,18 +1439,21 @@ function DiceDisplay({ dice, onPick, disabled, onReroll, canReroll }) {
         const isFame = d === "fame";
         const isStage = d === "stage";
         const isWild = d === "wild";
-        const label = isFame ? "🔥" : isStage ? "🎪" : isWild ? "✨" : AMENITY_ICONS[d];
+        const isAmenity = !isFame && !isStage && !isWild && AMENITY_IMAGES[d];
         const sub = isFame ? "Fame" : isStage ? "Stage" : isWild ? "Wild" : AMENITY_LABELS[d];
         const borderColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f472b6" : "#7c3aed";
         const bg = isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : isWild ? "linear-gradient(135deg, #500724, #831843)" : "linear-gradient(135deg, #1e1b4b, #312e81)";
         const textColor = isFame ? "#fbbf24" : isStage ? "#4ade80" : isWild ? "#f9a8d4" : "#e9d5ff";
+        const faceGlyph = isAmenity
+          ? <img src={AMENITY_IMAGES[d]} alt={sub} style={{ width: 40, height: 40, objectFit: "contain", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))" }} />
+          : <span style={{ fontSize: 24 }}>{isFame ? "🔥" : isStage ? "🎪" : "✨"}</span>;
         return <button key={i} onClick={() => !disabled && onPick(i, d)} disabled={disabled} style={{
           width: 72, height: 80, borderRadius: 12, border: `2px solid ${borderColor}`,
           background: bg, color: textColor,
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 2, cursor: disabled ? "default" : "pointer", fontSize: 22,
+          gap: 2, cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.4 : 1, transition: "all 0.2s",
-        }}><span>{label}</span><span style={{ fontSize: 9, opacity: 0.8 }}>{sub}</span></button>;
+        }}>{faceGlyph}<span style={{ fontSize: 9, opacity: 0.85, fontWeight: 700 }}>{sub}</span></button>;
       })}
       {canReroll && <button onClick={onReroll} style={{
         width: 72, height: 80, borderRadius: 12, border: "2px dashed #fbbf24",
@@ -1645,7 +1655,24 @@ function DiscardViewer({ discard, onClose }) {
 // PLAYER BOARD
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
-function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages, fameTrayNode }) {
+function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages, fameTrayNode, playerId }) {
+  // v199.295: deterministic scatter for amenity tokens in the Festival Area. Hashes
+  // (seed, type, idx) → (x, y, rotation) inside the box bounds. Seed is the player id so
+  // each festival gets a different layout but the same festival stays stable across renders.
+  const scatterPos = (seed, type, idx, boxW, boxH, tokenSize) => {
+    const typeHash = { campsite: 101, security: 211, catering: 307, portaloo: 419 }[type] || 1;
+    let h = ((seed + 1) * 2654435761 ^ typeHash * 1597334677 ^ idx * 374761393) >>> 0;
+    h ^= h >>> 16; h = (h * 2246822507) >>> 0;
+    h ^= h >>> 13; h = (h * 3266489909) >>> 0;
+    h ^= h >>> 16;
+    const padX = 8, padY = 8;
+    const xRange = Math.max(1, boxW - tokenSize - padX * 2);
+    const yRange = Math.max(1, boxH - tokenSize - padY * 2);
+    const x = padX + (h % xRange);
+    const y = padY + ((h >>> 12) % yRange);
+    const rot = ((h >>> 24) % 50) - 25;
+    return { x, y, rot };
+  };
   const stages = pd?.stages || [];
   const stageArtists = pd?.stageArtists || [];
   const stageNames = pd?.stageNames || [];
@@ -1727,39 +1754,80 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             </div>
           )}
 
-          {/* Festival Area — green rounded box with amenity totals */}
-          <div style={{
-            flex: 1,
-            minHeight: compact ? 180 : 240,
-            padding: compact ? 10 : 14,
-            borderRadius: compact ? 14 : 20,
-            background: "linear-gradient(135deg, rgba(34,197,94,0.22), rgba(16,185,129,0.10))",
-            border: "2px solid rgba(34,197,94,0.4)",
-            display: "flex", flexDirection: "column",
-          }}>
-            <div style={{ fontSize: compact ? 9 : 11, color: "#4ade80", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.3, marginBottom: 10, textAlign: "center" }}>
-              🏕️ Festival Area
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              {AMENITY_TYPES.map(t => {
-                const c = am[t] || 0;
-                return <div key={t} style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: compact ? "4px 6px" : "6px 10px",
-                  borderRadius: 6,
-                  background: c > 0 ? `${AMENITY_COLORS[t]}22` : "rgba(0,0,0,0.18)",
-                  opacity: c > 0 ? 1 : 0.4,
-                  minHeight: compact ? 24 : 30,
-                }}>
-                  <span style={{ fontSize: compact ? 10 : 12, color: AMENITY_COLORS[t], fontWeight: 700 }}>
-                    {AMENITY_ICONS[t]} {c}
-                  </span>
-                  {c > 0 && renderFieldTokens({ [t]: c }, t)}
-                </div>;
-              })}
-            </div>
-            {totalAmenities === 0 && <div style={{ fontSize: compact ? 9 : 10, color: "#4ade80", textAlign: "center", marginTop: 10, fontStyle: "italic", opacity: 0.7 }}>no amenities yet</div>}
-          </div>
+          {/* Festival Area — green rounded box with amenities scattered inside */}
+          {(() => {
+            const seed = (playerId != null ? playerId : 0);
+            const tokenSize = compact ? 26 : 36;
+            const boxW = compact ? 120 : 320;
+            const scatterH = compact ? 180 : 280;
+            return <div style={{
+              flex: 1,
+              minHeight: scatterH + (compact ? 50 : 70),
+              padding: compact ? 10 : 14,
+              borderRadius: compact ? 14 : 20,
+              background: "linear-gradient(135deg, rgba(34,197,94,0.22), rgba(16,185,129,0.10))",
+              border: "2px solid rgba(34,197,94,0.4)",
+              display: "flex", flexDirection: "column",
+            }}>
+              <div style={{ fontSize: compact ? 9 : 11, color: "#4ade80", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.3, marginBottom: 10, textAlign: "center" }}>
+                🏕️ Festival Area
+              </div>
+              {/* Scatter container — absolutely-positioned amenity tokens */}
+              <div style={{
+                position: "relative",
+                width: "100%",
+                height: scatterH,
+                overflow: "hidden",
+              }}>
+                {AMENITY_TYPES.flatMap(t => {
+                  const c = am[t] || 0;
+                  return Array.from({ length: c }, (_, i) => {
+                    const pos = scatterPos(seed, t, i, boxW, scatterH, tokenSize);
+                    return <img
+                      key={`${t}-${i}`}
+                      src={AMENITY_IMAGES[t]}
+                      alt={AMENITY_LABELS[t]}
+                      title={AMENITY_LABELS[t]}
+                      style={{
+                        position: "absolute",
+                        left: pos.x,
+                        top: pos.y,
+                        width: tokenSize,
+                        height: tokenSize,
+                        objectFit: "contain",
+                        transform: `rotate(${pos.rot}deg)`,
+                        filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))",
+                        pointerEvents: "none",
+                      }}
+                    />;
+                  });
+                })}
+                {totalAmenities === 0 && (
+                  <div style={{
+                    position: "absolute", inset: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: compact ? 10 : 11, color: "#4ade80", fontStyle: "italic", opacity: 0.6,
+                  }}>no amenities yet</div>
+                )}
+              </div>
+              {/* Compact legend — exact counts for quick reading */}
+              {totalAmenities > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-around", marginTop: 8, gap: 4 }}>
+                  {AMENITY_TYPES.map(t => {
+                    const c = am[t] || 0;
+                    return <div key={t} style={{
+                      display: "flex", alignItems: "center", gap: 3,
+                      fontSize: compact ? 10 : 11, color: AMENITY_COLORS[t], fontWeight: 700,
+                      opacity: c > 0 ? 1 : 0.35,
+                    }} title={AMENITY_LABELS[t]}>
+                      <img src={AMENITY_IMAGES[t]} alt="" style={{ width: compact ? 14 : 16, height: compact ? 14 : 16, objectFit: "contain" }} />
+                      {c}
+                    </div>;
+                  })}
+                </div>
+              )}
+            </div>;
+          })()}
         </div>
 
         {/* ─────────── RIGHT COLUMN — 3 stage rows stacked ─────────── */}
@@ -22703,7 +22771,7 @@ export default function Headliners() {
               </div>
             )}
             <div style={{ display: "flex", gap: 16, justifyContent: "center", alignItems: "flex-start", flexWrap: "wrap" }}>
-              <PlayerBoard pd={vpd} stageColors={vpd.stageColors || []} year={year} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
+              <PlayerBoard pd={vpd} playerId={viewingPlayerId} stageColors={vpd.stageColors || []} year={year} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
               <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 170 }}>
                 {(vpd.stages || []).map((_, si) => {
                   const sa = vsa[si] || [];
@@ -24133,6 +24201,7 @@ export default function Headliners() {
           <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 12 : 16, justifyContent: "center", alignItems: "center" }}>
             <PlayerBoard
               pd={currentPD}
+              playerId={currentPlayerId}
               stageColors={currentPD.stageColors || []}
               pickStageMode={artistAction === "pickStage"}
               pickFieldMode={pickingFieldFor != null}
