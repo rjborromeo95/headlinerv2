@@ -7600,6 +7600,14 @@ export default function Headliners() {
   // player clicks N dice; each click immediately claims the die's effect and removes it.
   const [diceClaimPicker, _rawSetDiceClaimPicker] = useState(null);
   const setDiceClaimPicker = _guardSetter("setDiceClaimPicker", _rawSetDiceClaimPicker);
+  // v301: wild-face sub-picker inside the dice-claim picker. When the player clicks a wild
+  // die in an artist-effect dice-claim flow, this opens a secondary modal to resolve the
+  // wild into a concrete face (amenity, or fame/stage when the filter is "any"). Shape:
+  // { pid, dieIdx, filter, cardName }. Previously clicking wild fired `applyArtistSubEffect`
+  // with "Place a wild in your festival." which matched no handler — die consumed, nothing
+  // placed.
+  const [diceClaimWildPicker, _rawSetDiceClaimWildPicker] = useState(null);
+  const setDiceClaimWildPicker = _guardSetter("setDiceClaimWildPicker", _rawSetDiceClaimWildPicker);
   // v199.156: deck-reshuffle animation overlay. When a draw-until effect hits an empty
   // deck mid-draw, we pause ~900ms to shuffle the discard pile into the deck with a
   // visual, then the effect continues. null when idle; set to a short label while shown.
@@ -12557,13 +12565,19 @@ export default function Headliners() {
     }
 
     // v199.161: "Gain any one of the amenities rolled." (The Darkness, second half).
-    // Opens the dice-claim picker for 1 pick, any face. AI auto-picks the first amenity-face.
+    // Opens the dice-claim picker for 1 pick, any face. AI auto-picks the first amenity-face
+    // (v301: or a wild — resolves to the AI's weakest amenity type).
     if (t === "gain any one of the amenities rolled" || t === "gain any one of the amenity rolled") {
       if (isAI) {
         const amenityTypes = ["campsite", "security", "catering", "portaloo"];
-        const picked = dice.findIndex(d => amenityTypes.includes(d));
+        const picked = dice.findIndex(d => amenityTypes.includes(d) || d === "wild");
         if (picked >= 0) {
-          const dieType = dice[picked];
+          let dieType = dice[picked];
+          if (dieType === "wild") {
+            const pdNow = (playerDataRef.current || playerData)[pid] || {};
+            const am = pdNow.amenities || {};
+            dieType = [...amenityTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0))[0];
+          }
           applyArtistSubEffect(pid, artist, stageIdx, `Place a ${dieType} in your festival.`);
           setDice(prev => prev.filter((_, i) => i !== picked));
         } else {
@@ -12577,6 +12591,7 @@ export default function Headliners() {
 
     // v199.161: "Place N amenities from the amenity die(/dice)" — RAYE's trailing sub-effect.
     // Reuses the dice-claim picker with count=N, filter=amenity (not any-face).
+    // v301: AI now also claims wild dice, resolving each to its weakest amenity type.
     m = t.match(/^place\s+(one|two|three|four|five|\d+)\s+amenit(?:y|ies)\s+from\s+the\s+amenity\s+di(?:e|ce)$/);
     if (m) {
       const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5 };
@@ -12585,9 +12600,14 @@ export default function Headliners() {
         const amenityTypes = ["campsite", "security", "catering", "portaloo"];
         const curDice = [...dice];
         for (let k = 0; k < n; k++) {
-          const picked = curDice.findIndex(d => amenityTypes.includes(d));
+          const picked = curDice.findIndex(d => amenityTypes.includes(d) || d === "wild");
           if (picked >= 0) {
-            const dieType = curDice[picked]; curDice.splice(picked, 1);
+            let dieType = curDice[picked]; curDice.splice(picked, 1);
+            if (dieType === "wild") {
+              const pdNow = (playerDataRef.current || playerData)[pid] || {};
+              const am = pdNow.amenities || {};
+              dieType = [...amenityTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0))[0];
+            }
             setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Place a ${dieType} in your festival.`), k * 150);
           } else {
             // No matching die — grant a random amenity instead.
@@ -12782,14 +12802,20 @@ export default function Headliners() {
       if (isAI) {
         // AI: pick first N available dice from the pool matching the filter. If pool is
         // short, roll fresh ones.
+        // v301: wild is also pickable in both filters — resolves to the AI's weakest amenity.
         const curDice = [...dice];
         const amenityTypes = ["campsite", "security", "catering", "portaloo"];
         for (let k = 0; k < n; k++) {
           let dieType;
-          const picked = curDice.findIndex(d => filter === "any" || amenityTypes.includes(d));
+          const picked = curDice.findIndex(d => filter === "any" || amenityTypes.includes(d) || d === "wild");
           if (picked >= 0) { dieType = curDice[picked]; curDice.splice(picked, 1); }
           else {
             dieType = anyFace ? ["fame","stage",...amenityTypes][Math.floor(Math.random()*6)] : amenityTypes[Math.floor(Math.random()*4)];
+          }
+          if (dieType === "wild") {
+            const pdNow = (playerDataRef.current || playerData)[pid] || {};
+            const am = pdNow.amenities || {};
+            dieType = [...amenityTypes].sort((a, b) => (am[a] || 0) - (am[b] || 0))[0];
           }
           // Apply the die's face
           setTimeout(() => {
@@ -25230,6 +25256,14 @@ export default function Headliners() {
               const claimDie = (dieIdx) => {
                 const dieType = dice[dieIdx];
                 if (!dieType) return;
+                // v301: wild face — open the wild sub-picker so the player chooses what the
+                // wild resolves to. The die isn't consumed and the claimed count doesn't
+                // advance until they pick. (Previously fell to the else branch and fired
+                // "Place a wild in your festival." which no handler matches.)
+                if (dieType === "wild") {
+                  setDiceClaimWildPicker({ pid: picker.pid, dieIdx, filter: picker.filter, cardName: picker.cardName });
+                  return;
+                }
                 // Apply the die's face.
                 if (dieType === "fame") applyArtistSubEffect(picker.pid, { name: picker.cardName, genre: "" }, -1, "Gain 1 Fame.");
                 else if (dieType === "stage") applyArtistSubEffect(picker.pid, { name: picker.cardName, genre: "" }, -1, "Open a stage.");
@@ -25253,9 +25287,11 @@ export default function Headliners() {
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8, marginBottom: 14 }}>
                     {dice.length === 0 && <div style={{ gridColumn: "1 / -1", color: "#fde68a", textAlign: "center", padding: 12, fontStyle: "italic" }}>No dice left to claim.</div>}
                     {dice.map((d, i) => {
-                      const isFame = d === "fame"; const isStage = d === "stage";
-                      const sub = isFame ? "Fame" : isStage ? "Stage" : AMENITY_LABELS[d];
-                      const canPick = picker.filter === "any" || amenityTypes.includes(d);
+                      const isFame = d === "fame"; const isStage = d === "stage"; const isWild = d === "wild";
+                      const sub = isFame ? "Fame" : isStage ? "Stage" : isWild ? "Wild" : AMENITY_LABELS[d];
+                      // v301: wild is always pickable — it resolves to the player's choice
+                      // (any amenity, or fame/stage when filter is "any") via the sub-picker.
+                      const canPick = picker.filter === "any" || amenityTypes.includes(d) || isWild;
                       return <button key={i} disabled={!canPick} onClick={() => canPick && claimDie(i)}
                         style={{ padding: "12px 6px", borderRadius: 10, background: canPick ? (isFame ? "linear-gradient(135deg, #422006, #713f12)" : isStage ? "linear-gradient(135deg, #052e16, #14532d)" : "linear-gradient(135deg, #1e1b4b, #312e81)") : "rgba(100,116,139,0.2)", border: `2px solid ${canPick ? "#fbbf24" : "#475569"}`, color: canPick ? "#f3f4f6" : "#64748b", cursor: canPick ? "pointer" : "not-allowed", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, opacity: canPick ? 1 : 0.4 }}>
                         <DieFace d={d} size={32} /><span style={{ fontSize: 9 }}>{sub}</span>
@@ -25266,6 +25302,74 @@ export default function Headliners() {
                     <button onClick={() => { setDiceClaimPicker(null); addLog("🎸 Artist Effect", `${players.find(p => p.id === picker.pid)?.festivalName || "?"}: ${picker.cardName} — ${picksLeft} dice unclaimed.`); }}
                       style={{ padding: "10px 18px", borderRadius: 10, background: "transparent", border: "2px solid #64748b", color: "#cbd5e1", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       Skip remaining
+                    </button>
+                  </div>
+                </div>
+              </div>, document.body);
+            })()}
+
+            {/* v301: Wild sub-picker for the dice-claim picker. Opens when a player clicks
+                a Wild die inside an artist-effect dice-claim flow. Lets them resolve the
+                wild into an amenity (or fame/stage when the parent picker's filter is "any").
+                On confirm, drives the same claim path as a direct face click: fires the
+                sub-effect, removes the die, advances the claimed count. Layers above the
+                parent picker at a higher z-index. */}
+            {diceClaimWildPicker && diceClaimWildPicker.pid === currentPlayerId && typeof document !== "undefined" && (() => {
+              const wp = diceClaimWildPicker;
+              const resolveWild = (resolveTo) => {
+                // Close sub-picker first so the user sees the main flow advance.
+                setDiceClaimWildPicker(null);
+                // Fire the resolved face's effect.
+                if (resolveTo === "fame") applyArtistSubEffect(wp.pid, { name: wp.cardName, genre: "" }, -1, "Gain 1 Fame.");
+                else if (resolveTo === "stage") applyArtistSubEffect(wp.pid, { name: wp.cardName, genre: "" }, -1, "Open a stage.");
+                else applyArtistSubEffect(wp.pid, { name: wp.cardName, genre: "" }, -1, `Place a ${resolveTo} in your festival.`);
+                // Remove the wild die from the pool.
+                setDice(prev => prev.filter((_, i) => i !== wp.dieIdx));
+                // Advance the parent picker's claimed count; close it if complete.
+                setDiceClaimPicker(prev => {
+                  if (!prev) return prev;
+                  const nextClaimed = (prev.claimed || 0) + 1;
+                  if (nextClaimed >= prev.count) return null;
+                  return { ...prev, claimed: nextClaimed };
+                });
+              };
+              const showFameStage = wp.filter === "any";
+              return createPortal(<div style={{ position: "fixed", inset: 0, background: "rgba(15,14,26,0.9)", zIndex: 9510, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "fadeSlideIn 0.25s" }}>
+                <div style={{ padding: 24, borderRadius: 16, background: "linear-gradient(135deg, rgba(131,24,67,0.4), rgba(76,5,25,0.35))", border: "2px solid #f472b6", boxShadow: "0 0 40px rgba(244,114,182,0.35)", maxWidth: 480, width: "100%" }}>
+                  <div style={{ textAlign: "center", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, color: "#f9a8d4", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>✨ Wild Die</div>
+                    <h2 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 800, margin: "4px 0 2px" }}>{wp.cardName}</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>Choose what this wild resolves to.</p>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                    {["campsite", "security", "catering", "portaloo"].map(amen => (
+                      <button key={amen} onClick={() => resolveWild(amen)}
+                        style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #f472b6", background: "rgba(30,27,75,0.5)", color: "#f3f4f6", cursor: "pointer", fontWeight: 700, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, transition: "all 0.2s" }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "rgba(131,24,67,0.4)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "rgba(30,27,75,0.5)"; e.currentTarget.style.transform = ""; }}>
+                        <img src={AMENITY_IMAGES[amen]} alt={amen} style={{ width: 36, height: 36, objectFit: "contain", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))" }} />
+                        <span style={{ fontSize: 12 }}>{AMENITY_LABELS[amen]}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {showFameStage && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 10 }}>
+                      <button onClick={() => resolveWild("fame")}
+                        style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #fbbf24", background: "linear-gradient(135deg, rgba(66,32,6,0.6), rgba(113,63,18,0.4))", color: "#fef3c7", cursor: "pointer", fontWeight: 700, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                        <DieFace d="fame" size={36} />
+                        <span style={{ fontSize: 12 }}>Fame</span>
+                      </button>
+                      <button onClick={() => resolveWild("stage")}
+                        style={{ padding: "14px 10px", borderRadius: 10, border: "1px solid #4ade80", background: "linear-gradient(135deg, rgba(5,46,22,0.6), rgba(20,83,45,0.4))", color: "#dcfce7", cursor: "pointer", fontWeight: 700, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                        <DieFace d="stage" size={36} />
+                        <span style={{ fontSize: 12 }}>Stage</span>
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ textAlign: "center", marginTop: 12 }}>
+                    <button onClick={() => setDiceClaimWildPicker(null)}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                      Cancel
                     </button>
                   </div>
                 </div>
