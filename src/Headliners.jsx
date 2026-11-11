@@ -1680,7 +1680,11 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
     let h = ((seed + 1) * 2654435761 ^ typeHash * 1597334677 ^ idx * 374761393) >>> 0;
     h ^= h >>> 16; h = (h * 2246822507) >>> 0;
     h ^= h >>> 13; h = (h * 3266489909) >>> 0;
-    h ^= h >>> 16;
+    // v300: force unsigned after final XOR — otherwise h can be negative, which
+    // makes `h % xRange` yield a negative x so the token renders off-screen
+    // (clipped by overflow:hidden) and amenities silently vanish from the
+    // Festival Area even though the tally shows the correct count.
+    h = (h ^ (h >>> 16)) >>> 0;
     const padX = 8, padY = 8;
     const xRange = Math.max(1, boxW - tokenSize - padX * 2);
     const yRange = Math.max(1, boxH - tokenSize - padY * 2);
@@ -12736,12 +12740,22 @@ export default function Headliners() {
     // included) from the amenity dice" which lets ANY face count. User-requested dice
     // picker opens for human; AI auto-applies with the first N dice.
     m = t.match(/^(?:gain|roll)\s+(\d+)\s+(?:amenity\s+dice|amenities)(?:\s+\([^)]*\))?(?:\s+from\s+the\s+amenity\s+dice)?(?:\s+gain all of the outcomes)?$/);
+    // v300: diagnostic logging for Cruel Mistress investigation
+    if (/cruel mistress|stages.*fame included|amenity dice/i.test(t)) {
+      console.log("[cruel-mistress-regex]", "t:", JSON.stringify(t), "artist:", artist.name, "match:", !!m);
+      if (/cruel mistress/i.test(artist.name)) {
+        addLog("🔍 Debug", `${festival}: regex check on "${t.substring(0, 50)}..." → ${m ? "MATCH" : "NO MATCH"}`);
+      }
+    }
     if (m) {
       const n = parseInt(m[1], 10);
       // "Roll N amenity dice. Gain all of the outcomes." — Sitting Ducks (amenity-face only).
       // "Gain N amenities (stages, or Fame included) from the amenity dice" — CRUEL MISTRESS (any face).
       const anyFace = /stages|fame\s+included/.test(t);
       const filter = anyFace ? "any" : "amenity";
+      if (/cruel mistress/i.test(artist.name)) {
+        addLog("🔍 Debug", `${festival}: handler fired — n=${n}, anyFace=${anyFace}, isAI=${isAI}, dice=${JSON.stringify(dice)}`);
+      }
       if (isAI) {
         // AI: pick first N available dice from the pool matching the filter. If pool is
         // short, roll fresh ones.
@@ -12765,6 +12779,9 @@ export default function Headliners() {
         addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} → auto-claimed ${n} dice outcome${n === 1 ? "" : "s"}.`);
       } else {
         // Open the dice-claim picker (user picks WHICH N dice from the pool).
+        if (/cruel mistress/i.test(artist.name)) {
+          addLog("🔍 Debug", `${festival}: setDiceClaimPicker({pid:${pid}, count:${n}, filter:"${filter}"})`);
+        }
         setDiceClaimPicker({ pid, count: n, filter, cardName: artist.name });
       }
       return true;
@@ -13218,12 +13235,18 @@ export default function Headliners() {
       const slotMap = { "opening set": 0, "middle slot": 1, "headliner": 2 };
       // Split on sentence boundaries. Each sentence is a candidate slot condition.
       const sentences = eff.split(/\.\s+/).map(s => s.replace(/\.+$/, "").trim()).filter(s => s.length > 0);
+      // v300: diagnostic logging for Cruel Mistress investigation
+      console.log("[slot-cond entry]", artist.name, "eff:", JSON.stringify(eff), "slotIdx:", slotIdx, "sentences:", sentences);
+      if (/cruel mistress/i.test(artist.name)) {
+        addLog("🔍 Debug", `${festival}: ${artist.name} slot-cond entry — slotIdx=${slotIdx}, sentences=${sentences.length}`);
+      }
       let handled = false;
       sentences.forEach(sentence => {
         const sm = sentence.match(/^(?:If\s+)?(Opening Set|Middle Slot|Headliner):\s*(.+)$/i);
         if (!sm) {
           // Non-slot sentence inside a slot-conditional effect — fire it unconditionally
           // so patterns like "If Opening Set: X. Y" (where Y is unconditional) still work.
+          console.log("[slot-cond non-match]", artist.name, "sentence:", JSON.stringify(sentence));
           applyArtistSubEffect(pid, artist, stageIdx, sentence + ".");
           handled = true;
           return;
@@ -13231,6 +13254,11 @@ export default function Headliners() {
         const slot = sm[1].toLowerCase();
         const sub = sm[2];
         const needSlot = slotMap[slot];
+        console.log("[slot-cond match]", artist.name, "slot:", slot, "needSlot:", needSlot, "slotIdx:", slotIdx, "sub:", JSON.stringify(sub));
+        if (/cruel mistress/i.test(artist.name)) {
+          addLog("🔍 Debug", `${festival}: ${artist.name} slot="${slot}" need=${needSlot} slotIdx=${slotIdx} ${slotIdx === needSlot ? "✓ FIRE" : "✗ SKIP"}`);
+          addLog("🔍 Debug", `${festival}: ${artist.name} sub="${sub}"`);
+        }
         if (slotIdx === needSlot) {
           applyArtistSubEffect(pid, artist, stageIdx, sub);
           handled = true;
