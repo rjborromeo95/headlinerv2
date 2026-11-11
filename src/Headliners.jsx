@@ -1672,6 +1672,27 @@ function DiscardViewer({ discard, onClose }) {
 // ═══════════════════════════════════════════════════════════
 /** Visual representation of a player's festival: stages with their artists + amenity token piles */
 function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx, pickStageMode, pickFieldMode, onFieldClick, fieldsDisabled, year, genreMatchStages, fameTrayNode, playerId }) {
+  // v300: measure the actual rendered scatter container width + height so tokens never clip.
+  // Previously boxW was hardcoded (320 non-compact / 120 compact), but the scatter container
+  // uses width:100% inside an outer box with 14px padding + 2px border, so the real container
+  // is ~288px wide — tokens positioned up to x=312 fell outside, clipped by overflow:hidden.
+  // ResizeObserver keeps it accurate across screen sizes and layout changes.
+  const scatterRef = useRef(null);
+  const [scatterDims, setScatterDims] = useState({ w: compact ? 96 : 288, h: compact ? 180 : 280 });
+  useLayoutEffect(() => {
+    if (!scatterRef.current) return;
+    const el = scatterRef.current;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setScatterDims(prev => (Math.floor(r.width) === prev.w && Math.floor(r.height) === prev.h) ? prev : { w: Math.floor(r.width), h: Math.floor(r.height) });
+      }
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // v199.295: deterministic scatter for amenity tokens in the Festival Area. Hashes
   // (seed, type, idx) → (x, y, rotation) inside the box bounds. Seed is the player id so
   // each festival gets a different layout but the same festival stays stable across renders.
@@ -1780,7 +1801,8 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
           {(() => {
             const seed = (playerId != null ? playerId : 0);
             const tokenSize = compact ? 26 : 36;
-            const boxW = compact ? 120 : 320;
+            // v300: scatterDims from ResizeObserver reflects actual rendered container size,
+            // so tokens stay inside the box regardless of column width or padding changes.
             const scatterH = compact ? 180 : 280;
             return <div style={{
               flex: 1,
@@ -1794,8 +1816,9 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
               <div style={{ fontSize: compact ? 9 : 11, color: "#4ade80", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.3, marginBottom: 10, textAlign: "center" }}>
                 🏕️ Festival Area
               </div>
-              {/* Scatter container — absolutely-positioned amenity tokens */}
-              <div style={{
+              {/* Scatter container — absolutely-positioned amenity tokens. Ref measured on mount
+                  so scatterPos uses the real container width/height. */}
+              <div ref={scatterRef} style={{
                 position: "relative",
                 width: "100%",
                 height: scatterH,
@@ -1804,7 +1827,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 {AMENITY_TYPES.flatMap(t => {
                   const c = am[t] || 0;
                   return Array.from({ length: c }, (_, i) => {
-                    const pos = scatterPos(seed, t, i, boxW, scatterH, tokenSize);
+                    const pos = scatterPos(seed, t, i, scatterDims.w, scatterDims.h, tokenSize);
                     return <img
                       key={`${t}-${i}`}
                       src={AMENITY_IMAGES[t]}
