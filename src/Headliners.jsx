@@ -1876,22 +1876,21 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
               </div>;
             }
             // Open stage — gradient background, left name banner, 3 artist slots across.
+            // v199.299: booking affordance lives on the leftmost empty slot now, not the stage.
+            // firstEmptyIdx = where the artist will land. Later empty slots dim + show a lock.
             const sa = stageArtists[si] || [];
             const stageColor = sColors[si] || STAGE_COLORS[si % STAGE_COLORS.length];
             const gradient = STAGE_GRADIENTS[si % STAGE_GRADIENTS.length];
             const name = stageNames[si] || STAGE_NAMES[si] || `Stage ${si + 1}`;
             const isHL = highlightStageIdx === si;
-            const isBookable = pickStageMode && sa.length < 3;
-            const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
-            const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
-            // v199.296: always use the small ArtistCard size for stage slots (110×154 desktop,
-            // 130×182 mobile) so the full board fits on a laptop screen without horizontal scroll.
-            // Hover-to-enlarge preview still shows the artwork at 266px.
+            const firstEmptyIdx = [0, 1, 2].find(i => !sa[i] || typeof sa[i] !== "object");
+            const stageIsGenreMatch = !!(pickStageMode && genreMatchStages && genreMatchStages.has(si));
+            // v199.296: stage slots always use the small ArtistCard size (110×154 desktop,
+            // 130×182 mobile) so the board fits on a laptop screen. Hover-to-enlarge still works.
             const _mob = typeof window !== "undefined" && window.innerWidth < 768;
             const slotW = _mob ? 130 : 110;
             const slotH = Math.round(slotW / 0.7143);
             return <div key={si}
-              onClick={() => onStageClick && onStageClick(si)}
               style={{
                 display: "grid",
                 gridTemplateColumns: compact ? `68px repeat(3, ${slotW}px)` : `100px repeat(3, ${slotW}px)`,
@@ -1899,13 +1898,11 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 padding: compact ? 8 : 12,
                 borderRadius: 12,
                 background: gradient,
-                border: isBookable ? `2px solid ${displayColor}` : (isHL ? `2px solid ${stageColor}` : "2px solid rgba(255,255,255,0.08)"),
-                boxShadow: isBookable ? `0 0 14px ${displayColor}80` : (isHL ? `0 0 10px ${stageColor}80` : "0 2px 10px rgba(0,0,0,0.35)"),
-                cursor: onStageClick ? "pointer" : "default",
+                border: isHL ? `2px solid ${stageColor}` : "2px solid rgba(255,255,255,0.08)",
+                boxShadow: isHL ? `0 0 10px ${stageColor}80` : "0 2px 10px rgba(0,0,0,0.35)",
                 transition: "all 0.15s",
-                animation: isBookable ? "affordPulse 1.5s ease-in-out infinite" : "none",
                 position: "relative",
-                minHeight: slotH + (compact ? 16 : 24), // slot height + padding
+                minHeight: slotH + (compact ? 16 : 24),
                 justifyContent: "start",
               }}>
               {/* Left name banner */}
@@ -1927,35 +1924,64 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
               {[0, 1, 2].map(slot => {
                 const a = Array.isArray(sa) ? sa[slot] : null;
                 const isHeadliner = slot === 2;
-                // Empty slot — card-shaped (5:7), labelled with the slot role. Headliner has the
-                // gold border + "Double Ticket bonus" sublabel.
-                if (!a || typeof a !== "object") {
-                  return <div key={slot} style={{
-                    width: slotW,
-                    height: slotH,
-                    boxSizing: "border-box",
-                    padding: compact ? 8 : 10,
-                    borderRadius: 10,
-                    background: "rgba(255,255,255,0.18)",
-                    border: isHeadliner ? "2px solid rgba(251,191,36,0.8)" : "2px dashed rgba(255,255,255,0.35)",
-                    color: "#fff",
-                    fontSize: compact ? 10 : 12,
-                    fontWeight: 700,
-                    textAlign: "center",
-                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                    gap: 6,
-                    textShadow: "0 1px 3px rgba(0,0,0,0.6)",
-                  }}>
-                    <span>{slotLabel(slot)}</span>
-                    {isHeadliner && <span style={{ fontSize: compact ? 8 : 9, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.2 }}>Double Ticket bonus</span>}
+                const isEmpty = !a || typeof a !== "object";
+                const isTargetSlot = pickStageMode && isEmpty && slot === firstEmptyIdx;
+                const isLockedSlot = pickStageMode && isEmpty && firstEmptyIdx !== undefined && slot > firstEmptyIdx;
+                // Empty slot — three styles: default (no booking in progress),
+                // target (first-empty during pickStageMode, green swirl + clickable),
+                // locked (right of the target, dark overlay + padlock).
+                if (isEmpty) {
+                  const baseBorder = isHeadliner ? "2px solid rgba(251,191,36,0.8)" : "2px dashed rgba(255,255,255,0.35)";
+                  return <div key={slot}
+                    onClick={isTargetSlot ? () => onStageClick && onStageClick(si) : undefined}
+                    style={{
+                      width: slotW,
+                      height: slotH,
+                      boxSizing: "border-box",
+                      padding: compact ? 8 : 10,
+                      borderRadius: 10,
+                      background: isLockedSlot ? "rgba(0,0,0,0.55)" : (isTargetSlot ? "rgba(34,197,94,0.22)" : "rgba(255,255,255,0.18)"),
+                      border: isTargetSlot ? "2px solid #4ade80" : baseBorder,
+                      color: "#fff",
+                      fontSize: compact ? 10 : 12,
+                      fontWeight: 700,
+                      textAlign: "center",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      gap: 6,
+                      textShadow: "0 1px 3px rgba(0,0,0,0.6)",
+                      cursor: isTargetSlot ? "pointer" : "default",
+                      animation: isTargetSlot ? "bookSlotSwirl 1.6s ease-in-out infinite" : "none",
+                      opacity: isLockedSlot ? 0.55 : 1,
+                      transition: "all 0.2s",
+                      position: "relative",
+                    }}>
+                    {isLockedSlot ? (
+                      <>
+                        <span style={{ fontSize: compact ? 20 : 26, opacity: 0.7 }}>🔒</span>
+                        <span style={{ fontSize: compact ? 8 : 9, opacity: 0.7, fontWeight: 600 }}>Book left-to-right</span>
+                      </>
+                    ) : isTargetSlot ? (
+                      <>
+                        <span style={{ fontSize: compact ? 11 : 13, color: "#86efac", fontWeight: 900, textTransform: "uppercase", letterSpacing: 1 }}>Book Here</span>
+                        <span style={{ fontSize: compact ? 9 : 10, color: "#fff", opacity: 0.9 }}>{slotLabel(slot)}</span>
+                        {isHeadliner && <span style={{ fontSize: compact ? 8 : 9, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.2 }}>Double Ticket bonus</span>}
+                        {stageIsGenreMatch && <span style={{ fontSize: compact ? 7 : 8, color: "#fbbf24", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6 }}>🎸 Genre Match</span>}
+                      </>
+                    ) : (
+                      <>
+                        <span>{slotLabel(slot)}</span>
+                        {isHeadliner && <span style={{ fontSize: compact ? 8 : 9, color: "#fde68a", fontWeight: 600, fontStyle: "italic", lineHeight: 1.2 }}>Double Ticket bonus</span>}
+                      </>
+                    )}
                   </div>;
                 }
-                // Filled slot — render the full ArtistCard so art, costs, effect, tickets stay
-                // visible after booking. The headliner gets a gold ×2 badge overlay and the
-                // Special Guests chip tucks under the card.
+                // Filled slot — ArtistCard + headliner ×2 overlay + guests chip. Click forwards to
+                // onStageClick so the parent can open the stage-detail modal (existing behavior).
                 const baseTickets = a.tickets || 0;
                 const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
-                return <div key={slot} style={{ width: slotW, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 3, position: "relative" }}>
+                return <div key={slot}
+                  onClick={onStageClick ? () => onStageClick(si) : undefined}
+                  style={{ width: slotW, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 3, position: "relative", cursor: onStageClick ? "pointer" : "default" }}>
                   <div style={{ position: "relative" }}>
                     <ArtistCard artist={a} small showCost />
                     {isHeadliner && (
@@ -1993,23 +2019,6 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                   )}
                 </div>;
               })}
-              {/* Click-to-book hint — overlays the top-right corner so it doesn't distort the grid */}
-              {isBookable && (
-                <div style={{
-                  position: "absolute", top: -8, right: 10,
-                  padding: "2px 8px",
-                  borderRadius: 10,
-                  background: isGenreMatch ? "linear-gradient(90deg, #fbbf24, #f59e0b)" : "#fbbf24",
-                  color: "#1a1a2e",
-                  fontSize: 9,
-                  fontWeight: 900,
-                  letterSpacing: 0.5,
-                  textTransform: "uppercase",
-                  boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
-                }}>
-                  {isGenreMatch ? "🎸 Genre Match" : "Click to book"}
-                </div>
-              )}
             </div>;
           })}
         </div>
@@ -20439,7 +20448,7 @@ export default function Headliners() {
     </div>)}
   </div> : null;
   const objectivesToggle = <button onClick={() => setShowPopupObjectives(p => !p)} style={{ marginTop: 8, padding: "4px 12px", borderRadius: 6, border: "1px solid #7c3aed40", background: showPopupObjectives ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.08)", color: "#c4b5fd", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>{showPopupObjectives ? "Hide Objectives ▲" : "Show Objectives ▼"}</button>;
-  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes slideRightIn { from { opacity:0; transform:translateX(-12px) scaleX(0.92); transform-origin: left; } to { opacity:1; transform:translateX(0) scaleX(1); transform-origin: left; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } } @keyframes specialGuestTuck { 0% { opacity: 0; transform: translateY(-6px) scaleY(0.3); max-height: 0; } 60% { opacity: 0.9; transform: translateY(0) scaleY(1.05); } 100% { opacity: 1; transform: translateY(0) scaleY(1); max-height: 40px; } } @keyframes calcConfettiFall { 0% { opacity: 0; transform: translateY(0) rotate(0deg); } 10% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; transform: translateY(105vh) rotate(720deg); } }`}</style>;
+  const anim = <style>{`@keyframes slideDownIn { from { opacity:0; transform:translateY(-12px) scaleY(0.92); transform-origin: top; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: top; } } @keyframes slideUpIn { from { opacity:0; transform:translateY(12px) scaleY(0.92); transform-origin: bottom; } to { opacity:1; transform:translateY(0) scaleY(1); transform-origin: bottom; } } @keyframes slideRightIn { from { opacity:0; transform:translateX(-12px) scaleX(0.92); transform-origin: left; } to { opacity:1; transform:translateX(0) scaleX(1); transform-origin: left; } } @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } } @keyframes headlinerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } } @keyframes affordPulse { 0%,100% { box-shadow: 0 0 4px rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.7); } } .obj-hover-parent:hover .obj-hover-tip { display: block !important; max-height: 300px !important; padding: 10px !important; margin-top: 8px !important; opacity: 1 !important; } @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 50% { opacity:1; transform:translateY(-30px) scale(1.2); } 100% { opacity:0; transform:translateY(-60px) scale(0.8); } } @keyframes bookReveal { 0% { opacity:0; transform:scale(0.5) rotate(-5deg); } 50% { transform:scale(1.1) rotate(2deg); } 100% { opacity:1; transform:scale(1) rotate(0deg); } } @keyframes pulse { 0%,100% { transform:scale(1); box-shadow: 0 0 8px rgba(251,191,36,0.3); } 50% { transform:scale(1.05); box-shadow: 0 0 20px rgba(251,191,36,0.6); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes fameOnFire { 0%,100% { box-shadow: 0 0 12px rgba(249,115,22,0.6), 0 0 24px rgba(239,68,68,0.4); border-color: #f97316; } 50% { box-shadow: 0 0 18px rgba(249,115,22,0.9), 0 0 36px rgba(239,68,68,0.7); border-color: #fbbf24; } } @keyframes fameFlicker { 0%,100% { opacity: 1; } 25% { opacity: 0.85; } 50% { opacity: 1; } 75% { opacity: 0.92; } } @keyframes genreMatchGlow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.7), 0 0 24px rgba(251,191,36,0.35); transform: translateY(0) scale(1); } 50% { box-shadow: 0 0 22px rgba(251,191,36,1), 0 0 44px rgba(251,191,36,0.6); transform: translateY(-1px) scale(1.015); } } @keyframes bookSlotSwirl { 0% { box-shadow: 0 0 10px rgba(34,197,94,0.7), 0 0 20px rgba(34,197,94,0.4), inset 0 0 8px rgba(134,239,172,0.3); border-color: #4ade80; } 33% { box-shadow: 0 0 18px rgba(74,222,128,1), 0 0 36px rgba(34,197,94,0.75), inset 0 0 14px rgba(187,247,208,0.5); border-color: #86efac; } 66% { box-shadow: 0 0 14px rgba(34,197,94,0.85), 0 0 28px rgba(16,185,129,0.6), inset 0 0 10px rgba(134,239,172,0.4); border-color: #4ade80; } 100% { box-shadow: 0 0 10px rgba(34,197,94,0.7), 0 0 20px rgba(34,197,94,0.4), inset 0 0 8px rgba(134,239,172,0.3); border-color: #4ade80; } } @keyframes specialGuestTuck { 0% { opacity: 0; transform: translateY(-6px) scaleY(0.3); max-height: 0; } 60% { opacity: 0.9; transform: translateY(0) scaleY(1.05); } 100% { opacity: 1; transform: translateY(0) scaleY(1); max-height: 40px; } } @keyframes calcConfettiFall { 0% { opacity: 0; transform: translateY(0) rotate(0deg); } 10% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; transform: translateY(105vh) rotate(720deg); } }`}</style>;
 
   const updateNotesModal = showUpdateNotes ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowUpdateNotes(false)}>
     <div style={{ background: "#0f0e1a", border: "1px solid #22c55e", borderRadius: 16, padding: 24, maxWidth: 600, maxHeight: "80vh", overflowY: "auto", width: "100%" }} onClick={e => e.stopPropagation()}>
@@ -26039,9 +26048,16 @@ export default function Headliners() {
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
                     {["campsite", "security", "catering", "portaloo"].map(amen => (
                       <button key={amen} onClick={() => {
-                        // Replace the wild face with the chosen amenity type in the dice array.
-                        setDice(prev => prev.map((d, i) => i === wildDiePicker.idx ? amen : d));
+                        // v199.299: resolve the wild face by going through the normal die-pick path.
+                        // First mutate the dice so a visual flash shows the resolved face, then
+                        // drive handleDiePick with the chosen amenity — that's the only thing that
+                        // actually calls placeAmenityCounter, decrements picks, and fires the
+                        // Bouncer-Rights / Traffic-Flow branches. Previously the picker only
+                        // mutated dice[idx] and closed itself, so the amenity never landed.
+                        const _idx = wildDiePicker.idx;
+                        setDice(prev => prev.map((d, i) => i === _idx ? amen : d));
                         setWildDiePicker(null);
+                        handleDiePick(_idx, amen);
                       }} style={{
                         padding: "14px 10px", borderRadius: 10,
                         border: "1px solid #f472b6", background: "rgba(30,27,75,0.5)",
@@ -26052,7 +26068,7 @@ export default function Headliners() {
                       onMouseEnter={e => { e.currentTarget.style.background = "rgba(131,24,67,0.4)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
                       onMouseLeave={e => { e.currentTarget.style.background = "rgba(30,27,75,0.5)"; e.currentTarget.style.transform = ""; }}
                       >
-                        <span style={{ fontSize: 24 }}>{AMENITY_ICONS[amen]}</span>
+                        <img src={AMENITY_IMAGES[amen]} alt={amen} style={{ width: 36, height: 36, objectFit: "contain", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))" }} />
                         <span style={{ fontSize: 12 }}>{AMENITY_LABELS[amen]}</span>
                       </button>
                     ))}
