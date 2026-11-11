@@ -85,21 +85,30 @@ const INFRA_REWARDS_BY_AMENITY = {
 };
 const AMENITY_ICONS = { campsite: "⛺", portaloo: "🚽", security: "👮‍♀️", catering: "🍔" };
 // v199.295: illustrated amenity art — used on die faces and in the Festival Area scatter.
+// v199.298: fame added (yellow star with black outline) so the Fame face on the dice can
+// use the illustrated star instead of the ⭐ emoji.
 const AMENITY_IMAGES = {
   campsite: "/amenity-art/campsite.webp",
   portaloo: "/amenity-art/portaloo.webp",
   security: "/amenity-art/security.webp",
   catering: "/amenity-art/catering.webp",
+  fame:     "/amenity-art/fame.webp",
 };
 // v199.297: shared die-face renderer. All 4 dice display sites (DiceDisplay component,
 // roll-prompt modal, main-board dice row, Claim-Dice picker) use this so Fame/Stage/Wild
-// emojis and amenity images stay consistent across every spot the dice appear. Fame now
-// renders as ⭐ instead of 🔥.
+// and amenity images stay consistent across every spot the dice appear.
+// v199.298: Fame now uses the illustrated star image; Wild shows a bold "?" so the face
+// doesn't read as blank. Stage still uses 🎪 (no illustrated equivalent yet).
 function DieFace({ d, size }) {
   const sz = size || 32;
-  if (d === "fame")  return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>⭐</span>;
   if (d === "stage") return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>🎪</span>;
-  if (d === "wild")  return <span style={{ fontSize: sz * 0.95, lineHeight: 1 }}>✨</span>;
+  if (d === "wild")  return <span style={{
+    fontSize: sz * 1.0, lineHeight: 1,
+    fontWeight: 900,
+    color: "#f9a8d4",
+    textShadow: "0 2px 4px rgba(0,0,0,0.6)",
+    fontFamily: "system-ui, sans-serif",
+  }}>?</span>;
   if (AMENITY_IMAGES[d]) {
     return <img src={AMENITY_IMAGES[d]} alt={d} style={{
       width: sz, height: sz, objectFit: "contain",
