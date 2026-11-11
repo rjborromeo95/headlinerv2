@@ -1727,8 +1727,10 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
     <div style={{ width: "100%" }}>
       <div style={{
         display: "grid",
-        gridTemplateColumns: compact ? "140px 1fr" : (fameTrayNode ? "360px 1fr" : "230px 1fr"),
-        gap: compact ? 8 : 14,
+        gridTemplateColumns: compact
+          ? (fameTrayNode ? "260px 1fr" : "130px 1fr")
+          : (fameTrayNode ? "320px 1fr" : "210px 1fr"),
+        gap: compact ? 8 : 12,
         alignItems: "stretch",
       }}>
         {/* ─────────── LEFT COLUMN ─────────── */}
@@ -1837,7 +1839,8 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             // Closed stage — grey bar with the word CLOSED. Matches the open stage's row height
             // so the 3 stacked rows read as a consistent column.
             if (!isOpen) {
-              const _slotW = compact ? 110 : 150;
+              const _mob = typeof window !== "undefined" && window.innerWidth < 768;
+              const _slotW = _mob ? 130 : 110;
               const _slotH = Math.round(_slotW / 0.7143);
               return <div key={si} style={{
                 padding: compact ? 8 : 12,
@@ -1866,8 +1869,11 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
             const isBookable = pickStageMode && sa.length < 3;
             const isGenreMatch = !!(isBookable && genreMatchStages && genreMatchStages.has(si));
             const displayColor = isGenreMatch ? "#fbbf24" : stageColor;
-            // v199.293: slot dimensions mirror the ArtistCard (150×210 desktop = 5:7 ratio, 110×154 compact).
-            const slotW = compact ? 110 : 150;
+            // v199.296: always use the small ArtistCard size for stage slots (110×154 desktop,
+            // 130×182 mobile) so the full board fits on a laptop screen without horizontal scroll.
+            // Hover-to-enlarge preview still shows the artwork at 266px.
+            const _mob = typeof window !== "undefined" && window.innerWidth < 768;
+            const slotW = _mob ? 130 : 110;
             const slotH = Math.round(slotW / 0.7143);
             return <div key={si}
               onClick={() => onStageClick && onStageClick(si)}
@@ -1935,7 +1941,7 @@ function PlayerBoard({ pd, compact, stageColors, onStageClick, highlightStageIdx
                 const guests = Array.isArray(a.specialGuests) ? a.specialGuests : [];
                 return <div key={slot} style={{ width: slotW, display: "flex", flexDirection: "column", gap: 3, position: "relative" }}>
                   <div style={{ position: "relative" }}>
-                    <ArtistCard artist={a} small={compact} showCost />
+                    <ArtistCard artist={a} small showCost />
                     {isHeadliner && (
                       <div style={{
                         position: "absolute",
@@ -22687,91 +22693,101 @@ export default function Headliners() {
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🔥 Fame {vpd.fame || 0}</span>
               <span style={{ padding: "4px 10px", borderRadius: 8, background: "rgba(124,58,237,0.15)", color: "#c4b5fd", fontSize: 11 }}>🃏 {(vpd.hand || []).length} in hand</span>
             </div>
-            {/* v199.104: show the opponent's Fame cards so players can see what triggers
-                and end-game effects their rivals are banking. Opens the inspection modal
-                to the same Fame tray UX the owner sees. */}
-            {gameMode === "quickYear" && (playerFameCards[viewingPlayerId] || []).length > 0 && (
-              <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: "linear-gradient(135deg, rgba(76,29,149,0.3), rgba(45,16,96,0.15))", border: "1px solid rgba(167,139,250,0.4)" }}>
-                <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 8, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
-                  {(() => {
-                    // v199.122: let +2 Fame Card span 2 cells.
-                    const _cards = playerFameCards[viewingPlayerId] || [];
-                    const _used = _cards.reduce((n, c) => n + (c.slotWeight || 1), 0);
-                    const _emptyN = Math.max(0, 5 - _used);
-                    return [
-                      ..._cards.map((c, idx) => ({ card: c, keyIdx: `c-${idx}` })),
-                      ...Array.from({ length: _emptyN }, (_, idx) => ({ card: null, keyIdx: `e-${idx}` })),
-                    ];
-                  })().map(({ card, keyIdx }, i) => {
-                    const empty = !card;
-                    const catBg = card ? (
-                      card.category === "you_may"       ? "linear-gradient(180deg, #78350f, #431407)"  :
-                      card.category === "self_bonus"    ? "linear-gradient(180deg, #7f1d1d, #450a0a)"  :
-                      card.category === "after_build"   ? "linear-gradient(180deg, #4c1d95, #2e1065)"  :
-                      card.category === "after_browse"  ? "linear-gradient(180deg, #14532d, #052e16)"  :
-                      card.category === "after_book"    ? "linear-gradient(180deg, #831843, #500724)"  :
-                      card.category === "reactive"      ? "linear-gradient(180deg, #164e63, #083344)"  :
-                      card.category === "season_start"  ? "linear-gradient(180deg, #713f12, #422006)"  :
-                      card.category === "season_active" ? "linear-gradient(180deg, #0e7490, #164e63)"  :
-                                                          "linear-gradient(180deg, #581c87, #3b0764)"
-                    ) : "rgba(49,46,129,0.3)";
-                    const catBorder = card ? (
-                      card.category === "you_may"       ? "#f59e0b" :
-                      card.category === "self_bonus"    ? "#fb7185" :
-                      card.category === "after_build"   ? "#a78bfa" :
-                      card.category === "after_browse"  ? "#4ade80" :
-                      card.category === "after_book"    ? "#ec4899" :
-                      card.category === "reactive"      ? "#06b6d4" :
-                      card.category === "season_start"  ? "#fbbf24" :
-                      card.category === "season_active" ? "#22d3ee" :
-                                                          "#c084fc"
-                    ) : "rgba(100,116,139,0.3)";
-                    const _spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
-                    // v199.164: disabled cards (killed by RAYE/Remi Wolf) render greyed with ✖.
-                    // v199.176: expired season_active cards get the same visual treatment.
-                    const _vIsDisabled = !!(card && (card.disabled || (card.category === "season_active" && card.receivedInSeason && card.receivedInSeason !== quickYearSeason)));
-                    return <div key={keyIdx} style={{
-                      display: "flex", flexDirection: "column",
-                      padding: 4, borderRadius: 6,
-                      background: catBg,
-                      border: `1px solid ${_vIsDisabled ? "#475569" : catBorder}`,
-                      minHeight: 72,
-                      justifyContent: empty ? "center" : "flex-start",
-                      gap: 2,
-                      opacity: _vIsDisabled ? 0.4 : 1,
-                      filter: _vIsDisabled ? "grayscale(100%)" : "none",
-                      position: "relative",
-                      ..._spanStyle,
-                    }} title={card ? `${card.name} — ${card.desc}${_vIsDisabled ? " · DISABLED" : ""}` : "Empty slot"}>
-                      {empty ? (
-                        <span style={{ fontSize: 20, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
-                      ) : (
-                        <>
-                          <div style={{ fontSize: 7, fontWeight: 800, color: _vIsDisabled ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
-                            {_vIsDisabled ? "Disabled" :
-                             card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : fameCardCategoryLabel(card)}
-                          </div>
-                          <div style={{ fontSize: 8, color: _vIsDisabled ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.2, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, textDecoration: _vIsDisabled ? "line-through" : "none" }}>
-                            <div>{card.name}</div>
-                            {card.category === "game_end" && !_vIsDisabled && (() => {
-                              const tally = computeFameCardEndTally(viewingPlayerId, card);
-                              return <div style={{ fontSize: 9, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
-                            })()}
-                            {card.category === "game_end" && _vIsDisabled && (
-                              <div style={{ fontSize: 9, color: "#64748b", fontWeight: 800 }}>(0 🎟️)</div>
-                            )}
-                          </div>
-                          {_vIsDisabled && <div style={{ position: "absolute", top: 2, right: 4, fontSize: 10, color: "#f87171", fontWeight: 900 }} title="Disabled">✖</div>}
-                        </>
-                      )}
-                    </div>;
-                  })}
-                </div>
-              </div>
-            )}
+            {/* v199.296: the opponent's Fame Tray is now passed to PlayerBoard as fameTrayNode and
+                sits in the board's left column. The old standalone block above the PlayerBoard
+                was removed to end the double-up visible in v295. Compact=true tightens the whole
+                board down so it fits inside the inspection modal. */}
             <div style={{ display: "flex", gap: 16, justifyContent: "center", alignItems: "flex-start", flexWrap: "wrap" }}>
-              <PlayerBoard pd={vpd} playerId={viewingPlayerId} stageColors={vpd.stageColors || []} year={year} onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })} />
+              <PlayerBoard
+                pd={vpd}
+                playerId={viewingPlayerId}
+                compact
+                stageColors={vpd.stageColors || []}
+                year={year}
+                onStageClick={(si) => setShowStageDetail({ stageIdx: si, playerId: viewingPlayerId })}
+                fameTrayNode={gameMode === "quickYear" && (playerFameCards[viewingPlayerId] || []).length > 0 ? (
+                  <div style={{
+                    padding: 10, borderRadius: 10,
+                    background: "linear-gradient(135deg, rgba(76,29,149,0.3), rgba(45,16,96,0.15))",
+                    border: "1px solid rgba(167,139,250,0.4)",
+                    display: "flex", flexDirection: "column", gap: 8,
+                  }}>
+                    <div style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.4, textAlign: "center" }}>🔥 Fame Tray · {(playerFameCards[viewingPlayerId] || []).reduce((n, c) => n + (c.slotWeight || 1), 0)}/5</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                      {(() => {
+                        const _cards = playerFameCards[viewingPlayerId] || [];
+                        const _used = _cards.reduce((n, c) => n + (c.slotWeight || 1), 0);
+                        const _emptyN = Math.max(0, 5 - _used);
+                        return [
+                          ..._cards.map((c, idx) => ({ card: c, keyIdx: `c-${idx}` })),
+                          ...Array.from({ length: _emptyN }, (_, idx) => ({ card: null, keyIdx: `e-${idx}` })),
+                        ];
+                      })().map(({ card, keyIdx }) => {
+                        const empty = !card;
+                        const catBg = card ? (
+                          card.category === "you_may"       ? "linear-gradient(180deg, #78350f, #431407)"  :
+                          card.category === "self_bonus"    ? "linear-gradient(180deg, #7f1d1d, #450a0a)"  :
+                          card.category === "after_build"   ? "linear-gradient(180deg, #4c1d95, #2e1065)"  :
+                          card.category === "after_browse"  ? "linear-gradient(180deg, #14532d, #052e16)"  :
+                          card.category === "after_book"    ? "linear-gradient(180deg, #831843, #500724)"  :
+                          card.category === "reactive"      ? "linear-gradient(180deg, #164e63, #083344)"  :
+                          card.category === "season_start"  ? "linear-gradient(180deg, #713f12, #422006)"  :
+                          card.category === "season_active" ? "linear-gradient(180deg, #0e7490, #164e63)"  :
+                                                              "linear-gradient(180deg, #581c87, #3b0764)"
+                        ) : "rgba(49,46,129,0.3)";
+                        const catBorder = card ? (
+                          card.category === "you_may"       ? "#f59e0b" :
+                          card.category === "self_bonus"    ? "#fb7185" :
+                          card.category === "after_build"   ? "#a78bfa" :
+                          card.category === "after_browse"  ? "#4ade80" :
+                          card.category === "after_book"    ? "#ec4899" :
+                          card.category === "reactive"      ? "#06b6d4" :
+                          card.category === "season_start"  ? "#fbbf24" :
+                          card.category === "season_active" ? "#22d3ee" :
+                                                              "#c084fc"
+                        ) : "rgba(100,116,139,0.3)";
+                        const _spanStyle = card && (card.slotWeight || 1) > 1 ? { gridColumn: `span ${card.slotWeight}` } : {};
+                        const _vIsDisabled = !!(card && (card.disabled || (card.category === "season_active" && card.receivedInSeason && card.receivedInSeason !== quickYearSeason)));
+                        return <div key={keyIdx} style={{
+                          display: "flex", flexDirection: "column",
+                          padding: 3, borderRadius: 5,
+                          background: catBg,
+                          border: `1px solid ${_vIsDisabled ? "#475569" : catBorder}`,
+                          minHeight: 64,
+                          justifyContent: empty ? "center" : "flex-start",
+                          gap: 2,
+                          opacity: _vIsDisabled ? 0.4 : 1,
+                          filter: _vIsDisabled ? "grayscale(100%)" : "none",
+                          position: "relative",
+                          ..._spanStyle,
+                        }} title={card ? `${card.name} — ${card.desc}${_vIsDisabled ? " · DISABLED" : ""}` : "Empty slot"}>
+                          {empty ? (
+                            <span style={{ fontSize: 18, color: "#312e81", textAlign: "center", lineHeight: 1 }}>★</span>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: 6, fontWeight: 800, color: _vIsDisabled ? "#94a3b8" : catBorder, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "center" }}>
+                                {_vIsDisabled ? "Disabled" :
+                                 card.category === "self_bonus" && (card.slotWeight || 1) > 1 ? "Bonus · 2 slots" : fameCardCategoryLabel(card)}
+                              </div>
+                              <div style={{ fontSize: 7, color: _vIsDisabled ? "#94a3b8" : "#f3f4f6", textAlign: "center", lineHeight: 1.15, fontWeight: 600, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, textDecoration: _vIsDisabled ? "line-through" : "none" }}>
+                                <div>{card.name}</div>
+                                {card.category === "game_end" && !_vIsDisabled && (() => {
+                                  const tally = computeFameCardEndTally(viewingPlayerId, card);
+                                  return <div style={{ fontSize: 8, color: tally > 0 ? "#fcd34d" : "#64748b", fontWeight: 800 }}>({tally} 🎟️)</div>;
+                                })()}
+                                {card.category === "game_end" && _vIsDisabled && (
+                                  <div style={{ fontSize: 8, color: "#64748b", fontWeight: 800 }}>(0 🎟️)</div>
+                                )}
+                              </div>
+                              {_vIsDisabled && <div style={{ position: "absolute", top: 1, right: 3, fontSize: 9, color: "#f87171", fontWeight: 900 }} title="Disabled">✖</div>}
+                            </>
+                          )}
+                        </div>;
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              />
               <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 170 }}>
                 {(vpd.stages || []).map((_, si) => {
                   const sa = vsa[si] || [];
