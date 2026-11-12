@@ -5780,6 +5780,13 @@ export default function Headliners() {
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
       }, 180);
+      // v308: Compound-effect sequencing — if the picker was opened with followUpSpecialGuest
+      // (Loosey Goosey's "Draw 2 artists. Special Guest: 2"), open the SG picker now that
+      // the draws have completed and the just-drawn artists are in hand to be tuck-eligible.
+      if (picker.followUpSpecialGuest) {
+        const sg = picker.followUpSpecialGuest;
+        setTimeout(() => setSpecialGuestPicker({ pid: picker.pid, host: sg.host, stageIdx: sg.stageIdx, maxGuests: sg.maxGuests }), 220);
+      }
     } else {
       // When bonus was triggered, mark consumed so it can't fire a second time on this same
       // picker instance (e.g. if the pool-bonus card lets you draw multiple and the next
@@ -5837,6 +5844,11 @@ export default function Headliners() {
       setTimeout(() => {
         if (!fameAmenityPending && !fameDrawPicker) setPoolDrawerOpen(false);
       }, 180);
+      // v308: Compound-effect sequencing — see pickFameDrawFromPool for the same pattern.
+      if (picker.followUpSpecialGuest) {
+        const sg = picker.followUpSpecialGuest;
+        setTimeout(() => setSpecialGuestPicker({ pid: picker.pid, host: sg.host, stageIdx: sg.stageIdx, maxGuests: sg.maxGuests }), 220);
+      }
     } else {
       setFameDrawPicker({ ...picker, remaining: newRemaining, picked: newPicked });
     }
@@ -12401,6 +12413,47 @@ export default function Headliners() {
         addLog("🎸 Artist Effect", `${festival}${isAI ? " 🤖" : ""}: ${artist.name} — drew ${first.name} (${genreStr}); kept ${matchCount} genre-match${matchCount === 1 ? "" : "es"}${matchCount > 0 ? ` (${kept.slice(1).map(a => a.name).join(", ")})` : ""}; ${discarded.length} discarded.`);
         if (!isAI) showFloatingBonus(`🎸 +${kept.length} artists`, "#60a5fa");
       });
+      return true;
+    }
+
+    // v308: "Draw N artists. Special Guest: M." — Loosey Goosey's pattern. Must open the SG
+    // picker AFTER the draws complete so the just-drawn artists are in hand and eligible to
+    // be tucked as guests. Firing the two sentences in parallel would open both pickers at
+    // the same time and let the player tuck BEFORE drawing, defeating the point. Matched
+    // before the period splitter so the compound stays atomic. Any card that pairs draws
+    // with a Special Guest clause benefits from the same ordering guarantee automatically.
+    const drawSGMatch = raw.match(/^draw\s+(an|a|1|one|two|three|four|five|\d+)\s+artists?\.\s*special guest:\s*(\d+)\.?$/i);
+    if (drawSGMatch) {
+      const wordNum = { an: 1, a: 1, one: 1, two: 2, three: 3, four: 4, five: 5 };
+      const drawCountRaw = drawSGMatch[1].toLowerCase();
+      const drawCount = wordNum[drawCountRaw] || parseInt(drawCountRaw, 10) || 1;
+      const sgCount = parseInt(drawSGMatch[2], 10);
+      if (isAI) {
+        // AI: draw N from deck first (so the SG auto-tuck has the new cards available),
+        // then auto-tuck sgCount cheapest from the updated hand.
+        const curDeck = artistDeckRef.current || artistDeck || [];
+        const take = Math.min(drawCount, curDeck.length);
+        const drawn = curDeck.slice(0, take);
+        setArtistDeck(curDeck.slice(take));
+        creditFanBaseDeckDraw(pid, take);
+        addLog("🎸 Artist Effect", `${festival} 🤖: ${artist.name} drew ${drawn.map(a => a.name).join(", ") || "nothing"}.`);
+        // Commit the draws, then trigger the SG tuck on the next tick so the hand state
+        // reflects the new cards for tucking purposes.
+        setPlayerData(p => ({ ...p, [pid]: { ...p[pid], hand: [...(p[pid]?.hand || []), ...drawn] } }));
+        setTimeout(() => applyArtistSubEffect(pid, artist, stageIdx, `Special Guest: ${sgCount}`), 120);
+      } else {
+        // Human: open draw picker with followUpSpecialGuest attached so the SG picker fires
+        // only after draws complete (handled in pickFameDrawFromPool / pickFameDrawFromDeck).
+        setFameDrawPicker({
+          pid,
+          cardName: artist.name,
+          remaining: drawCount,
+          picked: [],
+          allowDeck: true,
+          followUpSpecialGuest: { host: artist, stageIdx, maxGuests: sgCount },
+        });
+        setPoolDrawerOpen(true);
+      }
       return true;
     }
 
