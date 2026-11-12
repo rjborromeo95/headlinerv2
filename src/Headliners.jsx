@@ -995,9 +995,15 @@ function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i-
 // v199.39: rollDice accepts an optional exclude list for mode-aware filtering.
 // Quick Play passes ["stage"] since the stage die has no function there (stages open via
 // Festival Principles). Classic passes nothing and gets the full face pool.
+// v309: switched from `shuffle(pool).slice(0, 5)` (sampling without replacement — always 5
+// unique faces, exactly one face absent, 100% no-duplicates) to independent per-die rolls.
+// Each die now picks its face independently from the pool, so duplicates, triples, and the
+// occasional all-the-same roll happen at their proper dice-probability rates. Previous
+// behaviour made the dice pool feel deterministic and killed the Build-action risk/reward.
 function rollDice(excludeFaces = []) {
   const pool = DICE_OPTIONS.filter(d => !excludeFaces.includes(d));
-  return shuffle([...pool]).slice(0, 5);
+  if (pool.length === 0) return [];
+  return Array.from({ length: 5 }, () => pool[Math.floor(Math.random() * pool.length)]);
 }
 function diceNeedReroll(dice) { if (dice.length < 3) return true; const faces = new Set(dice); return faces.size === 1; }
 function getGenres(genre) { return genre.split(",").map(g => g.trim()); }
