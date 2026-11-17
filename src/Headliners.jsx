@@ -6787,6 +6787,12 @@ export default function Headliners() {
       case "ss_place_2_amenities": {
         // v199.127: reduced from 2 amenities to 1. Old effect name kept as a case label
         // so any legacy card data from prior saves still routes here.
+        // v321: season-start placements no longer claim microtrends. Previously a player
+        // holding FM_SS_PLACE_AMEN could accidentally pick up a microtrend Fame bonus
+        // during the season-start phase — before they'd even taken an action — just by
+        // choosing the amenity type that matched the active trend. Microtrends are now
+        // reserved for amenities placed during regular play (Build action, artist effects,
+        // other Fame cards). Flagged via `skipMicrotrend` on both AI and human paths.
         if (player?.isAI) {
           const pdNow = (playerDataRef.current || playerData)[pid] || {};
           const am = pdNow.amenities || {};
@@ -6802,10 +6808,10 @@ export default function Headliners() {
           }
           setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, chosenType, +1) }));
           addLog("🔥 Fame", `${festName} 🤖: "${card.name}" → placed ${AMENITY_LABELS[chosenType]}.`);
-          setTimeout(() => claimAmenityMicrotrend(pid, chosenType), 50);
+          // v321: skip claimAmenityMicrotrend — season-start placements don't count.
           setTimeout(() => recalcTickets(), 100);
         } else {
-          setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 1 });
+          setFameFreeAmenityPicker({ pid, cardName: card.name, remaining: 1, skipMicrotrend: true });
         }
         break;
       }
@@ -25351,7 +25357,12 @@ export default function Headliners() {
                         setPlayerData(p => ({ ...p, [pid]: mutateAmenity(p[pid], targetField, type, +1) }));
                         addLog("🔥 Fame", `${currentPlayer?.festivalName || "?"}: "${fameFreeAmenityPicker.cardName}" → placed ${AMENITY_LABELS[type]} in Field ${targetField + 1}.`);
                         showFloatingBonus(`🔥 +1 ${AMENITY_LABELS[type]}`, "#4ade80");
-                        setTimeout(() => claimAmenityMicrotrend(pid, type), 50);
+                        // v321: `skipMicrotrend` flag (set by ss_place_amenity / ss_place_2_amenities
+                        // Fame cards) suppresses the microtrend claim. Season-start placements
+                        // shouldn't grant microtrend Fame — only placements made during regular play.
+                        if (!fameFreeAmenityPicker.skipMicrotrend) {
+                          setTimeout(() => claimAmenityMicrotrend(pid, type), 50);
+                        }
                         setTimeout(() => recalcTickets(), 50);
                         const newRemaining = fameFreeAmenityPicker.remaining - 1;
                         if (newRemaining <= 0) setFameFreeAmenityPicker(null);
