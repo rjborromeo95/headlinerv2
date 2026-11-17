@@ -667,7 +667,11 @@ const SCHMOOZE_CARDS = [
   { id: "SCH_STRATEGY",   name: "Strategy Shifting", effect: "strategy_shifting", desc: "Move one of your other cubes on the management board to another row." },
   { id: "SCH_DEAL",       name: "Deal Making",      effect: "deal_making",       desc: "The next time another player takes the build action, you gain that amenity instead. They then pick from the remaining amenity die." },
 ];
-const SCHMOOZE_DECK_COPIES = 3; // 3 copies of each card = 15-card deck
+// v311: changed from 3 copies per card (15-card deck) to 1 of each (5-card deck). Each
+// Schmooze card is now unique — no two players can hold the same card at once, and no
+// player can draw duplicates across a game (until a card is used and reshuffled from
+// the discard pile).
+const SCHMOOZE_DECK_COPIES = 1; // 1 copy of each card = 5-card deck
 // v199.130: centralized trigger-aware category label used by every Fame card render site
 // (draw modal, own tray, opponent tray). Keeps the badge language consistent and avoids
 // duplicate wording like "After Browse — After Browse Amenity or Draw".
@@ -3384,6 +3388,17 @@ export default function Headliners() {
   const setSchmoozeDeck = _guardSetter("setSchmoozeDeck", _rawSetSchmoozeDeck);
   const [schmoozeDiscard, _rawSetSchmoozeDiscard] = useState([]);
   const setSchmoozeDiscard = _guardSetter("setSchmoozeDiscard", _rawSetSchmoozeDiscard);
+  // v310: refs shadowing the deck/discard so synchronous consecutive draws see the latest
+  // state. Without these, two draws fired in the same render cycle (same player placing two
+  // cubes back-to-back, or any rapid-fire path that triggers more than one draw before React
+  // re-renders) both read the SAME stale `schmoozeDeck` from closure, both take card [0],
+  // and the second setSchmoozeDeck overwrites the first — duplicate cards delivered, deck
+  // advanced by only 1. The fix: update ref synchronously inside the draw function and keep
+  // the state in sync via setter + useEffect mirror.
+  const schmoozeDeckRef = useRef([]);
+  const schmoozeDiscardRef = useRef([]);
+  useEffect(() => { schmoozeDeckRef.current = schmoozeDeck; }, [schmoozeDeck]);
+  useEffect(() => { schmoozeDiscardRef.current = schmoozeDiscard; }, [schmoozeDiscard]);
   // Each player's held Schmooze cards (drawn via schmooze cubes, held until played).
   const [schmoozeHands, _rawSetSchmoozeHands] = useState({});
   const setSchmoozeHands = _guardSetter("setSchmoozeHands", _rawSetSchmoozeHands);
@@ -9989,19 +10004,25 @@ export default function Headliners() {
   };
   // Draw one Schmooze card from the deck for the player.
   const drawSchmoozeCardForPlayer = (pid) => {
-    let deck = [...schmoozeDeck];
+    // v310: read via ref so consecutive draws in the same render cycle see each other's
+    // mutations. Previous closure-based read caused duplicate cards (see ref comment above).
+    let deck = [...schmoozeDeckRef.current];
     if (deck.length === 0) {
-      const disc = [...schmoozeDiscard];
+      const disc = [...schmoozeDiscardRef.current];
       if (disc.length === 0) {
         addLog("📋 Schmooze", `${players.find(p => p.id === pid)?.festivalName || "?"}: Schmooze deck empty — no card drawn.`);
         return;
       }
       deck = shuffle(disc);
+      schmoozeDiscardRef.current = [];
       setSchmoozeDiscard([]);
       addLog("📋 Schmooze", `Schmooze deck reshuffled from discard.`);
     }
     const card = deck[0];
-    setSchmoozeDeck(deck.slice(1));
+    const newDeck = deck.slice(1);
+    // Update ref FIRST so a follow-up draw in the same tick sees the advanced deck.
+    schmoozeDeckRef.current = newDeck;
+    setSchmoozeDeck(newDeck);
     setSchmoozeHands(prev => ({ ...prev, [pid]: [...(prev[pid] || []), card] }));
     const festName = players.find(p => p.id === pid)?.festivalName || "?";
     addLog("📋 Schmooze", `${festName}: drew Schmooze card "${card.name}".`);
@@ -10065,7 +10086,11 @@ export default function Headliners() {
       return next;
     });
     const card = (schmoozeHands[pid] || []).find(c => c.instanceId === cardInstanceId);
-    if (card) setSchmoozeDiscard(d => [...d, card]);
+    if (card) {
+      // v310: keep ref in sync so a reshuffle during the same tick sees this card.
+      schmoozeDiscardRef.current = [...schmoozeDiscardRef.current, card];
+      setSchmoozeDiscard(d => [...d, card]);
+    }
   };
   // v199.252: AI plays a held Schmooze card (if any) with simple heuristics.
   const aiPlaySchmoozeCardIfUseful = (pid) => {
@@ -16090,6 +16115,11 @@ export default function Headliners() {
           });
         }
         const shuffledSch = shuffle(schmoozeDeckFull);
+        // v310: prime refs synchronously so a draw triggered on this same render tick
+        // (unlikely in practice but defensive) sees the freshly-shuffled deck instead of
+        // the previous game's residue.
+        schmoozeDeckRef.current = shuffledSch;
+        schmoozeDiscardRef.current = [];
         setSchmoozeDeck(shuffledSch);
         setSchmoozeDiscard([]);
         const emptySchHands = {};
@@ -25342,16 +25372,15 @@ export default function Headliners() {
                   {hand.length === 0 ? (
                     <div style={{ color: "#f9a8d4", textAlign: "center", padding: 20, fontStyle: "italic" }}>Your hand is empty — no guests to tuck.</div>
                   ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8, marginBottom: 16 }}>
+                    // v312: full ArtistCard renders so the player can see the effect text
+                    // and costs they'd be losing by tucking each card. Previous chip-only
+                    // display hid the mechanical trade-off (tucking a 1-TIX card with a
+                    // strong effect might net you less than keeping it to play later).
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16, justifyContent: "center", maxHeight: "60vh", overflowY: "auto", padding: "4px 2px" }}>
                       {hand.map((a, i) => {
                         const isSel = selected.includes(i);
                         return (
-                          <button key={i} onClick={() => toggle(i)}
-                            style={{ padding: "8px 6px", borderRadius: 8, background: isSel ? "linear-gradient(135deg, #ec4899, #be185d)" : "linear-gradient(135deg, #1e293b, #0f172a)", border: `2px solid ${isSel ? "#f472b6" : "#475569"}`, color: isSel ? "#fff" : "#e2e8f0", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 600, textAlign: "center" }}>
-                            <div style={{ fontWeight: 800, fontSize: 12 }}>{a.name}</div>
-                            <div style={{ fontSize: 10, opacity: 0.9 }}>🎟️ {a.tickets || 0} · 🔥 {a.fame || 0}</div>
-                            <div style={{ fontSize: 9, opacity: 0.75 }}>{a.genre}</div>
-                          </button>
+                          <ArtistCard key={i} artist={a} small selected={isSel} onClick={() => toggle(i)} />
                         );
                       })}
                     </div>
@@ -28829,6 +28858,7 @@ export default function Headliners() {
               managementBoardRef.current = { schmooze: Array(MGMT_ROWS).fill(null), hire: Array(MGMT_ROWS).fill(null), advertise: Array(MGMT_ROWS).fill(null), dump: {} };
               setManagementMilestones({ schmooze: null, hire: null, advertise: null });
               setSchmoozeDeck([]); setSchmoozeDiscard([]); setSchmoozeHands({}); setSchmoozeTargetFlags({});
+              schmoozeDeckRef.current = []; schmoozeDiscardRef.current = [];
               schmoozeTargetFlagsRef.current = {};
               setPendingCubePlacement(null); setSchmoozePickerCard(null); setQueuedCubePlacementPid(null);
               // v199.251: reset end-game calculator state + per-season accumulator refs. Without this, calcSteps from the prior game is still truthy, so the builder useEffect's `if (calcSteps) return;` guard short-circuits and the animation never runs on game 2+.
