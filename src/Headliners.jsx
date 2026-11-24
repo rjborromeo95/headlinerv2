@@ -3240,6 +3240,27 @@ function RotaryDial({ agents, resultIndex, onComplete, playerName }) {
 // MAIN GAME
 // ═══════════════════════════════════════════════════════════
 export default function Headliners() {
+  // v333: preload all artist art at mount so transient wifi drops don't cause cards to
+  // render blank. Each <img> request is low-priority (fetchpriority="low") and async
+  // (decoding="async") so this doesn't delay interactive content. Browser HTTP cache
+  // then holds each image for the session; even on cold start, by the time the first
+  // artist is drawn the pipeline is well underway. Empty deps — fires once per mount.
+  // Known limits: browser cache can evict under memory pressure, and some hosts send
+  // short Cache-Control headers which force revalidation. For truly offline-first play
+  // the next step is a Service Worker via vite-plugin-pwa; this covers the common case
+  // (wifi dropping for a minute or two mid-game) without new dependencies.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "/");
+    ALL_ARTISTS.forEach(a => {
+      if (!a?.art) return;
+      const img = new Image();
+      img.decoding = "async";
+      try { img.fetchPriority = "low"; } catch {} // non-standard on older browsers
+      img.src = `${base}artist-art/${a.art}`;
+    });
+  }, []);
+
   // Phase management
   // ═══════════════════════════════════════════════════════════
   // v199.181: TEMPORARY — React #185 loop detector. Remove once bug is found.
